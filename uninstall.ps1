@@ -1,4 +1,16 @@
-﻿# ==========================================================
+if ($MyInvocation.MyCommand.Path -and (-not $env:SAMJIL_UTF8_ACTIVE)) {
+    $env:SAMJIL_UTF8_ACTIVE = "1"
+    try {
+        $utf8Content = [System.IO.File]::ReadAllText($MyInvocation.MyCommand.Path, [System.Text.Encoding]::UTF8)
+        $sb = [scriptblock]::Create($utf8Content)
+        & $sb @args
+        exit $LASTEXITCODE
+    } finally {
+        $env:SAMJIL_UTF8_ACTIVE = $null
+    }
+}
+
+# ==========================================================
 #  samjil AI Agent Skills Uninstaller
 #  Antigravity & Claude Code 스킬 원클릭 제거 스크립트
 #

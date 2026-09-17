@@ -1,4 +1,18 @@
-﻿# install.ps1
+if ($MyInvocation.MyCommand.Path -and (-not $env:SAMJIL_UTF8_ACTIVE)) {
+    $env:SAMJIL_UTF8_ACTIVE = "1"
+    $env:SAMJIL_SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
+    try {
+        $utf8Content = [System.IO.File]::ReadAllText($MyInvocation.MyCommand.Path, [System.Text.Encoding]::UTF8)
+        $sb = [scriptblock]::Create($utf8Content)
+        & $sb @args
+        exit $LASTEXITCODE
+    } finally {
+        $env:SAMJIL_UTF8_ACTIVE = $null
+        $env:SAMJIL_SCRIPT_DIR = $null
+    }
+}
+
+# install.ps1
 # samjil AI Agent Skills 전역 설치 스크립트 (Antigravity & Claude Code)
 #
 # [사용법 1: 로컬 실행]
@@ -9,6 +23,7 @@
 #   저장소를 clone하지 않고 PowerShell에서 바로 실행:
 #   irm https://raw.githubusercontent.com/samjil/skills/main/install.ps1 | iex
 
+$ScriptDir = if ($env:SAMJIL_SCRIPT_DIR) { $env:SAMJIL_SCRIPT_DIR } elseif ($PSScriptRoot) { $PSScriptRoot } else { "" }
 $TargetDir = ""
 $Uninstall = $false
 if ($args) {
@@ -25,8 +40,8 @@ if ($args) {
 try { chcp 65001 > $null } catch {}
 
 if ($Uninstall) {
-    $uninstallScript = Join-Path $PSScriptRoot "uninstall.ps1"
-    if (-not [string]::IsNullOrEmpty($PSScriptRoot) -and (Test-Path $uninstallScript)) {
+    $uninstallScript = Join-Path $ScriptDir "uninstall.ps1"
+    if (-not [string]::IsNullOrEmpty($ScriptDir) -and (Test-Path $uninstallScript)) {
         & $uninstallScript
     } else {
         $rawUninstall = (Invoke-RestMethod -Uri "https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1" -UseBasicParsing)
@@ -41,7 +56,7 @@ Write-Host "  (Antigravity & Claude Code 전역 설치기)" -ForegroundColor Cya
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
 
-$isRemote = [string]::IsNullOrEmpty($PSScriptRoot) -or (-not (Test-Path (Join-Path $PSScriptRoot "samjil-handoff")))
+$isRemote = [string]::IsNullOrEmpty($ScriptDir) -or (-not (Test-Path (Join-Path $ScriptDir "samjil-handoff")))
 
 if ($isRemote) {
     # 원격 실행 모드: GitHub에서 최신 소스 다운로드
@@ -68,7 +83,7 @@ if ($isRemote) {
     }
 } else {
     # 로컬 저장소 모드 (저장소는 소스 관리 전용)
-    $SkillsSourceDir = $PSScriptRoot
+    $SkillsSourceDir = $ScriptDir
     Write-Host "[*] 로컬 설치 소스 패키지: $SkillsSourceDir" -ForegroundColor Gray
 }
 
