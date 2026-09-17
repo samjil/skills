@@ -12,9 +12,7 @@
 #    제거 시에도 절대 삭제되지 않고 영구 보존됩니다.
 # ==========================================================
 
-param(
-    [switch]$Force = $false
-)
+$Force = ($args -contains "-Force")
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 try { chcp 65001 > $null } catch {}

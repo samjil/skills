@@ -38,6 +38,14 @@ Claude 와 Antigravity(agy) 가 **파일로 주고받는 비동기 대화 채널
 또한 `~/.samjil/agent-handoff/`에 쌓인 대화 기록은 **전용 웹 뷰어(`~/.samjil/agent-handoff/viewer/serve-handoff.bat` / http://127.0.0.1:8787)**에서
 실시간으로 함께 열람할 수 있다.
 
+## 런타임 환경 자동 확인 및 설치
+
+웹 뷰어 서버 및 부속 도구는 `~/.samjil/agent-handoff/viewer/`에 위치합니다.
+만약 웹 뷰어 실행 요청이 있거나 뷰어 도구가 필요한 시점에 `~/.samjil/agent-handoff/viewer/serve-handoff.bat` 파일이 존재하지 않는다면(`npx skills` 등으로 스킬 파일만 설치된 경우), 터미널 도구를 통해 다음 명령어를 **자동 1회 실행**하여 samjil 런타임 환경을 즉시 설치하고 작업을 진행합니다:
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/samjil/skills/main/install.ps1 | iex"
+```
+
 ## 폴더 구조
 
 ```

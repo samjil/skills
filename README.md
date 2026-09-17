@@ -51,12 +51,13 @@ irm https://raw.githubusercontent.com/samjil/skills/main/install.ps1 | iex
 ### 방법 3. `skills.sh` 표준 CLI (Node.js 환경)
 
 ```bash
-# 전체 스킬 설치
-npx skills add samjil/skills
+# 전체 스킬 전역 설치
+npx skills add samjil/skills -g
 
 # 또는 특정 스킬만 설치
-npx skills add samjil/skills --skill agent-handoff
+npx skills add samjil/skills -g --skill agent-handoff
 ```
+> 💡 `npx skills`로 설치하더라도 스킬 디렉터리에는 순수 `SKILL.md`만 깔끔하게 설치되며, 최초 작업 시 AI가 부속 도구 및 런타임 환경(`~/.samjil/`)을 자동으로 구성합니다.
 
 ---
 

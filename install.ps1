@@ -9,10 +9,17 @@
 #   저장소를 clone하지 않고 PowerShell에서 바로 실행:
 #   irm https://raw.githubusercontent.com/samjil/skills/main/install.ps1 | iex
 
-param(
-    [string]$TargetDir = "",
-    [switch]$Uninstall
-)
+$TargetDir = ""
+$Uninstall = $false
+if ($args) {
+    for ($i = 0; $i -lt $args.Count; $i++) {
+        if ($args[$i] -eq "-TargetDir" -and ($i + 1) -lt $args.Count) {
+            $TargetDir = $args[++$i]
+        } elseif ($args[$i] -eq "-Uninstall") {
+            $Uninstall = $true
+        }
+    }
+}
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 try { chcp 65001 > $null } catch {}
@@ -147,8 +154,8 @@ foreach ($sName in $targetSkills) {
         if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
             cmd /c rmdir "$cDestDir" 2>&1 | Out-Null
         }
-        # 불필요한 서브 디렉터리(scripts, viewer 등) 제거
-        $subDirsToClean = @((Join-Path $cDestDir "scripts"), (Join-Path $cDestDir "viewer"))
+        # 불필요한 서브 디렉터리(scripts, viewer, templates 등) 제거
+        $subDirsToClean = @((Join-Path $cDestDir "scripts"), (Join-Path $cDestDir "viewer"), (Join-Path $cDestDir "templates"))
         foreach ($sd in $subDirsToClean) {
             if (Test-Path $sd) { Remove-Item -Recurse -Force -LiteralPath $sd -ErrorAction SilentlyContinue }
         }
@@ -161,7 +168,7 @@ foreach ($sName in $targetSkills) {
     # (2) Antigravity AGY: ~/.agents/skills/<skill-name>/
     $aDestDir = Join-Path $AgentsSkillsRoot $sName
     if (Test-Path $aDestDir) {
-        $subDirsToClean = @((Join-Path $aDestDir "scripts"), (Join-Path $aDestDir "viewer"))
+        $subDirsToClean = @((Join-Path $aDestDir "scripts"), (Join-Path $aDestDir "viewer"), (Join-Path $aDestDir "templates"))
         foreach ($sd in $subDirsToClean) {
             if (Test-Path $sd) { Remove-Item -Recurse -Force -LiteralPath $sd -ErrorAction SilentlyContinue }
         }
@@ -176,23 +183,26 @@ foreach ($sName in $targetSkills) {
 # 3. 부속 도구 및 스크립트, 웹 파일 설치 (~/.samjil/)
 # -----------------------------------------------------------------------------
 $SamjilRoot = Join-Path $env:USERPROFILE ".samjil"
+$srcRuntime = Join-Path $SkillsSourceDir "runtime"
 
-# 3-1. Handoff 웹 뷰어 도구 (~/.samjil/agent-handoff/viewer/)
-$srcViewer = Join-Path $SkillsSourceDir "agent-handoff\viewer"
-if (Test-Path $srcViewer) {
-    $destViewer = Join-Path $SamjilRoot "agent-handoff\viewer"
-    New-Item -ItemType Directory -Force -Path $destViewer | Out-Null
-    Copy-Item -Recurse -Force -Path (Join-Path $srcViewer "*") -Destination $destViewer
-    Write-Host "[+] Handoff 웹 뷰어 도구 배치 완료: $destViewer" -ForegroundColor Green
-}
-
-# 3-2. Delegate 실행 스크립트 (~/.samjil/agent-delegate-agy/scripts/)
-$srcScripts = Join-Path $SkillsSourceDir "agent-delegate-agy\scripts"
-if (Test-Path $srcScripts) {
-    $destScripts = Join-Path $SamjilRoot "agent-delegate-agy\scripts"
-    New-Item -ItemType Directory -Force -Path $destScripts | Out-Null
-    Copy-Item -Recurse -Force -Path (Join-Path $srcScripts "*") -Destination $destScripts
-    Write-Host "[+] Delegate 실행 스크립트 배치 완료: $destScripts" -ForegroundColor Green
+if (Test-Path $srcRuntime) {
+    New-Item -ItemType Directory -Force -Path $SamjilRoot | Out-Null
+    Copy-Item -Recurse -Force -Path (Join-Path $srcRuntime "*") -Destination $SamjilRoot
+    Write-Host "[+] samjil 런타임 및 부속 도구 배치 완료 (~/.samjil/)" -ForegroundColor Green
+} else {
+    # 구버전 구조 하위 호환 폴백
+    $srcViewer = Join-Path $SkillsSourceDir "agent-handoff\viewer"
+    if (Test-Path $srcViewer) {
+        $destViewer = Join-Path $SamjilRoot "agent-handoff\viewer"
+        New-Item -ItemType Directory -Force -Path $destViewer | Out-Null
+        Copy-Item -Recurse -Force -Path (Join-Path $srcViewer "*") -Destination $destViewer
+    }
+    $srcScripts = Join-Path $SkillsSourceDir "agent-delegate-agy\scripts"
+    if (Test-Path $srcScripts) {
+        $destScripts = Join-Path $SamjilRoot "agent-delegate-agy\scripts"
+        New-Item -ItemType Directory -Force -Path $destScripts | Out-Null
+        Copy-Item -Recurse -Force -Path (Join-Path $srcScripts "*") -Destination $destScripts
+    }
 }
 
 # 3-3. 기존 레거시 대화 기록 자동 복사 마이그레이션 (대화 파일이 있을 때만)

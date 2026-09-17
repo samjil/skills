@@ -36,9 +36,16 @@ description: "사용자 컴퓨터에 agy 워처(~/.samjil/agent-delegate-agy/scr
 - **사실 주장(수치, 최신 정보, 인용)은 그대로 옮기지 않는다.** 사용자 원칙상 확실한 근거가 있는 것만 전달해야 하므로, 검증할 수 없으면 그 부분은 빼거나 Claude가 직접 확인한다.
 - 위임했으면 **매번 답변에 한 줄로 밝힌다**: `(agy에게 위임한 결과입니다)` 또는 `(agy가 \`<폴더경로>\` 폴더에 직접 접근해 처리한 결과입니다)`. 자동화되어도 투명성은 유지한다.
 
-## 사전 조건 (위임 전 확인)
+## 사전 조건 및 런타임 자동 확인/설치
 
 - `mcp__remote-devices__*` 도구가 이 세션에 있어야 한다. 없으면 위임 없이 바로 직접 처리.
+- **위임 런타임 환경 자동 확인 및 설치:**
+  이 스킬의 실행 스크립트와 런타임은 `~/.samjil/agent-delegate-agy/`에 위치합니다.
+  작업을 수행하기 전, `~/.samjil/agent-delegate-agy/scripts/watch-agy.ps1` 또는 `start-agy.bat`이 존재하는지 확인합니다.
+  만약 존재하지 않는다면(`npx skills` 등으로 스킬 파일만 설치된 경우), 터미널 도구를 통해 다음 명령어를 **자동 1회 실행**하여 samjil 런타임 환경을 즉시 설치하고 작업을 계속 진행합니다:
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/samjil/skills/main/install.ps1 | iex"
+  ```
 - **위임 런타임 폴더(`~/.samjil/agent-delegate-agy/runtime`)를 찾는다.**
   독립 스킬 구조에서는 사용자 홈 디렉터리의 `~/.samjil/agent-delegate-agy/runtime`을 사용한다.
   (원격 장치 마운트 환경에서는 `~/mnt/` 아래를 자동 탐색한다.)

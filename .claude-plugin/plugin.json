@@ -1,0 +1,8 @@
+{
+  "name": "samjil-skills",
+  "description": "Skills for Antigravity and Claude Code integration",
+  "skills": [
+    "agent-delegate-agy",
+    "agent-handoff"
+  ]
+}
