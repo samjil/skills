@@ -1,4 +1,4 @@
-﻿if ($MyInvocation.MyCommand.Path -and (-not $env:SAMJIL_UTF8_ACTIVE)) {
+if ($MyInvocation.MyCommand.Path -and (-not $env:SAMJIL_UTF8_ACTIVE)) {
     $env:SAMJIL_UTF8_ACTIVE = "1"
     $env:SAMJIL_SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
     try {
@@ -36,8 +36,9 @@ if ($args) {
     }
 }
 
+$OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-try { chcp 65001 > $null } catch {}
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 
 if ($Uninstall) {
     $uninstallScript = Join-Path $ScriptDir "uninstall.ps1"
