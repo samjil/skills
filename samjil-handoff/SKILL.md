@@ -1,4 +1,4 @@
----
+﻿---
 name: samjil-handoff
 description: Claude 와 Antigravity(agy) 가 파일로 주고받는 비동기 대화 채널(samjil-handoff) 규약. 메시지를 쓰거나 읽을 때, 원장을 갱신할 때, 새 프로젝트에 채널을 열 때, 작업한 내용을 메시지로 남길 때 쓴다 — "agy 한테 메시지 보내줘", "agy 회신 왔나 봐줘", "채널 열어줘", "0042 처리됨으로 바꿔줘", "작업한 내용 메시지에 남겨줘", "메시지 남겨줘", "agent handoff", "핸드오프" 같은 요청.
 ---
@@ -21,30 +21,28 @@ Claude 와 Antigravity(agy) 가 **파일로 주고받는 비동기 대화 채널
 
 폴더 이름은 **작업 저장소의 폴더 이름과 같게** 둔다. 프로젝트가 늘면 옆에 붙는다.
 
-**채널 루트는 사용자 홈 디렉터리의 `~/.samjil/samjil-handoff/` 아래에 둔다.**
+**채널 루트는 사용자 홈 디렉터리의 `~/.samjil/handoff/` 아래에 둔다.**
 이 스킬을 사용하는 환경에서 채널 루트는 다음 우선순위로 결정한다:
 1. 사용자가 프롬프트에서 명시한 경로
 2. 환경변수 `%AGENT_HANDOFF_ROOT%`
-3. 기본값: `~/.samjil/samjil-handoff/<작업 폴더 이름>/` (Windows: `C:\Users\<username>\.samjil\samjil-handoff\<작업 폴더 이름>\`, 폴더가 없으면 자동 생성)
+3. 기본값: `~/.samjil/handoff/<작업 폴더 이름>/` (Windows: `C:\Users\<username>\.samjil\handoff\<작업 폴더 이름>\`, 기존 `~/.samjil/samjil-handoff/`도 자동 호환)
 
 **채널 기록은 PC 사이에 공유하지 않는다.** PC마다 자기 채널을 가진다. 공유하면 두 PC가
 같은 번호를 따고 원장이 서로를 덮어쓴다. **스킬(규약)만 공유한다.**
 
 **코드 저장소 안에 두지 않는다.** 저장소에 들어가면 커밋·브랜치 전환·팀원 노출을 계속
 신경 써야 하는데, 채널 내용은 코드 이력과 수명이 다르다. 저장소에는 채널 경로도 적지
-않는다 — 저장소는 채널을 모른다. `~/.samjil/samjil-handoff/`는 코드 저장소 외부이므로 저장소에
+않는다 — 저장소는 채널을 모른다. `~/.samjil/handoff/`는 코드 저장소 외부이므로 저장소에
 영향을 주지 않는다.
 
-또한 `~/.samjil/samjil-handoff/`에 쌓인 대화 기록은 **전용 웹 뷰어(`~/.samjil/samjil-handoff/viewer/serve-handoff.bat` / http://127.0.0.1:8787)**에서
-실시간으로 함께 열람할 수 있다.
+또한 `~/.samjil/handoff/`에 쌓인 대화 기록과 위임 실행 기록은 **통합 웹 대시보드(`~/.samjil/serve-viewer.ps1` / http://127.0.0.1:8787)**에서
+실시간으로 함께 열람할 수 있다 (상단 탭으로 Handoff ↔ Delegate QA 전환).
 
-## 런타임 환경 자동 확인 및 설치
+## 런타임 환경 확인
 
-웹 뷰어 서버 및 부속 도구는 `~/.samjil/samjil-handoff/viewer/`에 위치합니다.
-만약 웹 뷰어 실행 요청이 있거나 뷰어 도구가 필요한 시점에 `~/.samjil/samjil-handoff/viewer/serve-handoff.bat` 파일이 존재하지 않는다면(`npx skills` 등으로 스킬 파일만 설치된 경우), 터미널 도구를 통해 다음 명령어를 **자동 1회 실행**하여 samjil 런타임 환경을 즉시 설치하고 작업을 진행합니다:
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/samjil/skills/main/install.ps1 | iex"
-```
+웹 뷰어 서버 및 부속 도구는 `~/.samjil/` 및 `~/.samjil/handoff/templates/`에 위치합니다.
+만약 웹 뷰어 실행 요청이 있거나 템플릿 파일이 필요한 시점에 `~/.samjil/serve-viewer.ps1` 또는 `~/.samjil/handoff/templates/BRIEF.md` 파일이 존재하지 않는다면(스킬 규약만 단독 설치된 경우), 사용자에게 다음과 같이 설치 안내를 출력합니다:
+> "samjil 런타임 환경 및 웹 뷰어 파일이 감지되지 않았습니다. 저장소의 install.ps1을 실행하여 환경을 구성해 주세요."
 
 ## 폴더 구조
 
@@ -208,18 +206,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubus
 
 1. **프로젝트 식별**:
    - 현재 작업 저장소의 폴더명(예: `my-web-app`)을 파악한다.
-   - 채널 대상 경로를 `<채널 루트>\<작업 폴더 이름>\` (기본값: `~/.samjil/agent-handoff\<작업 폴더 이름>\`)으로 잡고 `msg/` 폴더를 만든다.
+   - 채널 대상 경로를 `<채널 루트>\<작업 폴더 이름>\` (기본값: `~/.samjil/handoff\<작업 폴더 이름>\`)으로 잡고 `msg/` 폴더를 만든다.
 
 2. **코드베이스 자율 분석 (지시 기다리지 않음)**:
    - 현재 작업 폴더의 `README.md`, `package.json`(또는 build 파일), 주요 설정 파일, 디렉터리 구조를 읽는다.
    - 무엇을 만드는 프로젝트인지, OS/런타임/빌드 환경, 핵심 주의사항/정본 규칙을 스스로 요약한다.
 
 3. **BRIEF.md 자동 작성**:
-   - `templates/BRIEF.md` 서식을 바탕으로 위에서 분석한 프로젝트의 실제 맥락을 채워 넣어 `<채널 폴더>\BRIEF.md`를 쓴다. (agy 가 훑을 파일이므로 짧고 명확하게)
+   - `~/.samjil/handoff/templates/BRIEF.md` 서식을 바탕으로 위에서 분석한 프로젝트의 실제 맥락을 채워 넣어 `<채널 폴더>\BRIEF.md`를 쓴다. (agy 가 훑을 파일이므로 짧고 명확하게)
 
 4. **원장 및 첫 메시지 개설**:
-   - `templates/INDEX.md`를 복사하여 `<채널 폴더>\INDEX.md`를 생성한다.
-   - `templates/0001-open.md` 서식을 바탕으로 실제 시스템 시각 및 분석 내용을 채워 첫 메시지를 작성한다.
+   - `~/.samjil/handoff/templates/INDEX.md`를 복사하여 `<채널 폴더>\INDEX.md`를 생성한다.
+   - `~/.samjil/handoff/templates/0001-open.md` 서식을 바탕으로 실제 시스템 시각 및 분석 내용을 채워 첫 메시지를 작성한다.
      - Claude가 개설 시: `msg/0001-c2a-channel-open.md`
      - agy가 개설 시: `msg/0001-a2c-channel-open.md`
    - `INDEX.md` 맨 아래에 0001 첫 줄(`| 0001 | <시각> | <방향> | [채널 개통] ... | 보냄 |`)을 등록한다.

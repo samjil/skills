@@ -1,4 +1,4 @@
-if ($MyInvocation.MyCommand.Path -and (-not $env:SAMJIL_UTF8_ACTIVE)) {
+﻿if ($MyInvocation.MyCommand.Path -and (-not $env:SAMJIL_UTF8_ACTIVE)) {
     $env:SAMJIL_UTF8_ACTIVE = "1"
     $env:SAMJIL_SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
     try {
@@ -207,36 +207,104 @@ foreach ($sName in $targetSkills) {
 # 3. 부속 도구 및 스크립트, 웹 파일 설치 (~/.samjil/)
 # -----------------------------------------------------------------------------
 $SamjilRoot = Join-Path $env:USERPROFILE ".samjil"
-$srcRuntime = Join-Path $SkillsSourceDir "runtime"
+New-Item -ItemType Directory -Force -Path $SamjilRoot | Out-Null
 
+# 3-1. 런타임 배치 (~/.samjil/delegate-agy, ~/.samjil/handoff)
+$srcRuntime = Join-Path $SkillsSourceDir "runtime"
 if (Test-Path $srcRuntime) {
-    New-Item -ItemType Directory -Force -Path $SamjilRoot | Out-Null
-    Copy-Item -Recurse -Force -Path (Join-Path $srcRuntime "*") -Destination $SamjilRoot
-    Write-Host "[+] samjil 런타임 및 부속 도구 배치 완료 (~/.samjil/)" -ForegroundColor Green
+    $srcDelegate = Join-Path $srcRuntime "delegate-agy"
+    if (Test-Path $srcDelegate) {
+        $destDelegate = Join-Path $SamjilRoot "delegate-agy"
+        New-Item -ItemType Directory -Force -Path $destDelegate | Out-Null
+        Copy-Item -Recurse -Force -Path (Join-Path $srcDelegate "*") -Destination $destDelegate
+        Write-Host "[+] delegate-agy 런타임 및 스크립트 배치 완료 (~/.samjil/delegate-agy)" -ForegroundColor Green
+    }
+
+    $srcHandoff = Join-Path $srcRuntime "handoff"
+    if (Test-Path $srcHandoff) {
+        $destHandoff = Join-Path $SamjilRoot "handoff"
+        New-Item -ItemType Directory -Force -Path $destHandoff | Out-Null
+        Copy-Item -Recurse -Force -Path (Join-Path $srcHandoff "*") -Destination $destHandoff
+        Write-Host "[+] handoff 템플릿 배치 완료 (~/.samjil/handoff)" -ForegroundColor Green
+    }
 }
 
-# 3-3. 기존 레거시 대화 기록 자동 복사 마이그레이션 (대화 파일이 있을 때만)
-$HandoffDir = Join-Path $SamjilRoot "samjil-handoff"
+# 3-2. 통합 웹 뷰어 실행부 배치 (~/.samjil/web, ~/.samjil/serve-viewer.*)
+$srcWeb = Join-Path $SkillsSourceDir "web"
+if (Test-Path $srcWeb) {
+    $destWeb = Join-Path $SamjilRoot "web"
+    New-Item -ItemType Directory -Force -Path $destWeb | Out-Null
+    Copy-Item -Recurse -Force -Path (Join-Path $srcWeb "*") -Destination $destWeb
+    Write-Host "[+] 통합 대시보드 웹 파일 배치 완료 (~/.samjil/web)" -ForegroundColor Green
+}
+
+$viewerFiles = @("serve-viewer.ps1")
+foreach ($vf in $viewerFiles) {
+    $srcVf = Join-Path $SkillsSourceDir $vf
+    if (Test-Path $srcVf) {
+        Copy-Item -Force -LiteralPath $srcVf -Destination (Join-Path $SamjilRoot $vf)
+    }
+}
+Write-Host "[+] 통합 뷰어 실행 스크립트 배치 완료 (~/.samjil/serve-viewer.ps1)" -ForegroundColor Green
+
+# 3-3. 중복/구버전 스크립트 정리 (~/.samjil/)
+$oldRedundantFiles = @(
+    (Join-Path $SamjilRoot "serve-viewer.bat"),
+    (Join-Path $SamjilRoot "serve-dashboard.bat"),
+    (Join-Path $SamjilRoot "delegate-agy\scripts\start-agy.bat"),
+    (Join-Path $SamjilRoot "delegate-agy\scripts\stop-agy.bat"),
+    (Join-Path $SamjilRoot "delegate-agy\scripts\restart-agy.bat"),
+    (Join-Path $SamjilRoot "delegate-agy\scripts\serve-dashboard.bat"),
+    (Join-Path $SamjilRoot "delegate-agy\scripts\serve-report.bat"),
+    (Join-Path $SamjilRoot "delegate-agy\scripts\check-and-start.ps1"),
+    (Join-Path $SamjilRoot "delegate-agy\scripts\restart-agy.ps1"),
+    (Join-Path $SamjilRoot "delegate-agy\scripts\stop-watchdog.ps1")
+)
+foreach ($orf in $oldRedundantFiles) {
+    if (Test-Path -LiteralPath $orf) {
+        Remove-Item -Force -LiteralPath $orf -ErrorAction SilentlyContinue
+    }
+}
+
+# 3-4. 기존 레거시 데이터 자동 마이그레이션 (대화 기록 및 QA 로그 보존)
+$newHandoffDir = Join-Path $SamjilRoot "handoff"
 $legacyHandoffPaths = @(
+    (Join-Path $SamjilRoot "samjil-handoff"),
     (Join-Path $SamjilRoot "agent-handoff"),
-    (Join-Path $SamjilRoot "handoff"),
     (Join-Path $env:USERPROFILE ".agent-handoff")
 )
 foreach ($legacy in $legacyHandoffPaths) {
     if (Test-Path $legacy) {
         $legacyProjects = Get-ChildItem -LiteralPath $legacy -Directory -ErrorAction SilentlyContinue
         if ($legacyProjects.Count -gt 0) {
-            New-Item -ItemType Directory -Force -Path $HandoffDir | Out-Null
+            New-Item -ItemType Directory -Force -Path $newHandoffDir | Out-Null
             foreach ($proj in $legacyProjects) {
-                if ($proj.Name -eq "viewer" -or $proj.Name -eq "templates") { continue }
-                $dest = Join-Path $HandoffDir $proj.Name
+                if ($proj.Name -eq "viewer" -or $proj.Name -eq "templates" -or $proj.Name -eq "scripts") { continue }
+                $dest = Join-Path $newHandoffDir $proj.Name
                 if (-not (Test-Path $dest)) {
                     Copy-Item -Recurse -Force -LiteralPath $proj.FullName -Destination $dest
-                    Write-Host "[*] 기존 대화 기록을 ~/.samjil/samjil-handoff 로 이전했습니다: $($proj.Name)" -ForegroundColor Green
+                    Write-Host "[*] 기존 대화 기록을 ~/.samjil/handoff 로 이전했습니다: $($proj.Name)" -ForegroundColor Green
                 }
             }
         }
+        $oldViewer = Join-Path $legacy "viewer"
+        if (Test-Path $oldViewer) { Remove-Item -Recurse -Force $oldViewer -ErrorAction SilentlyContinue }
+        $oldTemplates = Join-Path $legacy "templates"
+        if (Test-Path $oldTemplates) { Remove-Item -Recurse -Force $oldTemplates -ErrorAction SilentlyContinue }
     }
+}
+
+$oldDelegateLogs = Join-Path $SamjilRoot "samjil-delegate-agy\runtime\logs"
+$newDelegateLogs = Join-Path $SamjilRoot "delegate-agy\runtime\logs"
+if ((Test-Path $oldDelegateLogs) -and (-not (Test-Path $newDelegateLogs))) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $SamjilRoot "delegate-agy\runtime") | Out-Null
+    Copy-Item -Recurse -Force -LiteralPath $oldDelegateLogs -Destination $newDelegateLogs
+    Write-Host "[*] 기존 위임 로그를 ~/.samjil/delegate-agy 로 이전했습니다" -ForegroundColor Green
+}
+
+$oldDelegateScripts = Join-Path $SamjilRoot "samjil-delegate-agy\scripts"
+if (Test-Path $oldDelegateScripts) {
+    Remove-Item -Recurse -Force $oldDelegateScripts -ErrorAction SilentlyContinue
 }
 
 # 원격 설치 임시 파일 정리
@@ -252,8 +320,10 @@ Write-Host "  [스킬 (순수 SKILL.md)]" -ForegroundColor White
 Write-Host "    - Claude Code : ~/.claude/skills/samjil-*" -ForegroundColor Gray
 Write-Host "    - Antigravity : ~/.agents/skills/samjil-*" -ForegroundColor Gray
 Write-Host "  [도구 및 웹 파일 (~/.samjil)]" -ForegroundColor White
-Write-Host "    - 웹 뷰어 실행 : ~/.samjil/samjil-handoff/viewer/serve-handoff.bat" -ForegroundColor Gray
-Write-Host "    - 위임 워처 실행 : ~/.samjil/samjil-delegate-agy/scripts/start-agy.bat" -ForegroundColor Gray
-Write-Host "    - 대화 저장소   : ~/.samjil/samjil-handoff/" -ForegroundColor Gray
+Write-Host "    - 통합 웹 뷰어 실행 : ~/.samjil/serve-viewer.ps1" -ForegroundColor Cyan
+Write-Host "      (브라우저에서 Delegate QA / Handoff 탭 선택 열람)" -ForegroundColor Gray
+Write-Host "    - 위임 워처 시작/재시작 : ~/.samjil/delegate-agy/scripts/start-agy.ps1" -ForegroundColor Gray
+Write-Host "    - 위임 워처 안전 중지   : ~/.samjil/delegate-agy/scripts/stop-agy.ps1" -ForegroundColor Gray
+Write-Host "    - 대화 저장소         : ~/.samjil/handoff/" -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""

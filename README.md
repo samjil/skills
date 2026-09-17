@@ -84,17 +84,24 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
 
 설치 후 `~/.samjil/` 디렉터리에서 바로 실행할 수 있습니다:
 
-- **🤝 에이전트 대화 웹 뷰어**:
+- **🤝 통합 웹 대시보드 뷰어 (Handoff & Delegate QA)**:
   ```powershell
-  ~\.samjil\samjil-handoff\viewer\serve-handoff.bat
+  ~\.samjil\serve-viewer.ps1
   ```
-  실행 시 로컬 브라우저(`http://127.0.0.1:8787`)에서 프로젝트별 핸드오프 대화 타임라인, 상태 배지, 마크다운 본문을 실시간으로 열람할 수 있습니다.
+  실행 시 로컬 브라우저(`http://127.0.0.1:8787`)에서 탭 전환을 통해:
+  - **Handoff 탭**: 프로젝트별 핸드오프 대화 타임라인, 상태 배지, 마크다운 본문 실시간 열람
+  - **Delegate QA 탭**: Antigravity CLI 위임 내역, 프롬프트, 답변, 토큰 사용량, 소요시간 실시간 확인
 
-- **⚡ Antigravity CLI 위임 워처**:
+- **⚡ Antigravity CLI 위임 워처 시작/재시작**:
   ```powershell
-  ~\.samjil\samjil-delegate-agy\scripts\start-agy.bat
+  ~\.samjil\delegate-agy\scripts\start-agy.ps1
   ```
-  실행 시 `~/.samjil/samjil-delegate-agy/runtime/inbox`를 감시하며 Claude로부터 위임받은 작업을 `agy` CLI로 자동 처리하고 응답을 반환합니다.
+  실행 시 `~/.samjil/delegate-agy/runtime/inbox`를 감시하며 Claude로부터 위임받은 작업을 `agy` CLI로 자동 처리하고 응답을 반환합니다.
+
+- **🛑 Antigravity CLI 위임 워처 안전 중지**:
+  ```powershell
+  ~\.samjil\delegate-agy\scripts\stop-agy.ps1
+  ```
 
 ---
 

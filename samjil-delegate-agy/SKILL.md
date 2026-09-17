@@ -1,6 +1,6 @@
----
+﻿---
 name: samjil-delegate-agy
-description: "사용자 컴퓨터에 agy 워처(~/.samjil/samjil-delegate-agy/scripts/start-agy.bat)가 떠 있으면, 높은 모델 성능이 필요 없는 작업은 기본적으로 전부 Antigravity CLI(agy)에 파일 기반으로 위임해서 Claude quota를 아낀다. 위임이 기본값이고 직접 처리는 예외(맥락 필요/판단 필요/실수 비용 큼/Claude 전용 도구 필요/왕복보다 빠름)다. 프로젝트 폴더 코딩 위임은 대화당 폴더를 한 번 확인받고 이후 자동 위임한다. 위임 사실은 매번 짧게 밝히고, 워처가 응답하지 않으면 직접 처리로 폴백한다."
+description: "사용자 컴퓨터에 agy 워처(~/.samjil/delegate-agy/scripts/start-agy.ps1)가 떠 있으면, 높은 모델 성능이 필요 없는 작업은 기본적으로 전부 Antigravity CLI(agy)에 파일 기반으로 위임해서 Claude quota를 아낀다. 위임이 기본값이고 직접 처리는 예외(맥락 필요/판단 필요/실수 비용 큼/Claude 전용 도구 필요/왕복보다 빠름)다. 프로젝트 폴더 코딩 위임은 대화당 폴더를 한 번 확인받고 이후 자동 위임한다. 위임 사실은 매번 짧게 밝히고, 워처가 응답하지 않으면 직접 처리로 폴백한다."
 ---
 
 # samjil-delegate-agy: Antigravity CLI 위임 (기본값 = 위임)
@@ -39,34 +39,33 @@ description: "사용자 컴퓨터에 agy 워처(~/.samjil/samjil-delegate-agy/sc
 ## 사전 조건 및 런타임 자동 확인/설치
 
 - `mcp__remote-devices__*` 도구가 이 세션에 있어야 한다. 없으면 위임 없이 바로 직접 처리.
-- **위임 런타임 환경 자동 확인 및 설치:**
-  이 스킬의 실행 스크립트와 런타임은 `~/.samjil/samjil-delegate-agy/`에 위치합니다.
-  작업을 수행하기 전, `~/.samjil/samjil-delegate-agy/scripts/watch-agy.ps1` 또는 `start-agy.bat`이 존재하는지 확인합니다.
-  만약 존재하지 않는다면(`npx skills` 등으로 스킬 파일만 설치된 경우), 터미널 도구를 통해 다음 명령어를 **자동 1회 실행**하여 samjil 런타임 환경을 즉시 설치하고 작업을 계속 진행합니다:
-  ```powershell
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/samjil/skills/main/install.ps1 | iex"
-  ```
-- **위임 런타임 폴더(`~/.samjil/samjil-delegate-agy/runtime`)를 찾는다.**
-  독립 스킬 구조에서는 사용자 홈 디렉터리의 `~/.samjil/samjil-delegate-agy/runtime`을 사용한다.
+- **위임 런타임 환경 확인:**
+  이 스킬의 실행 스크립트와 런타임은 사용자 홈 디렉터리의 `~/.samjil/delegate-agy/`에 위치합니다.
+  작업을 수행하기 전, `~/.samjil/delegate-agy/scripts/watch-agy.ps1` 또는 `start-agy.ps1`이 존재하는지 확인합니다.
+  만약 존재하지 않는다면(스킬 규약만 단독 설치된 경우), 에이전트가 임의로 외부 스크립트를 내려받거나 실행하지 않고, 사용자에게 런타임 환경 구성이 필요함을 안내합니다:
+  > "Antigravity 위임 워처 런타임(~/.samjil/delegate-agy/)이 감지되지 않았습니다. 저장소의 install.ps1을 실행하여 런타임을 구성해 주세요."
+- **위임 런타임 폴더(`~/.samjil/delegate-agy/runtime`)를 찾는다.**
+  독립 스킬 구조에서는 사용자 홈 디렉터리의 `~/.samjil/delegate-agy/runtime`을 사용한다.
   (원격 장치 마운트 환경에서는 `~/mnt/` 아래를 자동 탐색한다.)
   아래 코드 블록은 각각 독립된 `device_bash` 호출이라 변수가 이어지지 않으므로, `$BASE`가
   필요한 블록마다 이 탐색을 맨 앞에 넣는다.
 
 ```bash
 BASE=""
-[ -d "$HOME/.samjil/samjil-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/samjil-delegate-agy/runtime"
+[ -d "$HOME/.samjil/delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/delegate-agy/runtime"
+[ -z "$BASE" ] && [ -d "$HOME/.samjil/samjil-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/samjil-delegate-agy/runtime"
 [ -z "$BASE" ] && [ -d "$HOME/.samjil/agent-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/agent-delegate-agy/runtime"
 [ -z "$BASE" ] && [ -d "$HOME/.samjil/delegate/runtime/inbox" ] && BASE="$HOME/.samjil/delegate/runtime"
 [ -z "$BASE" ] && [ -d "$HOME/.agent-delegate/runtime/inbox" ] && BASE="$HOME/.agent-delegate/runtime"
 if [ -z "$BASE" ]; then
-  BASE=$(find ~/mnt -maxdepth 6 -type d \( -path "*/.samjil/samjil-delegate-agy/runtime" -o -path "*/.samjil/agent-delegate-agy/runtime" -o -path "*/.samjil/delegate/runtime" -o -path "*/.agent-delegate/runtime" \) 2>/dev/null | head -1)
+  BASE=$(find ~/mnt -maxdepth 6 -type d \( -path "*/.samjil/delegate-agy/runtime" -o -path "*/.samjil/samjil-delegate-agy/runtime" -o -path "*/.samjil/agent-delegate-agy/runtime" -o -path "*/.samjil/delegate/runtime" -o -path "*/.agent-delegate/runtime" \) 2>/dev/null | head -1)
 fi
 if [ -z "$BASE" ]; then
   for f in $(find ~/mnt -maxdepth 6 -type f -path "*/watch-agy.ps1" 2>/dev/null); do
     r="$(dirname "$(dirname "$f")")"; [ -d "$r/runtime/inbox" ] && BASE="$r/runtime" && break
   done
 fi
-[ -z "$BASE" ] && echo "위임 런타임 폴더(~/.samjil/samjil-delegate-agy/runtime)를 찾지 못함" && exit 1
+[ -z "$BASE" ] && echo "위임 런타임 폴더(~/.samjil/delegate-agy/runtime)를 찾지 못함" && exit 1
 echo "found: $BASE"
 ```
 
@@ -75,7 +74,7 @@ echo "found: $BASE"
   나이가 300초 이내면 정상 (PC 이름은 알 수 없으니 글롭으로 찾는다 - PC마다 독립 실행이라
   보통 파일이 하나뿐이다). 오래됐으면 워치독(`ensure-agy-running.ps1`)이 2분 안에 자동
   복구하므로, 한 번 더 시도해보고 그래도 안 되면 직접 처리로 폴백하면서 "워처가 꺼져 있는
-   것 같다(~/.samjil/samjil-delegate-agy/scripts/start-agy.bat 실행 필요)"고 한 번만 알린다.
+   것 같다(~/.samjil/delegate-agy/scripts/start-agy.ps1 실행 필요)"고 한 번만 알린다.
 
 ```bash
 H=$(ls -t "$BASE/logs/heartbeat"/hb_*.txt 2>/dev/null | head -1)
@@ -123,13 +122,20 @@ agy는 기본적으로 매번 빈 상태로 시작한다(이 스킬 맨 위 "직
 ```bash
 set -e
 BASE=""
-[ -d "$HOME/.samjil/samjil-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/samjil-delegate-agy/runtime"
+[ -d "$HOME/.samjil/delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/delegate-agy/runtime"
+[ -z "$BASE" ] && [ -d "$HOME/.samjil/samjil-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/samjil-delegate-agy/runtime"
 [ -z "$BASE" ] && [ -d "$HOME/.samjil/agent-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/agent-delegate-agy/runtime"
 [ -z "$BASE" ] && [ -d "$HOME/.samjil/delegate/runtime/inbox" ] && BASE="$HOME/.samjil/delegate/runtime"
 [ -z "$BASE" ] && [ -d "$HOME/.agent-delegate/runtime/inbox" ] && BASE="$HOME/.agent-delegate/runtime"
-[ -z "$BASE" ] && BASE=$(find ~/mnt -maxdepth 6 -type d \( -path "*/.samjil/samjil-delegate-agy/runtime" -o -path "*/.samjil/agent-delegate-agy/runtime" -o -path "*/.samjil/delegate/runtime" -o -path "*/.agent-delegate/runtime" \) 2>/dev/null | head -1)
-[ -z "$BASE" ] && for f in $(find ~/mnt -maxdepth 6 -type f -path "*/watch-agy.ps1" 2>/dev/null); do r="$(dirname "$(dirname "$f")")"; [ -d "$r/runtime/inbox" ] && BASE="$r/runtime" && break; done
-[ -z "$BASE" ] && echo "위임 런타임 폴더(~/.samjil/samjil-delegate-agy/runtime)를 찾지 못함" && exit 1
+if [ -z "$BASE" ]; then
+  BASE=$(find ~/mnt -maxdepth 6 -type d \( -path "*/.samjil/delegate-agy/runtime" -o -path "*/.samjil/samjil-delegate-agy/runtime" -o -path "*/.samjil/agent-delegate-agy/runtime" -o -path "*/.samjil/delegate/runtime" -o -path "*/.agent-delegate/runtime" \) 2>/dev/null | head -1)
+fi
+if [ -z "$BASE" ]; then
+  for f in $(find ~/mnt -maxdepth 6 -type f -path "*/watch-agy.ps1" 2>/dev/null); do
+    r="$(dirname "$(dirname "$f")")"; [ -d "$r/runtime/inbox" ] && BASE="$r/runtime" && break
+  done
+fi
+[ -z "$BASE" ] && echo "위임 런타임 폴더(~/.samjil/delegate-agy/runtime)를 찾지 못함" && exit 1
 
 TASK_ID="claude_$(date +%s)_$RANDOM"
 cat > "$BASE/inbox/$TASK_ID.md" <<'CLAUDE_TASK_EOF'
@@ -155,13 +161,20 @@ echo "===TIMEOUT==="; exit 2
 ```bash
 set -e
 BASE=""
-[ -d "$HOME/.samjil/samjil-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/samjil-delegate-agy/runtime"
+[ -d "$HOME/.samjil/delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/delegate-agy/runtime"
+[ -z "$BASE" ] && [ -d "$HOME/.samjil/samjil-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/samjil-delegate-agy/runtime"
 [ -z "$BASE" ] && [ -d "$HOME/.samjil/agent-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/agent-delegate-agy/runtime"
 [ -z "$BASE" ] && [ -d "$HOME/.samjil/delegate/runtime/inbox" ] && BASE="$HOME/.samjil/delegate/runtime"
 [ -z "$BASE" ] && [ -d "$HOME/.agent-delegate/runtime/inbox" ] && BASE="$HOME/.agent-delegate/runtime"
-[ -z "$BASE" ] && BASE=$(find ~/mnt -maxdepth 6 -type d \( -path "*/.samjil/samjil-delegate-agy/runtime" -o -path "*/.samjil/agent-delegate-agy/runtime" -o -path "*/.samjil/delegate/runtime" -o -path "*/.agent-delegate/runtime" \) 2>/dev/null | head -1)
-[ -z "$BASE" ] && for f in $(find ~/mnt -maxdepth 6 -type f -path "*/watch-agy.ps1" 2>/dev/null); do r="$(dirname "$(dirname "$f")")"; [ -d "$r/runtime/inbox" ] && BASE="$r/runtime" && break; done
-[ -z "$BASE" ] && echo "위임 런타임 폴더(~/.samjil/samjil-delegate-agy/runtime)를 찾지 못함" && exit 1
+if [ -z "$BASE" ]; then
+  BASE=$(find ~/mnt -maxdepth 6 -type d \( -path "*/.samjil/delegate-agy/runtime" -o -path "*/.samjil/samjil-delegate-agy/runtime" -o -path "*/.samjil/agent-delegate-agy/runtime" -o -path "*/.samjil/delegate/runtime" -o -path "*/.agent-delegate/runtime" \) 2>/dev/null | head -1)
+fi
+if [ -z "$BASE" ]; then
+  for f in $(find ~/mnt -maxdepth 6 -type f -path "*/watch-agy.ps1" 2>/dev/null); do
+    r="$(dirname "$(dirname "$f")")"; [ -d "$r/runtime/inbox" ] && BASE="$r/runtime" && break
+  done
+fi
+[ -z "$BASE" ] && echo "위임 런타임 폴더(~/.samjil/delegate-agy/runtime)를 찾지 못함" && exit 1
 
 STAMP=$(date +%s)_$RANDOM
 T1="claude_${STAMP}_a"; T2="claude_${STAMP}_b"
@@ -194,7 +207,7 @@ done
 
 ## agy 모델과 로그
 
-`watch-agy.ps1`이 `$ModelPriority` 배열에 따라 `--model`을 직접 지정해 호출한다(현재 Gemini 계열). 위임할 때 모델을 지정할 필요는 없다. 결과는 `~/.samjil/samjil-delegate-agy/runtime/logs/usage.csv`(작업별), `usage_summary.csv`(모델별 집계), `data/qa-*.jsonl`에 자동 기록된다.
+`watch-agy.ps1`이 `$ModelPriority` 배열에 따라 `--model`을 직접 지정해 호출한다(현재 Gemini 계열). 위임할 때 모델을 지정할 필요는 없다. 결과는 `~/.samjil/delegate-agy/runtime/logs/usage.csv`(작업별), `usage_summary.csv`(모델별 집계), `data/qa-*.jsonl`에 자동 기록된다. 이 위임 기록과 Handoff 인수인계 내역은 통합 대시보드(`~/.samjil/serve-viewer.ps1` / http://127.0.0.1:8787)에서 브라우저 탭으로 실시간 확인할 수 있다.
 
 ## 구현 상세 (시행착오 기록 - 재발견 방지용)
 
@@ -206,4 +219,4 @@ done
 
 ## 독립 실행 및 다른 브리지와의 구분
 
-이 스킬은 Antigravity CLI(agy) 전용 위임 스킬이며, 외부 브리지 도구 없이 스킬 내의 `scripts/start-agy.bat`을 실행하여 독립적으로 워처를 가동할 수 있다. 목적이 quota 분산이므로 Claude Code CLI로 위임하는 것은 의미가 없다.
+이 스킬은 Antigravity CLI(agy) 전용 위임 스킬이며, 외부 브리지 도구 없이 스킬 내의 `scripts/start-agy.ps1`을 실행하여 독립적으로 워처를 가동할 수 있다. 목적이 quota 분산이므로 Claude Code CLI로 위임하는 것은 의미가 없다.
