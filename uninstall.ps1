@@ -41,7 +41,7 @@ function Remove-SkillTarget([string]$Path) {
     }
 }
 
-$targetSkills = @("agent-handoff", "agent-delegate-agy")
+$targetSkills = @("samjil-handoff", "samjil-delegate-agy", "agent-handoff", "agent-delegate-agy")
 
 # -----------------------------------------------------------------------------
 # 1. Claude Code 전역 스킬 제거 (~/.claude/skills/)
@@ -99,31 +99,43 @@ if (Test-Path $skillsJsonPath) {
 $samjilDir = Join-Path $env:USERPROFILE ".samjil"
 if (Test-Path -LiteralPath $samjilDir) {
     # 4-1. Delegate 디렉터리 (scripts + runtime) 제거
-    $delegateDir = Join-Path $samjilDir "agent-delegate-agy"
-    if (Test-Path -LiteralPath $delegateDir) {
-        Remove-Item -Recurse -Force -LiteralPath $delegateDir -ErrorAction SilentlyContinue
-        Write-Host "[+] Delegate 도구 및 런타임 삭제 완료: $delegateDir" -ForegroundColor Green
+    $delegateDirs = @((Join-Path $samjilDir "samjil-delegate-agy"), (Join-Path $samjilDir "agent-delegate-agy"))
+    foreach ($dd in $delegateDirs) {
+        if (Test-Path -LiteralPath $dd) {
+            Remove-Item -Recurse -Force -LiteralPath $dd -ErrorAction SilentlyContinue
+            Write-Host "[+] Delegate 도구 및 런타임 삭제 완료: $dd" -ForegroundColor Green
+        }
     }
 
-    # 4-2. Handoff 웹 뷰어 도구 (~/.samjil/agent-handoff/viewer) 제거
-    $handoffViewer = Join-Path $samjilDir "agent-handoff\viewer"
-    if (Test-Path -LiteralPath $handoffViewer) {
-        Remove-Item -Recurse -Force -LiteralPath $handoffViewer -ErrorAction SilentlyContinue
-        Write-Host "[+] Handoff 웹 뷰어 도구 삭제 완료: $handoffViewer" -ForegroundColor Green
+    # 4-2. Handoff 웹 뷰어 도구 제거
+    $viewerDirs = @(
+        (Join-Path $samjilDir "samjil-handoff\viewer"),
+        (Join-Path $samjilDir "agent-handoff\viewer")
+    )
+    foreach ($vd in $viewerDirs) {
+        if (Test-Path -LiteralPath $vd) {
+            Remove-Item -Recurse -Force -LiteralPath $vd -ErrorAction SilentlyContinue
+            Write-Host "[+] Handoff 웹 뷰어 도구 삭제 완료: $vd" -ForegroundColor Green
+        }
     }
 
-    # 4-3. Handoff 대화 저장소 처리 (~/.samjil/agent-handoff/)
-    $handoffDir = Join-Path $samjilDir "agent-handoff"
-    if (Test-Path -LiteralPath $handoffDir) {
-        # 실제 대화 파일(.md)이 남아있는지 확인
-        $handoffFiles = @(Get-ChildItem -LiteralPath $handoffDir -Recurse -File -Filter "*.md" -ErrorAction SilentlyContinue)
-        if ($handoffFiles.Count -gt 0) {
-            # 실제 대화 기록이 있으면 100% 영구 보존!
-            Write-Host "[i] 에이전트 대화 기록($($handoffFiles.Count)건)이 존재하여 안전하게 보존합니다: $handoffDir" -ForegroundColor Cyan
-        } else {
-            # 대화 파일이 없는 빈 폴더면 클린 삭제
-            Remove-Item -Recurse -Force -LiteralPath $handoffDir -ErrorAction SilentlyContinue
-            Write-Host "[+] 빈 Handoff 디렉터리 삭제 완료: $handoffDir" -ForegroundColor Green
+    # 4-3. Handoff 대화 저장소 처리 (~/.samjil/samjil-handoff/, ~/.samjil/agent-handoff/)
+    $handoffDirs = @(
+        (Join-Path $samjilDir "samjil-handoff"),
+        (Join-Path $samjilDir "agent-handoff")
+    )
+    foreach ($hd in $handoffDirs) {
+        if (Test-Path -LiteralPath $hd) {
+            # 실제 대화 파일(.md)이 남아있는지 확인
+            $handoffFiles = @(Get-ChildItem -LiteralPath $hd -Recurse -File -Filter "*.md" -ErrorAction SilentlyContinue)
+            if ($handoffFiles.Count -gt 0) {
+                # 실제 대화 기록이 있으면 100% 영구 보존!
+                Write-Host "[i] 에이전트 대화 기록($($handoffFiles.Count)건)이 존재하여 안전하게 보존합니다: $hd" -ForegroundColor Cyan
+            } else {
+                # 대화 파일이 없는 빈 폴더면 클린 삭제
+                Remove-Item -Recurse -Force -LiteralPath $hd -ErrorAction SilentlyContinue
+                Write-Host "[+] 빈 Handoff 디렉터리 삭제 완료: $hd" -ForegroundColor Green
+            }
         }
     }
 

@@ -11,8 +11,8 @@ Antigravity(agy) 및 Claude Code 등 AI 코딩 에이전트를 위한 공용 스
 
 | 스킬 | 설명 |
 |---|---|
-| [`agent-handoff/`](agent-handoff/) | Claude ↔ Antigravity(agy) 간 파일 기반 비동기 대화 채널 규약 및 자율 개설 프로토콜 |
-| [`agent-delegate-agy/`](agent-delegate-agy/) | 복잡도/비용 판단에 따른 Antigravity CLI(agy) 작업 위임 기준 및 inbox/outbox 전달 규약 |
+| [`samjil-handoff/`](samjil-handoff/) | Claude ↔ Antigravity(agy) 간 파일 기반 비동기 대화 채널 규약 및 자율 개설 프로토콜 |
+| [`samjil-delegate-agy/`](samjil-delegate-agy/) | 복잡도/비용 판단에 따른 Antigravity CLI(agy) 작업 위임 기준 및 inbox/outbox 전달 규약 |
 
 ---
 
@@ -21,12 +21,12 @@ Antigravity(agy) 및 Claude Code 등 AI 코딩 에이전트를 위한 공용 스
 1. **저장소(`samjil/skills`)는 소스 코드 및 설치 패키지 전용**:
    - Git 저장소는 개발 및 배포용으로만 사용되며, 에이전트 스킬로 직접 연결되지 않습니다.
 2. **순수 스킬 정의(`SKILL.md`)만 에이전트에 등록**:
-   - **Claude Code**: `~/.claude/skills/<스킬명>/SKILL.md`
+   - **Claude Code**: `~/.claude/skills/<스킬명>` (정션 링크)
    - **Antigravity (AGY)**: `~/.agents/skills/<스킬명>/SKILL.md`
    - 에이전트 디렉터리에는 불필요한 스크립트나 웹 파일을 두지 않고 순수 스킬 정의만 깔끔하게 유지합니다.
 3. **부속 도구/스크립트/웹 파일은 `~/.samjil/`에서 통합 관리**:
    - 웹 뷰어 서버 및 위임 실행 워처 등 추가 실행 도구는 `~/.samjil/` 아래에 안전하게 격리되어 관리됩니다.
-   - 에이전트 간 대화 기록(`~/.samjil/agent-handoff/<프로젝트>/msg/`)은 스킬을 삭제하거나 업데이트해도 **100% 영구 보존**됩니다.
+   - 에이전트 간 대화 기록(`~/.samjil/samjil-handoff/<프로젝트>/msg/`)은 스킬을 삭제하거나 업데이트해도 **100% 영구 보존**됩니다.
 
 ---
 
@@ -55,7 +55,7 @@ irm https://raw.githubusercontent.com/samjil/skills/main/install.ps1 | iex
 npx skills add samjil/skills -g
 
 # 또는 특정 스킬만 설치
-npx skills add samjil/skills -g --skill agent-handoff
+npx skills add samjil/skills -g --skill samjil-handoff
 ```
 > 💡 `npx skills`로 설치하더라도 스킬 디렉터리에는 순수 `SKILL.md`만 깔끔하게 설치되며, 최초 작업 시 AI가 부속 도구 및 런타임 환경(`~/.samjil/`)을 자동으로 구성합니다.
 
@@ -76,7 +76,7 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
 # 또는
 .\install.ps1 -Uninstall
 ```
-*(에이전트끼리 대화하면서 생성된 대화 기록(`~/.samjil/agent-handoff/`)은 사용자의 소중한 자산이므로 제거 시에도 절대 삭제되지 않고 영구 보존됩니다.)*
+*(에이전트끼리 대화하면서 생성된 대화 기록(`~/.samjil/samjil-handoff/`)은 사용자의 소중한 자산이므로 제거 시에도 절대 삭제되지 않고 영구 보존됩니다.)*
 
 ---
 
@@ -86,15 +86,15 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
 
 - **🤝 에이전트 대화 웹 뷰어**:
   ```powershell
-  ~\.samjil\agent-handoff\viewer\serve-handoff.bat
+  ~\.samjil\samjil-handoff\viewer\serve-handoff.bat
   ```
   실행 시 로컬 브라우저(`http://127.0.0.1:8787`)에서 프로젝트별 핸드오프 대화 타임라인, 상태 배지, 마크다운 본문을 실시간으로 열람할 수 있습니다.
 
 - **⚡ Antigravity CLI 위임 워처**:
   ```powershell
-  ~\.samjil\agent-delegate-agy\scripts\start-agy.bat
+  ~\.samjil\samjil-delegate-agy\scripts\start-agy.bat
   ```
-  실행 시 `~/.samjil/agent-delegate-agy/runtime/inbox`를 감시하며 Claude로부터 위임받은 작업을 `agy` CLI로 자동 처리하고 응답을 반환합니다.
+  실행 시 `~/.samjil/samjil-delegate-agy/runtime/inbox`를 감시하며 Claude로부터 위임받은 작업을 `agy` CLI로 자동 처리하고 응답을 반환합니다.
 
 ---
 

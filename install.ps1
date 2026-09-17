@@ -138,7 +138,22 @@ $AgentsSkillsRoot = Join-Path $env:USERPROFILE ".agents\skills"
 
 New-Item -ItemType Directory -Force -Path $ClaudeSkillsRoot, $AgentsSkillsRoot | Out-Null
 
-$targetSkills = @("agent-handoff", "agent-delegate-agy")
+# 구버전 스킬 정리 (agent-handoff, agent-delegate-agy)
+$legacySkills = @("agent-handoff", "agent-delegate-agy")
+foreach ($old in $legacySkills) {
+    $cOld = Join-Path $ClaudeSkillsRoot $old
+    if (Test-Path $cOld) {
+        $item = Get-Item -LiteralPath $cOld -Force
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { cmd /c rmdir "$cOld" 2>&1 | Out-Null }
+        else { Remove-Item -Recurse -Force -LiteralPath $cOld -ErrorAction SilentlyContinue }
+    }
+    $aOld = Join-Path $AgentsSkillsRoot $old
+    if (Test-Path $aOld) {
+        Remove-Item -Recurse -Force -LiteralPath $aOld -ErrorAction SilentlyContinue
+    }
+}
+
+$targetSkills = @("samjil-handoff", "samjil-delegate-agy")
 
 foreach ($sName in $targetSkills) {
     $srcSkillDir = Join-Path $SkillsSourceDir $sName
@@ -183,25 +198,12 @@ if (Test-Path $srcRuntime) {
     New-Item -ItemType Directory -Force -Path $SamjilRoot | Out-Null
     Copy-Item -Recurse -Force -Path (Join-Path $srcRuntime "*") -Destination $SamjilRoot
     Write-Host "[+] samjil 런타임 및 부속 도구 배치 완료 (~/.samjil/)" -ForegroundColor Green
-} else {
-    # 구버전 구조 하위 호환 폴백
-    $srcViewer = Join-Path $SkillsSourceDir "agent-handoff\viewer"
-    if (Test-Path $srcViewer) {
-        $destViewer = Join-Path $SamjilRoot "agent-handoff\viewer"
-        New-Item -ItemType Directory -Force -Path $destViewer | Out-Null
-        Copy-Item -Recurse -Force -Path (Join-Path $srcViewer "*") -Destination $destViewer
-    }
-    $srcScripts = Join-Path $SkillsSourceDir "agent-delegate-agy\scripts"
-    if (Test-Path $srcScripts) {
-        $destScripts = Join-Path $SamjilRoot "agent-delegate-agy\scripts"
-        New-Item -ItemType Directory -Force -Path $destScripts | Out-Null
-        Copy-Item -Recurse -Force -Path (Join-Path $srcScripts "*") -Destination $destScripts
-    }
 }
 
 # 3-3. 기존 레거시 대화 기록 자동 복사 마이그레이션 (대화 파일이 있을 때만)
-$HandoffDir = Join-Path $SamjilRoot "agent-handoff"
+$HandoffDir = Join-Path $SamjilRoot "samjil-handoff"
 $legacyHandoffPaths = @(
+    (Join-Path $SamjilRoot "agent-handoff"),
     (Join-Path $SamjilRoot "handoff"),
     (Join-Path $env:USERPROFILE ".agent-handoff")
 )
@@ -211,10 +213,11 @@ foreach ($legacy in $legacyHandoffPaths) {
         if ($legacyProjects.Count -gt 0) {
             New-Item -ItemType Directory -Force -Path $HandoffDir | Out-Null
             foreach ($proj in $legacyProjects) {
+                if ($proj.Name -eq "viewer" -or $proj.Name -eq "templates") { continue }
                 $dest = Join-Path $HandoffDir $proj.Name
                 if (-not (Test-Path $dest)) {
                     Copy-Item -Recurse -Force -LiteralPath $proj.FullName -Destination $dest
-                    Write-Host "[*] 기존 대화 기록을 ~/.samjil/agent-handoff 로 이전했습니다: $($proj.Name)" -ForegroundColor Green
+                    Write-Host "[*] 기존 대화 기록을 ~/.samjil/samjil-handoff 로 이전했습니다: $($proj.Name)" -ForegroundColor Green
                 }
             }
         }
@@ -231,11 +234,11 @@ Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "  설치가 성공적으로 완료되었습니다!" -ForegroundColor Green
 Write-Host "  [스킬 (순수 SKILL.md)]" -ForegroundColor White
-Write-Host "    - Claude Code : ~/.claude/skills/agent-*" -ForegroundColor Gray
-Write-Host "    - Antigravity : ~/.agents/skills/agent-*" -ForegroundColor Gray
+Write-Host "    - Claude Code : ~/.claude/skills/samjil-*" -ForegroundColor Gray
+Write-Host "    - Antigravity : ~/.agents/skills/samjil-*" -ForegroundColor Gray
 Write-Host "  [도구 및 웹 파일 (~/.samjil)]" -ForegroundColor White
-Write-Host "    - 웹 뷰어 실행 : ~/.samjil/agent-handoff/viewer/serve-handoff.bat" -ForegroundColor Gray
-Write-Host "    - 위임 워처 실행 : ~/.samjil/agent-delegate-agy/scripts/start-agy.bat" -ForegroundColor Gray
-Write-Host "    - 대화 저장소   : ~/.samjil/agent-handoff/" -ForegroundColor Gray
+Write-Host "    - 웹 뷰어 실행 : ~/.samjil/samjil-handoff/viewer/serve-handoff.bat" -ForegroundColor Gray
+Write-Host "    - 위임 워처 실행 : ~/.samjil/samjil-delegate-agy/scripts/start-agy.bat" -ForegroundColor Gray
+Write-Host "    - 대화 저장소   : ~/.samjil/samjil-handoff/" -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""

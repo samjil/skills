@@ -1,9 +1,9 @@
 ---
-name: agent-handoff
-description: Claude 와 Antigravity(agy) 가 파일로 주고받는 비동기 대화 채널(agent-handoff) 규약. 메시지를 쓰거나 읽을 때, 원장을 갱신할 때, 새 프로젝트에 채널을 열 때, 작업한 내용을 메시지로 남길 때 쓴다 — "agy 한테 메시지 보내줘", "agy 회신 왔나 봐줘", "채널 열어줘", "0042 처리됨으로 바꿔줘", "작업한 내용 메시지에 남겨줘", "메시지 남겨줘", "agent handoff", "핸드오프" 같은 요청.
+name: samjil-handoff
+description: Claude 와 Antigravity(agy) 가 파일로 주고받는 비동기 대화 채널(samjil-handoff) 규약. 메시지를 쓰거나 읽을 때, 원장을 갱신할 때, 새 프로젝트에 채널을 열 때, 작업한 내용을 메시지로 남길 때 쓴다 — "agy 한테 메시지 보내줘", "agy 회신 왔나 봐줘", "채널 열어줘", "0042 처리됨으로 바꿔줘", "작업한 내용 메시지에 남겨줘", "메시지 남겨줘", "agent handoff", "핸드오프" 같은 요청.
 ---
 
-# agent-handoff
+# samjil-handoff
 
 ## Overview
 
@@ -21,27 +21,27 @@ Claude 와 Antigravity(agy) 가 **파일로 주고받는 비동기 대화 채널
 
 폴더 이름은 **작업 저장소의 폴더 이름과 같게** 둔다. 프로젝트가 늘면 옆에 붙는다.
 
-**채널 루트는 사용자 홈 디렉터리의 `~/.samjil/agent-handoff/` 아래에 둔다.**
+**채널 루트는 사용자 홈 디렉터리의 `~/.samjil/samjil-handoff/` 아래에 둔다.**
 이 스킬을 사용하는 환경에서 채널 루트는 다음 우선순위로 결정한다:
 1. 사용자가 프롬프트에서 명시한 경로
 2. 환경변수 `%AGENT_HANDOFF_ROOT%`
-3. 기본값: `~/.samjil/agent-handoff/<작업 폴더 이름>/` (Windows: `C:\Users\<username>\.samjil\agent-handoff\<작업 폴더 이름>\`, 폴더가 없으면 자동 생성)
+3. 기본값: `~/.samjil/samjil-handoff/<작업 폴더 이름>/` (Windows: `C:\Users\<username>\.samjil\samjil-handoff\<작업 폴더 이름>\`, 폴더가 없으면 자동 생성)
 
 **채널 기록은 PC 사이에 공유하지 않는다.** PC마다 자기 채널을 가진다. 공유하면 두 PC가
 같은 번호를 따고 원장이 서로를 덮어쓴다. **스킬(규약)만 공유한다.**
 
 **코드 저장소 안에 두지 않는다.** 저장소에 들어가면 커밋·브랜치 전환·팀원 노출을 계속
 신경 써야 하는데, 채널 내용은 코드 이력과 수명이 다르다. 저장소에는 채널 경로도 적지
-않는다 — 저장소는 채널을 모른다. `~/.samjil/agent-handoff/`는 코드 저장소 외부이므로 저장소에
+않는다 — 저장소는 채널을 모른다. `~/.samjil/samjil-handoff/`는 코드 저장소 외부이므로 저장소에
 영향을 주지 않는다.
 
-또한 `~/.samjil/agent-handoff/`에 쌓인 대화 기록은 **전용 웹 뷰어(`~/.samjil/agent-handoff/viewer/serve-handoff.bat` / http://127.0.0.1:8787)**에서
+또한 `~/.samjil/samjil-handoff/`에 쌓인 대화 기록은 **전용 웹 뷰어(`~/.samjil/samjil-handoff/viewer/serve-handoff.bat` / http://127.0.0.1:8787)**에서
 실시간으로 함께 열람할 수 있다.
 
 ## 런타임 환경 자동 확인 및 설치
 
-웹 뷰어 서버 및 부속 도구는 `~/.samjil/agent-handoff/viewer/`에 위치합니다.
-만약 웹 뷰어 실행 요청이 있거나 뷰어 도구가 필요한 시점에 `~/.samjil/agent-handoff/viewer/serve-handoff.bat` 파일이 존재하지 않는다면(`npx skills` 등으로 스킬 파일만 설치된 경우), 터미널 도구를 통해 다음 명령어를 **자동 1회 실행**하여 samjil 런타임 환경을 즉시 설치하고 작업을 진행합니다:
+웹 뷰어 서버 및 부속 도구는 `~/.samjil/samjil-handoff/viewer/`에 위치합니다.
+만약 웹 뷰어 실행 요청이 있거나 뷰어 도구가 필요한 시점에 `~/.samjil/samjil-handoff/viewer/serve-handoff.bat` 파일이 존재하지 않는다면(`npx skills` 등으로 스킬 파일만 설치된 경우), 터미널 도구를 통해 다음 명령어를 **자동 1회 실행**하여 samjil 런타임 환경을 즉시 설치하고 작업을 진행합니다:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/samjil/skills/main/install.ps1 | iex"
 ```
@@ -235,7 +235,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubus
 
 ## 이 스킬이 다루지 않는 것
 
-- **무엇을 agy 에게 넘길지** — `agent-delegate-agy` 스킬이 맡는다. 겹치면 둘 다 썩는다.
+- **무엇을 agy 에게 넘길지** — `samjil-delegate-agy` 스킬이 맡는다. 겹치면 둘 다 썩는다.
 - **프로젝트 맥락** — 프로젝트마다 다르다. `BRIEF.md` 몫이다.
 - **일반 작업 규칙**(검증 태도 등) — 값지지만 채널 규약이 아니다. 섞으면 이 스킬이 무엇에
   관한 것인지 흐려진다.

@@ -10,8 +10,8 @@
       "source": "./",
       "description": "samjil AI Agent Skills",
       "skills": [
-        "./agent-delegate-agy",
-        "./agent-handoff"
+        "./samjil-delegate-agy",
+        "./samjil-handoff"
       ]
     }
   ]

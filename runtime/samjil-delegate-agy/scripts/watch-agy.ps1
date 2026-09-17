@@ -37,6 +37,8 @@ try {
 if (-not $RuntimeDir) {
     if ($env:AGY_DELEGATE_RUNTIME) {
         $RuntimeDir = $env:AGY_DELEGATE_RUNTIME
+    } elseif (Test-Path (Join-Path $env:USERPROFILE ".samjil\samjil-delegate-agy\runtime")) {
+        $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\samjil-delegate-agy\runtime"
     } elseif (Test-Path (Join-Path $env:USERPROFILE ".samjil\agent-delegate-agy\runtime")) {
         $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\agent-delegate-agy\runtime"
     } elseif (Test-Path (Join-Path $env:USERPROFILE ".samjil\delegate\runtime")) {
@@ -46,7 +48,7 @@ if (-not $RuntimeDir) {
     } elseif (Test-Path (Join-Path $RepoRoot "runtime")) {
         $RuntimeDir = Join-Path $RepoRoot "runtime"
     } else {
-        $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\agent-delegate-agy\runtime"
+        $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\samjil-delegate-agy\runtime"
     }
 }
 
