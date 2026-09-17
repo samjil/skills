@@ -225,18 +225,17 @@ if (Test-Path $srcWeb) {
     Write-Host "[+] 통합 대시보드 웹 파일 배치 완료 (~/.samjil/web)" -ForegroundColor Green
 }
 
-$viewerFiles = @("serve-viewer.ps1")
+$viewerFiles = @("serve-viewer.ps1", "serve-viewer.bat")
 foreach ($vf in $viewerFiles) {
     $srcVf = Join-Path $SkillsSourceDir $vf
     if (Test-Path $srcVf) {
         Copy-Item -Force -LiteralPath $srcVf -Destination (Join-Path $SamjilRoot $vf)
     }
 }
-Write-Host "[+] 통합 뷰어 실행 스크립트 배치 완료 (~/.samjil/serve-viewer.ps1)" -ForegroundColor Green
+Write-Host "[+] 통합 뷰어 실행 스크립트 배치 완료 (~/.samjil/serve-viewer.bat / .ps1)" -ForegroundColor Green
 
 # 3-3. 중복/구버전 스크립트 정리 (~/.samjil/)
 $oldRedundantFiles = @(
-    (Join-Path $SamjilRoot "serve-viewer.bat"),
     (Join-Path $SamjilRoot "serve-dashboard.bat"),
     (Join-Path $SamjilRoot "delegate-agy\scripts\start-agy.bat"),
     (Join-Path $SamjilRoot "delegate-agy\scripts\stop-agy.bat"),
@@ -307,7 +306,7 @@ Write-Host "  [스킬 (순수 SKILL.md)]" -ForegroundColor White
 Write-Host "    - Claude Code : ~/.claude/skills/samjil-*" -ForegroundColor Gray
 Write-Host "    - Antigravity : ~/.agents/skills/samjil-*" -ForegroundColor Gray
 Write-Host "  [도구 및 웹 파일 (~/.samjil)]" -ForegroundColor White
-Write-Host "    - 통합 웹 뷰어 실행 : ~/.samjil/serve-viewer.ps1" -ForegroundColor Cyan
+Write-Host "    - 통합 웹 뷰어 실행 : ~/.samjil/serve-viewer.bat (또는 .ps1)" -ForegroundColor Cyan
 Write-Host "      (브라우저에서 Delegate QA / Handoff 탭 선택 열람)" -ForegroundColor Gray
 Write-Host "    - 위임 워처 시작/재시작 : ~/.samjil/delegate-agy/scripts/start-agy.ps1" -ForegroundColor Gray
 Write-Host "    - 위임 워처 안전 중지   : ~/.samjil/delegate-agy/scripts/stop-agy.ps1" -ForegroundColor Gray

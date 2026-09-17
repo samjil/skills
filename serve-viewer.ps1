@@ -14,8 +14,9 @@ param(
     [switch]$NoBrowser  = $false
 )
 
+$OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-try { chcp 65001 > $null } catch {}
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 
 if (-not $HandoffDir) {
 
@@ -46,20 +47,14 @@ if (-not $HandoffDir) {
 
 
 if (-not $DataDir) {
-
-    $dataCandidates = @(
-
-        (if ($env:AGY_DELEGATE_RUNTIME) { Join-Path $env:AGY_DELEGATE_RUNTIME "logs\data" } else { $null }),
-
-        (Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime\logs\data"),
-
-        (Join-Path $env:USERPROFILE ".samjil\samjil-delegate-agy\runtime\logs\data"),
-
-        "D:\Repos\github.com\samjil\agy-bridge\runtime\logs\data",
-
-        (Join-Path $PSScriptRoot "runtime\delegate-agy\runtime\logs\data")
-
-    )
+    $dataCandidates = @()
+    if ($env:AGY_DELEGATE_RUNTIME) {
+        $dataCandidates += (Join-Path $env:AGY_DELEGATE_RUNTIME "logs\data")
+    }
+    $dataCandidates += (Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime\logs\data")
+    $dataCandidates += (Join-Path $env:USERPROFILE ".samjil\samjil-delegate-agy\runtime\logs\data")
+    $dataCandidates += "D:\Repos\github.com\samjil\agy-bridge\runtime\logs\data"
+    $dataCandidates += (Join-Path $PSScriptRoot "runtime\delegate-agy\runtime\logs\data")
 
     foreach ($cand in $dataCandidates) {
 
