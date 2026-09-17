@@ -53,7 +53,6 @@ if (-not $DataDir) {
     }
     $dataCandidates += (Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime\logs\data")
     $dataCandidates += (Join-Path $env:USERPROFILE ".samjil\samjil-delegate-agy\runtime\logs\data")
-    $dataCandidates += "D:\Repos\github.com\samjil\agy-bridge\runtime\logs\data"
     $dataCandidates += (Join-Path $PSScriptRoot "runtime\delegate-agy\runtime\logs\data")
 
     foreach ($cand in $dataCandidates) {
