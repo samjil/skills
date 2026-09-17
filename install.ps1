@@ -1,17 +1,3 @@
-if ($MyInvocation.MyCommand.Path -and (-not $env:SAMJIL_UTF8_ACTIVE)) {
-    $env:SAMJIL_UTF8_ACTIVE = "1"
-    $env:SAMJIL_SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
-    try {
-        $utf8Content = [System.IO.File]::ReadAllText($MyInvocation.MyCommand.Path, [System.Text.Encoding]::UTF8)
-        $sb = [scriptblock]::Create($utf8Content)
-        & $sb @args
-        exit $LASTEXITCODE
-    } finally {
-        $env:SAMJIL_UTF8_ACTIVE = $null
-        $env:SAMJIL_SCRIPT_DIR = $null
-    }
-}
-
 # install.ps1
 # samjil AI Agent Skills 전역 설치 스크립트 (Antigravity & Claude Code)
 #
@@ -23,7 +9,11 @@ if ($MyInvocation.MyCommand.Path -and (-not $env:SAMJIL_UTF8_ACTIVE)) {
 #   저장소를 clone하지 않고 PowerShell에서 바로 실행:
 #   irm https://raw.githubusercontent.com/samjil/skills/main/install.ps1 | iex
 
-$ScriptDir = if ($env:SAMJIL_SCRIPT_DIR) { $env:SAMJIL_SCRIPT_DIR } elseif ($PSScriptRoot) { $PSScriptRoot } else { "" }
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
+
+$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { "" }
 $TargetDir = ""
 $Uninstall = $false
 if ($args) {
@@ -35,10 +25,6 @@ if ($args) {
         }
     }
 }
-
-$OutputEncoding = [System.Text.Encoding]::UTF8
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 
 if ($Uninstall) {
     $uninstallScript = Join-Path $ScriptDir "uninstall.ps1"
