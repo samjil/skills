@@ -1,4 +1,4 @@
-﻿# install.ps1
+# install.ps1
 # samjil AI Agent Skills 전역 설치 스크립트 (Antigravity & Claude Code)
 #
 # [사용법 1: 로컬 실행]
@@ -9,7 +9,6 @@
 #   저장소를 clone하지 않고 PowerShell에서 바로 실행:
 #   irm https://raw.githubusercontent.com/samjil/skills/main/install.ps1 | iex
 
-[CmdletBinding()]
 param(
     [string]$TargetDir = "",
     [switch]$Uninstall
@@ -39,7 +38,7 @@ $isRemote = [string]::IsNullOrEmpty($PSScriptRoot) -or (-not (Test-Path (Join-Pa
 
 if ($isRemote) {
     # 원격 실행 모드: GitHub에서 최신 소스 다운로드
-    Write-Host "[•] 원격 설치 모드로 최신 패키지 다운로드 중..." -ForegroundColor Yellow
+    Write-Host "[*] 원격 설치 모드로 최신 패키지 다운로드 중..." -ForegroundColor Yellow
     $zipUrl = "https://github.com/samjil/skills/archive/refs/heads/main.zip"
     $tempZip = Join-Path $env:TEMP "samjil-skills-main.zip"
     $tempExtract = Join-Path $env:TEMP "samjil-skills-extract"
@@ -55,7 +54,7 @@ if ($isRemote) {
             if ($sub) { $extractedRoot = $sub.FullName }
         }
         $SkillsSourceDir = $extractedRoot
-        Write-Host "[✓] 최신 패키지 다운로드 완료!" -ForegroundColor Green
+        Write-Host "[+] 최신 패키지 다운로드 완료!" -ForegroundColor Green
     } catch {
         Write-Error "GitHub 패키지 다운로드 실패: $($_.Exception.Message)"
         exit 1
@@ -63,7 +62,7 @@ if ($isRemote) {
 } else {
     # 로컬 저장소 모드 (저장소는 소스 관리 전용)
     $SkillsSourceDir = $PSScriptRoot
-    Write-Host "[•] 로컬 설치 소스 패키지: $SkillsSourceDir" -ForegroundColor Gray
+    Write-Host "[*] 로컬 설치 소스 패키지: $SkillsSourceDir" -ForegroundColor Gray
 }
 
 $SkillsSourceDir = (Resolve-Path $SkillsSourceDir).Path
@@ -107,7 +106,7 @@ foreach ($entry in $configObj.entries) {
             $cleanedEntries += $entry
         } elseif ($p -match "samjil" -or $p -match "github.com/samjil") {
             # 저장소 직접 연결 해제
-            Write-Host "[•] Antigravity skills.json 에서 저장소 직접 참조 해제: $p" -ForegroundColor Gray
+            Write-Host "[*] Antigravity skills.json 등록 해제: $p" -ForegroundColor Gray
         } else {
             $cleanedEntries += $entry
         }
@@ -116,7 +115,7 @@ foreach ($entry in $configObj.entries) {
 
 if (-not $hasAgentsSkills) {
     $cleanedEntries += [PSCustomObject]@{ path = "~/.agents/skills" }
-    Write-Host "[✓] Antigravity skills.json 에 ~/.agents/skills 등록 완료" -ForegroundColor Green
+    Write-Host "[+] Antigravity skills.json 에 ~/.agents/skills 등록 완료" -ForegroundColor Green
 }
 
 $configObj.entries = $cleanedEntries
@@ -157,7 +156,7 @@ foreach ($sName in $targetSkills) {
         New-Item -ItemType Directory -Force -Path $cDestDir | Out-Null
     }
     Copy-Item -Force -LiteralPath $srcSkillMd -Destination (Join-Path $cDestDir "SKILL.md")
-    Write-Host "[✓] Claude Code 스킬 배치 완료: $sName (SKILL.md)" -ForegroundColor Green
+    Write-Host "[+] Claude Code 스킬 배치 완료: $sName (SKILL.md)" -ForegroundColor Green
 
     # (2) Antigravity AGY: ~/.agents/skills/<skill-name>/
     $aDestDir = Join-Path $AgentsSkillsRoot $sName
@@ -170,7 +169,7 @@ foreach ($sName in $targetSkills) {
         New-Item -ItemType Directory -Force -Path $aDestDir | Out-Null
     }
     Copy-Item -Force -LiteralPath $srcSkillMd -Destination (Join-Path $aDestDir "SKILL.md")
-    Write-Host "[✓] Antigravity(AGY) 스킬 배치 완료: $sName (SKILL.md)" -ForegroundColor Green
+    Write-Host "[+] Antigravity(AGY) 스킬 배치 완료: $sName (SKILL.md)" -ForegroundColor Green
 }
 
 # -----------------------------------------------------------------------------
@@ -184,7 +183,7 @@ if (Test-Path $srcViewer) {
     $destViewer = Join-Path $SamjilRoot "agent-handoff\viewer"
     New-Item -ItemType Directory -Force -Path $destViewer | Out-Null
     Copy-Item -Recurse -Force -Path (Join-Path $srcViewer "*") -Destination $destViewer
-    Write-Host "[✓] Handoff 웹 뷰어 도구 배치 완료: $destViewer" -ForegroundColor Green
+    Write-Host "[+] Handoff 웹 뷰어 도구 배치 완료: $destViewer" -ForegroundColor Green
 }
 
 # 3-2. Delegate 실행 스크립트 (~/.samjil/agent-delegate-agy/scripts/)
@@ -193,7 +192,7 @@ if (Test-Path $srcScripts) {
     $destScripts = Join-Path $SamjilRoot "agent-delegate-agy\scripts"
     New-Item -ItemType Directory -Force -Path $destScripts | Out-Null
     Copy-Item -Recurse -Force -Path (Join-Path $srcScripts "*") -Destination $destScripts
-    Write-Host "[✓] Delegate 실행 스크립트 배치 완료: $destScripts" -ForegroundColor Green
+    Write-Host "[+] Delegate 실행 스크립트 배치 완료: $destScripts" -ForegroundColor Green
 }
 
 # 3-3. 기존 레거시 대화 기록 자동 복사 마이그레이션 (대화 파일이 있을 때만)
@@ -211,7 +210,7 @@ foreach ($legacy in $legacyHandoffPaths) {
                 $dest = Join-Path $HandoffDir $proj.Name
                 if (-not (Test-Path $dest)) {
                     Copy-Item -Recurse -Force -LiteralPath $proj.FullName -Destination $dest
-                    Write-Host "[•] 기존 대화 기록을 ~/.samjil/agent-handoff 로 이전했습니다: $($proj.Name)" -ForegroundColor Green
+                    Write-Host "[*] 기존 대화 기록을 ~/.samjil/agent-handoff 로 이전했습니다: $($proj.Name)" -ForegroundColor Green
                 }
             }
         }

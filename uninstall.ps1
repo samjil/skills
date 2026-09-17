@@ -1,4 +1,4 @@
-﻿# ==========================================================
+# ==========================================================
 #  samjil AI Agent Skills Uninstaller
 #  Antigravity & Claude Code 스킬 원클릭 제거 스크립트
 #
@@ -33,10 +33,10 @@ function Remove-SkillTarget([string]$Path) {
         # 정션 링크 안전 해제
         if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
             cmd /c "rmdir `"$Path`"" > $null 2>&1
-            Write-Host "[✓] 정션 링크 해제: $Path" -ForegroundColor Green
+            Write-Host "[+] 정션 링크 해제: $Path" -ForegroundColor Green
         } else {
             Remove-Item -Recurse -Force -LiteralPath $Path
-            Write-Host "[✓] 스킬 디렉터리 삭제 완료: $Path" -ForegroundColor Green
+            Write-Host "[+] 스킬 디렉터리 삭제 완료: $Path" -ForegroundColor Green
         }
     } catch {
         Write-Warning "삭제 실패 ($Path): $_"
@@ -81,7 +81,7 @@ if (Test-Path $skillsJsonPath) {
                 $p = $e.path
                 # 저장소 직접 연결 또는 samjil 이전 임시 경로 제거
                 if ($p -match "samjil" -or $p -match "github.com/samjil") {
-                    Write-Host "[✓] Antigravity skills.json 등록 해제: $p" -ForegroundColor Green
+                    Write-Host "[+] Antigravity skills.json 등록 해제: $p" -ForegroundColor Green
                 } else {
                     $filtered += $e
                 }
@@ -104,14 +104,14 @@ if (Test-Path -LiteralPath $samjilDir) {
     $delegateDir = Join-Path $samjilDir "agent-delegate-agy"
     if (Test-Path -LiteralPath $delegateDir) {
         Remove-Item -Recurse -Force -LiteralPath $delegateDir -ErrorAction SilentlyContinue
-        Write-Host "[✓] Delegate 도구 및 런타임 삭제 완료: $delegateDir" -ForegroundColor Green
+        Write-Host "[+] Delegate 도구 및 런타임 삭제 완료: $delegateDir" -ForegroundColor Green
     }
 
     # 4-2. Handoff 웹 뷰어 도구 (~/.samjil/agent-handoff/viewer) 제거
     $handoffViewer = Join-Path $samjilDir "agent-handoff\viewer"
     if (Test-Path -LiteralPath $handoffViewer) {
         Remove-Item -Recurse -Force -LiteralPath $handoffViewer -ErrorAction SilentlyContinue
-        Write-Host "[✓] Handoff 웹 뷰어 도구 삭제 완료: $handoffViewer" -ForegroundColor Green
+        Write-Host "[+] Handoff 웹 뷰어 도구 삭제 완료: $handoffViewer" -ForegroundColor Green
     }
 
     # 4-3. Handoff 대화 저장소 처리 (~/.samjil/agent-handoff/)
@@ -125,7 +125,7 @@ if (Test-Path -LiteralPath $samjilDir) {
         } else {
             # 대화 파일이 없는 빈 폴더면 클린 삭제
             Remove-Item -Recurse -Force -LiteralPath $handoffDir -ErrorAction SilentlyContinue
-            Write-Host "[✓] 빈 Handoff 디렉터리 삭제 완료: $handoffDir" -ForegroundColor Green
+            Write-Host "[+] 빈 Handoff 디렉터리 삭제 완료: $handoffDir" -ForegroundColor Green
         }
     }
 
@@ -147,7 +147,7 @@ if (Test-Path -LiteralPath $samjilDir) {
     $remaining = @(Get-ChildItem -LiteralPath $samjilDir -Force -ErrorAction SilentlyContinue)
     if ($remaining.Count -eq 0) {
         Remove-Item -Force -LiteralPath $samjilDir -ErrorAction SilentlyContinue
-        Write-Host "[✓] 빈 ~/.samjil 디렉터리 정리 완료: $samjilDir" -ForegroundColor Green
+        Write-Host "[+] 빈 ~/.samjil 디렉터리 정리 완료: $samjilDir" -ForegroundColor Green
     } else {
         Write-Host "[i] 에이전트 대화 기록이 보존되어 ~/.samjil 디렉터리를 유지합니다: $samjilDir" -ForegroundColor Cyan
     }
