@@ -67,10 +67,10 @@
       if (projects.length === 0) {
         var opt = document.createElement("option");
         opt.value = "";
-        opt.textContent = "개설된 프로젝트가 없습니다 (~/.samjil/agent-handoff)";
+        opt.textContent = "개설된 프로젝트가 없습니다 (~/.samjil/samjil-handoff)";
         els.projectSelect.appendChild(opt);
         els.briefCard.style.display = "none";
-        els.cards.innerHTML = "<p class=\"empty\">기록된 핸드오프 프로젝트가 없습니다.<br><code>~/.samjil/agent-handoff/&lt;프로젝트&gt;/</code> 폴더에 채널이 개설되면 여기에 표시됩니다.</p>";
+        els.cards.innerHTML = "<p class=\"empty\">기록된 핸드오프 프로젝트가 없습니다.<br><code>~/.samjil/samjil-handoff/&lt;프로젝트&gt;/</code> 폴더에 채널이 개설되면 여기에 표시됩니다.</p>";
         updateCount();
         return;
       }

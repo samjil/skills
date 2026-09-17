@@ -1,4 +1,4 @@
-﻿# serve-handoff.ps1
+# serve-handoff.ps1
 # Agent Handoff 대화 기록을 브라우저로 열람하는 독립 로컬 웹 뷰어 서버
 #
 # 사용법:
@@ -20,7 +20,7 @@ if (-not $HandoffDir) {
     if ($env:AGENT_HANDOFF_ROOT) {
         $HandoffDir = $env:AGENT_HANDOFF_ROOT
     } else {
-        $HandoffDir = Join-Path $env:USERPROFILE ".samjil\agent-handoff"
+        $HandoffDir = Join-Path $env:USERPROFILE ".samjil\samjil-handoff"
     }
 }
 
@@ -33,8 +33,9 @@ if (-not (Test-Path $HandoffDir)) {
     New-Item -ItemType Directory -Force -Path $HandoffDir | Out-Null
 }
 
-# 기존 ~/.samjil/handoff 또는 ~/.agent-handoff 에 프로젝트가 있고 새 경로에 없다면 자동 복사 마이그레이션
+# 기존 ~/.samjil/agent-handoff 또는 ~/.samjil/handoff 에 프로젝트가 있고 새 경로에 없다면 자동 복사 마이그레이션
 $legacyPaths = @(
+    (Join-Path $env:USERPROFILE ".samjil\agent-handoff"),
     (Join-Path $env:USERPROFILE ".samjil\handoff"),
     (Join-Path $env:USERPROFILE ".agent-handoff")
 )
@@ -45,7 +46,7 @@ foreach ($legacy in $legacyPaths) {
                 $dest = Join-Path $HandoffDir $_.Name
                 if (-not (Test-Path $dest)) {
                     Copy-Item -Recurse -Force -LiteralPath $_.FullName -Destination $dest
-                    Write-Host "[•] 기존 대화 기록을 ~/.samjil/agent-handoff 로 복사했습니다: $($_.Name)" -ForegroundColor Green
+                    Write-Host "[•] 기존 대화 기록을 ~/.samjil/samjil-handoff 로 복사했습니다: $($_.Name)" -ForegroundColor Green
                 }
             }
         } catch {}
