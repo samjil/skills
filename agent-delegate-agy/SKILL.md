@@ -1,6 +1,6 @@
 ---
 name: agent-delegate-agy
-description: "사용자 컴퓨터에 agy 워처(scripts/start-agy.bat)가 떠 있으면, 높은 모델 성능이 필요 없는 작업은 기본적으로 전부 Antigravity CLI(agy)에 파일 기반으로 위임해서 Claude quota를 아낀다. 위임이 기본값이고 직접 처리는 예외(맥락 필요/판단 필요/실수 비용 큼/Claude 전용 도구 필요/왕복보다 빠름)다. 프로젝트 폴더 코딩 위임은 대화당 폴더를 한 번 확인받고 이후 자동 위임한다. 위임 사실은 매번 짧게 밝히고, 워처가 응답하지 않으면 직접 처리로 폴백한다."
+description: "사용자 컴퓨터에 agy 워처(~/.samjil/agent-delegate-agy/scripts/start-agy.bat)가 떠 있으면, 높은 모델 성능이 필요 없는 작업은 기본적으로 전부 Antigravity CLI(agy)에 파일 기반으로 위임해서 Claude quota를 아낀다. 위임이 기본값이고 직접 처리는 예외(맥락 필요/판단 필요/실수 비용 큼/Claude 전용 도구 필요/왕복보다 빠름)다. 프로젝트 폴더 코딩 위임은 대화당 폴더를 한 번 확인받고 이후 자동 위임한다. 위임 사실은 매번 짧게 밝히고, 워처가 응답하지 않으면 직접 처리로 폴백한다."
 ---
 
 # agent-delegate-agy: Antigravity CLI 위임 (기본값 = 위임)
@@ -67,7 +67,7 @@ echo "found: $BASE"
   나이가 300초 이내면 정상 (PC 이름은 알 수 없으니 글롭으로 찾는다 - PC마다 독립 실행이라
   보통 파일이 하나뿐이다). 오래됐으면 워치독(`ensure-agy-running.ps1`)이 2분 안에 자동
   복구하므로, 한 번 더 시도해보고 그래도 안 되면 직접 처리로 폴백하면서 "워처가 꺼져 있는
-  것 같다(agent-delegate-agy/scripts/start-agy.bat 실행 필요)"고 한 번만 알린다.
+   것 같다(~/.samjil/agent-delegate-agy/scripts/start-agy.bat 실행 필요)"고 한 번만 알린다.
 
 ```bash
 H=$(ls -t "$BASE/logs/heartbeat"/hb_*.txt 2>/dev/null | head -1)

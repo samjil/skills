@@ -1,4 +1,4 @@
-# install.ps1
+﻿# install.ps1
 # samjil AI Agent Skills 전역 설치 스크립트 (Antigravity & Claude Code)
 #
 # [사용법 1: 로컬 실행]
@@ -31,29 +31,19 @@ if ($Uninstall) {
 
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "  samjil AI Agent Skills Installer" -ForegroundColor Cyan
-Write-Host "  (skills.sh 호환 Antigravity & Claude Code 전역 설치기)" -ForegroundColor Cyan
+Write-Host "  (Antigravity & Claude Code 전역 설치기)" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
 
 $isRemote = [string]::IsNullOrEmpty($PSScriptRoot) -or (-not (Test-Path (Join-Path $PSScriptRoot "agent-handoff")))
 
 if ($isRemote) {
-    # 원격 실행 모드: GitHub에서 최신 스킬 다운로드
-    if (-not $TargetDir) {
-        $TargetDir = Join-Path $env:USERPROFILE ".gemini\skills\samjil-skills"
-    }
-    Write-Host "[•] 원격 설치 모드로 실행 중..." -ForegroundColor Yellow
-    Write-Host "[•] 설치 대상 경로: $TargetDir" -ForegroundColor Gray
-
-    if (-not (Test-Path $TargetDir)) {
-        New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
-    }
-
+    # 원격 실행 모드: GitHub에서 최신 소스 다운로드
+    Write-Host "[•] 원격 설치 모드로 최신 패키지 다운로드 중..." -ForegroundColor Yellow
     $zipUrl = "https://github.com/samjil/skills/archive/refs/heads/main.zip"
     $tempZip = Join-Path $env:TEMP "samjil-skills-main.zip"
     $tempExtract = Join-Path $env:TEMP "samjil-skills-extract"
 
-    Write-Host "[•] GitHub에서 최신 스킬 패키지 다운로드 중..." -ForegroundColor Gray
     try {
         Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing
         if (Test-Path $tempExtract) { Remove-Item -Recurse -Force $tempExtract }
@@ -64,26 +54,24 @@ if ($isRemote) {
             $sub = Get-ChildItem -LiteralPath $tempExtract -Directory | Select-Object -First 1
             if ($sub) { $extractedRoot = $sub.FullName }
         }
-
-        Copy-Item -Recurse -Force (Join-Path $extractedRoot "*") $TargetDir
-        Remove-Item -Force $tempZip -ErrorAction SilentlyContinue
-        Remove-Item -Recurse -Force $tempExtract -ErrorAction SilentlyContinue
-        Write-Host "[✓] 최신 스킬 다운로드 및 배치 완료!" -ForegroundColor Green
+        $SkillsSourceDir = $extractedRoot
+        Write-Host "[✓] 최신 패키지 다운로드 완료!" -ForegroundColor Green
     } catch {
         Write-Error "GitHub 패키지 다운로드 실패: $($_.Exception.Message)"
         exit 1
     }
-    $SkillsDir = $TargetDir
 } else {
-    # 로컬 실행 모드
-    $SkillsDir = $PSScriptRoot
-    Write-Host "[•] 로컬 저장소 모드로 실행 중: $SkillsDir" -ForegroundColor Gray
+    # 로컬 저장소 모드 (저장소는 소스 관리 전용)
+    $SkillsSourceDir = $PSScriptRoot
+    Write-Host "[•] 로컬 설치 소스 패키지: $SkillsSourceDir" -ForegroundColor Gray
 }
 
-$SkillsDir = (Resolve-Path $SkillsDir).Path
-$NormalizedSkillsPath = $SkillsDir.Replace('\', '/')
+$SkillsSourceDir = (Resolve-Path $SkillsSourceDir).Path
 
-# 1. Antigravity 글로벌 skills.json 등록
+# -----------------------------------------------------------------------------
+# 1. Antigravity 설정 정리 및 ~/.agents/skills 등록 보장
+# -----------------------------------------------------------------------------
+# 저장소 자체(D:\Repos\...)는 스킬 경로로 직접 연결하지 않으므로 skills.json에서 제거합니다.
 $GeminiConfigDir = Join-Path $env:USERPROFILE ".gemini\config"
 $SkillsJsonPath = Join-Path $GeminiConfigDir "skills.json"
 
@@ -108,113 +96,143 @@ if (-not $configObj.entries) {
     $configObj | Add-Member -MemberType NoteProperty -Name "entries" -Value @() -Force
 }
 
-$exists = $false
+# 저장소 경로나 samjil 관련 이전 직접 참조 항목 제거
+$cleanedEntries = @()
+$hasAgentsSkills = $false
 foreach ($entry in $configObj.entries) {
     if ($entry -and $entry.path) {
         $p = [string]$entry.path
-        if ($p.TrimEnd('/').ToLowerInvariant() -eq $NormalizedSkillsPath.TrimEnd('/').ToLowerInvariant()) {
-            $exists = $true
-            break
+        if ($p -eq "~/.agents/skills" -or $p -eq ((Join-Path $env:USERPROFILE ".agents\skills").Replace('\', '/'))) {
+            $hasAgentsSkills = $true
+            $cleanedEntries += $entry
+        } elseif ($p -match "samjil" -or $p -match "github.com/samjil") {
+            # 저장소 직접 연결 해제
+            Write-Host "[•] Antigravity skills.json 에서 저장소 직접 참조 해제: $p" -ForegroundColor Gray
+        } else {
+            $cleanedEntries += $entry
         }
     }
 }
 
-if (-not $exists) {
-    $newEntry = [PSCustomObject]@{ path = $NormalizedSkillsPath }
-    $entriesList = [System.Collections.ArrayList]@($configObj.entries)
-    $entriesList.Add($newEntry) | Out-Null
-    $configObj.entries = $entriesList.ToArray()
-
-    $jsonOutput = $configObj | ConvertTo-Json -Depth 10
-    [System.IO.File]::WriteAllText($SkillsJsonPath, $jsonOutput, [System.Text.Encoding]::UTF8)
-    Write-Host "[✓] Antigravity skills.json 에 등록 완료: $NormalizedSkillsPath" -ForegroundColor Green
-} else {
-    Write-Host "[•] Antigravity skills.json 에 이미 등록되어 있습니다: $NormalizedSkillsPath" -ForegroundColor Gray
+if (-not $hasAgentsSkills) {
+    $cleanedEntries += [PSCustomObject]@{ path = "~/.agents/skills" }
+    Write-Host "[✓] Antigravity skills.json 에 ~/.agents/skills 등록 완료" -ForegroundColor Green
 }
 
-# 2. Claude Code 전역 스킬 설치 (~/.claude/skills/<skill-name>)
-$ClaudeSkillsDir = Join-Path $env:USERPROFILE ".claude\skills"
+$configObj.entries = $cleanedEntries
+$jsonOutput = $configObj | ConvertTo-Json -Depth 10
+[System.IO.File]::WriteAllText($SkillsJsonPath, $jsonOutput, [System.Text.Encoding]::UTF8)
 
-if (-not (Test-Path $ClaudeSkillsDir)) {
-    New-Item -ItemType Directory -Force -Path $ClaudeSkillsDir | Out-Null
-}
+# -----------------------------------------------------------------------------
+# 2. 에이전트 스킬 배포 (Claude Code & Antigravity AGY)
+#    -> 스킬 폴더에는 순수 SKILL.md 만 배치
+# -----------------------------------------------------------------------------
+$ClaudeSkillsRoot = Join-Path $env:USERPROFILE ".claude\skills"
+$AgentsSkillsRoot = Join-Path $env:USERPROFILE ".agents\skills"
 
-$skillDirs = Get-ChildItem -LiteralPath $SkillsDir -Directory | Where-Object {
-    Test-Path (Join-Path $_.FullName "SKILL.md")
-}
+New-Item -ItemType Directory -Force -Path $ClaudeSkillsRoot, $AgentsSkillsRoot | Out-Null
 
-$installedNames = @()
-foreach ($sDir in $skillDirs) {
-    $sName = $sDir.Name
-    $installedNames += $sName
-    $cTarget = Join-Path $ClaudeSkillsDir $sName
+$targetSkills = @("agent-handoff", "agent-delegate-agy")
 
-    # 기존에 정션이 걸려있다면 안전하게 연결 해제
-    if (Test-Path $cTarget) {
-        $item = Get-Item -LiteralPath $cTarget -Force
+foreach ($sName in $targetSkills) {
+    $srcSkillDir = Join-Path $SkillsSourceDir $sName
+    $srcSkillMd = Join-Path $srcSkillDir "SKILL.md"
+
+    if (-not (Test-Path $srcSkillMd)) { continue }
+
+    # (1) Claude Code: ~/.claude/skills/<skill-name>/
+    $cDestDir = Join-Path $ClaudeSkillsRoot $sName
+    if (Test-Path $cDestDir) {
+        # 기존 정션 해제
+        $item = Get-Item -LiteralPath $cDestDir -Force
         if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-            cmd /c rmdir "$cTarget" 2>&1 | Out-Null
+            cmd /c rmdir "$cDestDir" 2>&1 | Out-Null
         }
+        # 불필요한 서브 디렉터리(scripts, viewer 등) 제거
+        $subDirsToClean = @((Join-Path $cDestDir "scripts"), (Join-Path $cDestDir "viewer"))
+        foreach ($sd in $subDirsToClean) {
+            if (Test-Path $sd) { Remove-Item -Recurse -Force -LiteralPath $sd -ErrorAction SilentlyContinue }
+        }
+    } else {
+        New-Item -ItemType Directory -Force -Path $cDestDir | Out-Null
     }
+    Copy-Item -Force -LiteralPath $srcSkillMd -Destination (Join-Path $cDestDir "SKILL.md")
+    Write-Host "[✓] Claude Code 스킬 배치 완료: $sName (SKILL.md)" -ForegroundColor Green
 
-    # 정션 없이 독립 디렉터리로 전체 복사
-    if (-not (Test-Path $cTarget)) {
-        New-Item -ItemType Directory -Force -Path $cTarget | Out-Null
+    # (2) Antigravity AGY: ~/.agents/skills/<skill-name>/
+    $aDestDir = Join-Path $AgentsSkillsRoot $sName
+    if (Test-Path $aDestDir) {
+        $subDirsToClean = @((Join-Path $aDestDir "scripts"), (Join-Path $aDestDir "viewer"))
+        foreach ($sd in $subDirsToClean) {
+            if (Test-Path $sd) { Remove-Item -Recurse -Force -LiteralPath $sd -ErrorAction SilentlyContinue }
+        }
+    } else {
+        New-Item -ItemType Directory -Force -Path $aDestDir | Out-Null
     }
-    Copy-Item -Recurse -Force -Path (Join-Path $sDir.FullName "*") -Destination $cTarget
-    Write-Host "[✓] Claude Code 스킬 전역 복사/배치 완료: $sName" -ForegroundColor Green
+    Copy-Item -Force -LiteralPath $srcSkillMd -Destination (Join-Path $aDestDir "SKILL.md")
+    Write-Host "[✓] Antigravity(AGY) 스킬 배치 완료: $sName (SKILL.md)" -ForegroundColor Green
 }
 
-# 3. 전역 런타임 저장소 초기화 (~/.samjil/agent-handoff & ~/.samjil/agent-delegate-agy/runtime)
+# -----------------------------------------------------------------------------
+# 3. 부속 도구 및 스크립트, 웹 파일 설치 (~/.samjil/)
+# -----------------------------------------------------------------------------
 $SamjilRoot = Join-Path $env:USERPROFILE ".samjil"
-$HandoffDir = Join-Path $SamjilRoot "agent-handoff"
-if (-not (Test-Path $HandoffDir)) {
-    New-Item -ItemType Directory -Force -Path $HandoffDir | Out-Null
-    Write-Host "[✓] Handoff 대화 저장소 생성 완료: $HandoffDir" -ForegroundColor Green
+
+# 3-1. Handoff 웹 뷰어 도구 (~/.samjil/agent-handoff/viewer/)
+$srcViewer = Join-Path $SkillsSourceDir "agent-handoff\viewer"
+if (Test-Path $srcViewer) {
+    $destViewer = Join-Path $SamjilRoot "agent-handoff\viewer"
+    New-Item -ItemType Directory -Force -Path $destViewer | Out-Null
+    Copy-Item -Recurse -Force -Path (Join-Path $srcViewer "*") -Destination $destViewer
+    Write-Host "[✓] Handoff 웹 뷰어 도구 배치 완료: $destViewer" -ForegroundColor Green
 }
 
-# 기존 ~/.samjil/handoff 또는 ~/.agent-handoff 가 있다면 자동 복사 마이그레이션
+# 3-2. Delegate 실행 스크립트 (~/.samjil/agent-delegate-agy/scripts/)
+$srcScripts = Join-Path $SkillsSourceDir "agent-delegate-agy\scripts"
+if (Test-Path $srcScripts) {
+    $destScripts = Join-Path $SamjilRoot "agent-delegate-agy\scripts"
+    New-Item -ItemType Directory -Force -Path $destScripts | Out-Null
+    Copy-Item -Recurse -Force -Path (Join-Path $srcScripts "*") -Destination $destScripts
+    Write-Host "[✓] Delegate 실행 스크립트 배치 완료: $destScripts" -ForegroundColor Green
+}
+
+# 3-3. 기존 레거시 대화 기록 자동 복사 마이그레이션 (대화 파일이 있을 때만)
+$HandoffDir = Join-Path $SamjilRoot "agent-handoff"
 $legacyHandoffPaths = @(
     (Join-Path $SamjilRoot "handoff"),
     (Join-Path $env:USERPROFILE ".agent-handoff")
 )
 foreach ($legacy in $legacyHandoffPaths) {
-    if ((Test-Path $legacy) -and (Get-ChildItem -LiteralPath $HandoffDir).Count -eq 0) {
-        try {
-            Get-ChildItem -LiteralPath $legacy -Directory | ForEach-Object {
-                $dest = Join-Path $HandoffDir $_.Name
+    if (Test-Path $legacy) {
+        $legacyProjects = Get-ChildItem -LiteralPath $legacy -Directory -ErrorAction SilentlyContinue
+        if ($legacyProjects.Count -gt 0) {
+            New-Item -ItemType Directory -Force -Path $HandoffDir | Out-Null
+            foreach ($proj in $legacyProjects) {
+                $dest = Join-Path $HandoffDir $proj.Name
                 if (-not (Test-Path $dest)) {
-                    Copy-Item -Recurse -Force -LiteralPath $_.FullName -Destination $dest
-                    Write-Host "[•] 기존 대화 기록을 ~/.samjil/agent-handoff 로 복사했습니다: $($_.Name)" -ForegroundColor Green
+                    Copy-Item -Recurse -Force -LiteralPath $proj.FullName -Destination $dest
+                    Write-Host "[•] 기존 대화 기록을 ~/.samjil/agent-handoff 로 이전했습니다: $($proj.Name)" -ForegroundColor Green
                 }
             }
-        } catch {}
+        }
     }
 }
 
-$DelegateRuntimeDir = Join-Path $SamjilRoot "agent-delegate-agy\runtime"
-$inboxDir = Join-Path $DelegateRuntimeDir "inbox"
-$outboxDir = Join-Path $DelegateRuntimeDir "outbox"
-$processedDir = Join-Path $DelegateRuntimeDir "processed"
-$logsDir = Join-Path $DelegateRuntimeDir "logs"
-New-Item -ItemType Directory -Force -Path $inboxDir, $outboxDir, $processedDir, $logsDir | Out-Null
-Write-Host "[✓] Delegate 런타임 저장소 생성 완료: $DelegateRuntimeDir" -ForegroundColor Green
-
-# 기존 ~/.samjil/delegate/runtime 데이터 이전
-$legacyDelegateRuntime = Join-Path $SamjilRoot "delegate\runtime"
-if ((Test-Path $legacyDelegateRuntime) -and (Test-Path $DelegateRuntimeDir)) {
-    try {
-        Copy-Item -Recurse -Force -Path (Join-Path $legacyDelegateRuntime "*") -Destination $DelegateRuntimeDir -ErrorAction SilentlyContinue
-    } catch {}
+# 원격 설치 임시 파일 정리
+if ($isRemote) {
+    Remove-Item -Force $tempZip -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $tempExtract -ErrorAction SilentlyContinue
 }
-
-$skillsDisplay = ($installedNames | ForEach-Object { "'$_'" }) -join ", "
 
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "  설치가 성공적으로 완료되었습니다!" -ForegroundColor Green
-Write-Host "  - Antigravity 및 Claude 에서 $skillsDisplay 스킬이 전역 활성화되었습니다." -ForegroundColor White
-Write-Host "  - 대화 저장소 : $HandoffDir (뷰어: agent-handoff/viewer/serve-handoff.bat)" -ForegroundColor Gray
-Write-Host "  - 위임 런타임 : $DelegateRuntimeDir (워처: agent-delegate-agy/scripts/start-agy.bat)" -ForegroundColor Gray
+Write-Host "  [스킬 (순수 SKILL.md)]" -ForegroundColor White
+Write-Host "    - Claude Code : ~/.claude/skills/agent-*" -ForegroundColor Gray
+Write-Host "    - Antigravity : ~/.agents/skills/agent-*" -ForegroundColor Gray
+Write-Host "  [도구 및 웹 파일 (~/.samjil)]" -ForegroundColor White
+Write-Host "    - 웹 뷰어 실행 : ~/.samjil/agent-handoff/viewer/serve-handoff.bat" -ForegroundColor Gray
+Write-Host "    - 위임 워처 실행 : ~/.samjil/agent-delegate-agy/scripts/start-agy.bat" -ForegroundColor Gray
+Write-Host "    - 대화 저장소   : ~/.samjil/agent-handoff/" -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""

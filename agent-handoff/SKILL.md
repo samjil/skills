@@ -35,7 +35,7 @@ Claude 와 Antigravity(agy) 가 **파일로 주고받는 비동기 대화 채널
 않는다 — 저장소는 채널을 모른다. `~/.samjil/agent-handoff/`는 코드 저장소 외부이므로 저장소에
 영향을 주지 않는다.
 
-또한 `~/.samjil/agent-handoff/`에 쌓인 대화 기록은 스킬에 내장된 **전용 웹 뷰어(`viewer/serve-handoff.bat` / http://127.0.0.1:8787)**에서
+또한 `~/.samjil/agent-handoff/`에 쌓인 대화 기록은 **전용 웹 뷰어(`~/.samjil/agent-handoff/viewer/serve-handoff.bat` / http://127.0.0.1:8787)**에서
 실시간으로 함께 열람할 수 있다.
 
 ## 폴더 구조
