@@ -334,24 +334,71 @@ function Find-HandoffProjectDir([string]$projectName) {
 
 
 
-$listener = New-Object System.Net.HttpListener
+# HTTP 리스너 기동 (충돌 시 기존 뷰어 자동 정리 및 대체 포트 탐색)
+$listener = $null
+$prefix = $null
+$started = $false
+$maxAttempts = 10
 
-$prefix = "http://127.0.0.1:$Port/"
-
-$listener.Prefixes.Add($prefix)
-
-
-
+# 호출자 프로세스 보호를 위해 PPID 조회
+$ppid = 0
 try {
+    $ppid = (Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction SilentlyContinue).ParentProcessId
+} catch {}
 
-    $listener.Start()
+for ($attempt = 0; $attempt -lt $maxAttempts; $attempt++) {
+    $currentPort = $Port + $attempt
+    $currentPrefix = "http://127.0.0.1:$currentPort/"
+    $candidateListener = New-Object System.Net.HttpListener
+    $candidateListener.Prefixes.Add($currentPrefix)
 
-} catch {
+    try {
+        $candidateListener.Start()
+        $listener = $candidateListener
+        $prefix = $currentPrefix
+        $Port = $currentPort
+        $started = $true
+        break
+    } catch {
+        $candidateListener.Close()
 
-    Write-Error "HTTP 리스너 시작 실패 ($prefix): $($_.Exception.Message)"
+        # 첫 번째 시도(기본 포트)에서 충돌 발생 시, 기존 좀비 뷰어 프로세스 정리 후 1회 재시도
+        if ($attempt -eq 0) {
+            try {
+                $oldViewers = @(Get-CimInstance Win32_Process -Filter "Name like '%powershell%'" -ErrorAction SilentlyContinue | Where-Object {
+                    $_.ProcessId -ne $PID -and $_.ProcessId -ne $ppid -and (
+                        $_.CommandLine -match "serve-viewer\.ps1" -or
+                        $_.CommandLine -match "serve-handoff\.ps1"
+                    )
+                })
+                if ($oldViewers.Count -gt 0) {
+                    Write-Host "[*] 기존에 실행 중이던 이전 뷰어 세션을 정리하고 포트를 재확보합니다..." -ForegroundColor Yellow
+                    foreach ($ov in $oldViewers) {
+                        Stop-Process -Id $ov.ProcessId -Force -ErrorAction SilentlyContinue
+                    }
+                    Start-Sleep -Milliseconds 600
 
+                    # 동일 포트로 재시도
+                    $retryListener = New-Object System.Net.HttpListener
+                    $retryListener.Prefixes.Add($currentPrefix)
+                    try {
+                        $retryListener.Start()
+                        $listener = $retryListener
+                        $prefix = $currentPrefix
+                        $started = $true
+                        break
+                    } catch {
+                        $retryListener.Close()
+                    }
+                }
+            } catch {}
+        }
+    }
+}
+
+if (-not $started) {
+    Write-Error "HTTP 리스너 시작 실패: 포트 $Port ~ $($Port + $maxAttempts - 1) 번이 모두 사용 중이거나 권한이 없습니다."
     exit 1
-
 }
 
 
