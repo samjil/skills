@@ -453,6 +453,99 @@
     return s;
   }
 
+  function cleanTextForPreview(str) {
+    if (!str) return "";
+    return String(str)
+      .replace(/^#+\s*/, "")
+      .replace(/[*_`~]/g, "")
+      .replace(/\[(.*?)\]\(.*?\)/g, "$1")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function extractQuestionKeyword(text) {
+    if (!text) return "";
+    var lines = String(text).split("\n");
+    var valid = [];
+
+    for (var i = 0; i < lines.length; i++) {
+      var t = lines[i].trim();
+      if (!t) continue;
+      // Skip system directives, cwd, sessions, comments
+      if (t.indexOf("@cwd:") === 0 || t.indexOf("@session:") === 0) continue;
+      if (t.indexOf("**읽기") === 0 || t.indexOf("**[읽기") === 0 || t.indexOf("<!--") === 0) continue;
+      if (t.indexOf("```") === 0) continue;
+      // Skip markdown table template rows in question
+      if (t.indexOf("|") === 0 && t.lastIndexOf("|") === t.length - 1) continue;
+
+      var cleaned = cleanTextForPreview(t);
+      if (cleaned) {
+        valid.push(cleaned);
+        if (valid.join(" ").length >= 60 || valid.length >= 2) break;
+      }
+    }
+
+    if (valid.length > 0) {
+      return valid.join(" ");
+    }
+
+    for (var j = 0; j < lines.length; j++) {
+      var lt = lines[j].trim();
+      if (lt.indexOf("|") === 0 && lt.lastIndexOf("|") === lt.length - 1) {
+        var cols = lt.split("|").map(function (c) { return cleanTextForPreview(c); }).filter(Boolean);
+        if (cols.length > 0 && cols[0] !== "항목" && cols[0].indexOf("---") === -1) {
+          return cols[0];
+        }
+      }
+    }
+
+    return cleanTextForPreview(text).substring(0, 100);
+  }
+
+  function extractAnswerKeyword(text) {
+    if (!text) return "";
+    var lines = String(text).split("\n");
+
+    // 1. Check for markdown table data rows
+    var tableRows = [];
+    for (var i = 0; i < lines.length; i++) {
+      var t = lines[i].trim();
+      if (t.indexOf("|") === 0 && t.lastIndexOf("|") === t.length - 1) {
+        var cols = t.split("|").map(function (c) { return cleanTextForPreview(c); }).filter(Boolean);
+        if (cols.length >= 2 && cols[0] !== "항목" && cols[0] !== "구분" && cols[0].indexOf("---") === -1) {
+          var key = cols[0];
+          var val = cols[1];
+          if (key && val) {
+            tableRows.push(key + ": " + val);
+          }
+        }
+      }
+    }
+
+    if (tableRows.length > 0) {
+      return tableRows.slice(0, 2).join(" · ");
+    }
+
+    // 2. Non-table: first meaningful sentence
+    var valid = [];
+    for (var j = 0; j < lines.length; j++) {
+      var lt = lines[j].trim();
+      if (!lt || lt.indexOf("```") === 0 || lt.indexOf("---") === 0 || lt.indexOf("===") === 0 || lt.indexOf("<!--") === 0) continue;
+      var cleaned = cleanTextForPreview(lt);
+      if (cleaned) {
+        valid.push(cleaned);
+        if (valid.join(" ").length >= 60 || valid.length >= 2) break;
+      }
+    }
+
+    if (valid.length > 0) {
+      return valid.join(" ");
+    }
+
+    return cleanTextForPreview(text).substring(0, 100);
+  }
+
   function buildCard(r) {
     var st = (r.status == null ? "" : String(r.status)).trim();
     var isOk = (st === "OK");
@@ -527,7 +620,22 @@
 
     var dq = document.createElement("details");
     dq.className = "qa q";
-    dq.innerHTML = "<summary>질문</summary>";
+    var sq = document.createElement("summary");
+    var qBadge = document.createElement("span");
+    qBadge.className = "qa-type-badge q-type";
+    qBadge.textContent = "질문";
+    sq.appendChild(qBadge);
+
+    var qKw = extractQuestionKeyword(r.question);
+    if (qKw) {
+      var qKwSpan = document.createElement("span");
+      qKwSpan.className = "qa-preview-keyword";
+      qKwSpan.textContent = qKw;
+      qKwSpan.title = qKw;
+      sq.appendChild(qKwSpan);
+    }
+    dq.appendChild(sq);
+
     var qb = document.createElement("div");
     qb.className = "body";
 
@@ -547,7 +655,22 @@
     var da = document.createElement("details");
     da.className = "qa a";
     da.open = true;
-    da.innerHTML = "<summary>답변</summary>";
+    var sa = document.createElement("summary");
+    var aBadge = document.createElement("span");
+    aBadge.className = "qa-type-badge a-type";
+    aBadge.textContent = "답변";
+    sa.appendChild(aBadge);
+
+    var aKw = extractAnswerKeyword(r.answer);
+    if (aKw) {
+      var aKwSpan = document.createElement("span");
+      aKwSpan.className = "qa-preview-keyword";
+      aKwSpan.textContent = aKw;
+      aKwSpan.title = aKw;
+      sa.appendChild(aKwSpan);
+    }
+    da.appendChild(sa);
+
     var ab = document.createElement("div");
     ab.className = "body";
 
