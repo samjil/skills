@@ -11,11 +11,23 @@
 
 [CmdletBinding()]
 param(
-    [string]$TargetDir = ""
+    [string]$TargetDir = "",
+    [switch]$Uninstall
 )
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 try { chcp 65001 > $null } catch {}
+
+if ($Uninstall) {
+    $uninstallScript = Join-Path $PSScriptRoot "uninstall.ps1"
+    if (-not [string]::IsNullOrEmpty($PSScriptRoot) -and (Test-Path $uninstallScript)) {
+        & $uninstallScript
+    } else {
+        $rawUninstall = (Invoke-RestMethod -Uri "https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1" -UseBasicParsing)
+        Invoke-Expression $rawUninstall
+    }
+    exit 0
+}
 
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "  samjil AI Agent Skills Installer" -ForegroundColor Cyan

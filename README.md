@@ -46,6 +46,25 @@ irm https://raw.githubusercontent.com/samjil/skills/main/install.ps1 | iex
 
 ---
 
+## 🗑️ 스킬 제거 (Uninstallation)
+
+설치와 마찬가지로 원클릭으로 안전하게 제거할 수 있습니다:
+
+### 원격 웹 원라이너 제거
+```powershell
+irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
+```
+
+### 로컬 저장소에서 제거
+```powershell
+.\uninstall.ps1
+# 또는
+.\install.ps1 -Uninstall
+```
+*(에이전트끼리 대화하면서 생성된 대화 기록(`~/.samjil/agent-handoff/`)은 사용자의 소중한 자산이므로 제거 시에도 절대 삭제되지 않고 영구 보존됩니다.)*
+
+---
+
 ## 🛠️ 내장 부속 도구
 
 별도의 외부 브리지 도구 없이 스킬 저장소 자체에 독립 실행 도구가 내장되어 있습니다:
