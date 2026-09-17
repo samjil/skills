@@ -1,4 +1,4 @@
-﻿---
+---
 name: samjil-handoff
 description: Claude 와 Antigravity(agy) 가 파일로 주고받는 비동기 대화 채널(samjil-handoff) 규약. 메시지를 쓰거나 읽을 때, 원장을 갱신할 때, 새 프로젝트에 채널을 열 때, 작업한 내용을 메시지로 남길 때 쓴다 — "agy 한테 메시지 보내줘", "agy 회신 왔나 봐줘", "채널 열어줘", "0042 처리됨으로 바꿔줘", "작업한 내용 메시지에 남겨줘", "메시지 남겨줘", "agent handoff", "핸드오프" 같은 요청.
 ---
