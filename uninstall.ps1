@@ -93,6 +93,31 @@ if (Test-Path $skillsJsonPath) {
     }
 }
 
+# ~/.agents/.skill-lock.json 에서 samjil 스킬 등록 정보 정리
+$skillLockPath = Join-Path $env:USERPROFILE ".agents\.skill-lock.json"
+if (Test-Path $skillLockPath) {
+    try {
+        $rawLock = Get-Content $skillLockPath -Raw -Encoding UTF8
+        $lockJson = ConvertFrom-Json $rawLock
+        if ($lockJson.skills) {
+            $lockChanged = $false
+            foreach ($ts in $targetSkills) {
+                if ($lockJson.skills.PSObject.Properties[$ts]) {
+                    $lockJson.skills.PSObject.Properties.Remove($ts)
+                    $lockChanged = $true
+                }
+            }
+            if ($lockChanged) {
+                $updatedLock = ConvertTo-Json $lockJson -Depth 10
+                [System.IO.File]::WriteAllText($skillLockPath, $updatedLock, [System.Text.Encoding]::UTF8)
+                Write-Host "[+] ~/.agents/.skill-lock.json 등록 해제 완료" -ForegroundColor Green
+            }
+        }
+    } catch {
+        Write-Warning "skill-lock.json 정리 중 오류: $_"
+    }
+}
+
 # -----------------------------------------------------------------------------
 # 4. 부속 도구 및 런타임 정리 (~/.samjil/)
 # -----------------------------------------------------------------------------
@@ -107,15 +132,17 @@ if (Test-Path -LiteralPath $samjilDir) {
         }
     }
 
-    # 4-2. Handoff 웹 뷰어 도구 제거
-    $viewerDirs = @(
+    # 4-2. Handoff 웹 뷰어 및 템플릿 도구 제거 (설치 시 추가된 파일)
+    $toolDirs = @(
         (Join-Path $samjilDir "samjil-handoff\viewer"),
-        (Join-Path $samjilDir "agent-handoff\viewer")
+        (Join-Path $samjilDir "samjil-handoff\templates"),
+        (Join-Path $samjilDir "agent-handoff\viewer"),
+        (Join-Path $samjilDir "agent-handoff\templates")
     )
-    foreach ($vd in $viewerDirs) {
-        if (Test-Path -LiteralPath $vd) {
-            Remove-Item -Recurse -Force -LiteralPath $vd -ErrorAction SilentlyContinue
-            Write-Host "[+] Handoff 웹 뷰어 도구 삭제 완료: $vd" -ForegroundColor Green
+    foreach ($td in $toolDirs) {
+        if (Test-Path -LiteralPath $td) {
+            Remove-Item -Recurse -Force -LiteralPath $td -ErrorAction SilentlyContinue
+            Write-Host "[+] Handoff 설치 도구 삭제 완료: $td" -ForegroundColor Green
         }
     }
 
