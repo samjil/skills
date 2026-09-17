@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Handoff 대시보드</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="toolbar">
+    <div class="header-top">
+      <h1>🤝 Agent Handoff Viewer</h1>
+      <div class="header-actions">
+        <label class="auto-refresh"><input type="checkbox" id="autorefresh" checked> 자동 갱신</label>
+        <button id="refresh" title="지금 새로고침">↻</button>
+      </div>
+    </div>
+
+    <div class="controls">
+      <select id="handoff-project-select">
+        <option value="">프로젝트 불러오는 중...</option>
+      </select>
+      <input id="handoff-search" type="search" placeholder="메시지 검색 (번호/제목/내용)...">
+      <select id="handoff-dir-filter">
+        <option value="">모든 방향</option>
+        <option value="c2a">Claude → agy (c2a)</option>
+        <option value="a2c">agy → Claude (a2c)</option>
+      </select>
+      <select id="handoff-status-filter">
+        <option value="">모든 상태</option>
+        <option value="보냄">보냄 (미착수)</option>
+        <option value="읽음">읽음 (작업중)</option>
+        <option value="처리됨">처리됨 (직접반영)</option>
+        <option value="확인함">확인함 (검증완료)</option>
+        <option value="보류">보류</option>
+      </select>
+    </div>
+
+    <div class="status-line">
+      <span id="count">불러오는 중...</span>
+      <span id="updated"></span>
+    </div>
+  </header>
+
+  <main>
+    <!-- BRIEF 프로젝트 맥락 카드 -->
+    <details id="handoff-brief-card" class="brief-card" style="display: none;">
+      <summary>
+        <span class="brief-icon">📌</span>
+        <span class="brief-title">프로젝트 맥락 요약 (BRIEF.md) — <span id="brief-project-name"></span></span>
+      </summary>
+      <div id="handoff-brief-content" class="brief-content markdown-body"></div>
+    </details>
+
+    <!-- 메시지 목록 카드 -->
+    <div id="handoff-cards">
+      <p class="empty">프로젝트를 불러오는 중입니다...</p>
+    </div>
+  </main>
+
+  <footer>
+    <p>
+      이 페이지는 <code>~/.samjil/agent-handoff/</code> 내의 대화 기록을 로컬 웹 서버(<code>serve-handoff.ps1</code>)를
+      통해 읽어옵니다. <code>127.0.0.1</code> 전용이며 외부에는 노출되지 않습니다.
+    </p>
+  </footer>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
