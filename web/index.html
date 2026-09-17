@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>samjil 에이전트 통합 대시보드</title>
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
   <header class="toolbar">
@@ -22,7 +22,12 @@
 
     <!-- QA 전용 컨트롤 -->
     <div class="controls tab-panel-controls" id="qa-controls">
-      <input id="search" type="search" placeholder="검색 (질문/답변/모델/세션/작업ID)...">
+      <div class="search-input-wrap">
+        <span class="search-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        </span>
+        <input id="search" type="search" placeholder="검색 (질문/답변/모델/세션/작업ID)...">
+      </div>
       <select id="modelfilter"><option value="">모든 모델</option></select>
       <select id="sessionfilter"><option value="">모든 세션</option></select>
       <select id="statusfilter">
@@ -37,7 +42,12 @@
       <select id="handoff-project-select">
         <option value="">프로젝트 선택...</option>
       </select>
-      <input id="handoff-search" type="search" placeholder="메시지 검색 (번호/제목/내용)...">
+      <div class="search-input-wrap">
+        <span class="search-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        </span>
+        <input id="handoff-search" type="search" placeholder="메시지 검색 (번호/제목/내용)...">
+      </div>
       <select id="handoff-dir-filter">
         <option value="">모든 방향</option>
         <option value="c2a">Claude → agy (c2a)</option>
@@ -95,6 +105,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

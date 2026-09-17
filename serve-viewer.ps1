@@ -623,50 +623,63 @@ try {
 
                         
 
-                        $indexPath = Join-Path $pDir "INDEX.md"
-
-                        $indexLines = if (Test-Path $indexPath) { Get-Content -LiteralPath $indexPath -Encoding UTF8 } else { @() }
-
-                        $parsedMessages = @()
-
-                        foreach ($line in $indexLines) {
-
-                            if ($line -match '^\s*\|\s*(\d{4})\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|') {
-
-                                $parsedMessages += [PSCustomObject]@{
-
-                                    num    = $Matches[1].Trim()
-
-                                    time   = $Matches[2].Trim()
-
-                                    dir    = $Matches[3].Trim()
-
-                                    title  = $Matches[4].Trim()
-
-                                    status = $Matches[5].Trim()
-
+                        $msgDir = Join-Path $pDir "msg"
+                        $fileList = @()
+                        $msgFilesByNum = @{}
+                        if (Test-Path $msgDir) {
+                            $files = Get-ChildItem -LiteralPath $msgDir -Filter "*.md" -File | Sort-Object Name
+                            foreach ($f in $files) {
+                                $fileList += $f.Name
+                                if ($f.Name -match '^(\d{4})-(.*)\.md$') {
+                                    $msgFilesByNum[$Matches[1]] = $f
                                 }
-
                             }
-
                         }
 
+                        $indexPath = Join-Path $pDir "INDEX.md"
+                        $indexLines = if (Test-Path $indexPath) { Get-Content -LiteralPath $indexPath -Encoding UTF8 } else { @() }
+                        $parsedMessages = @()
+                        foreach ($line in $indexLines) {
+                            if ($line -match '^\s*\|\s*(\d{4})\s*\|\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)\|') {
+                                $mNum = $Matches[1].Trim()
+                                $mTime = $Matches[2].Trim()
+                                $mDir = $Matches[3].Trim()
+                                $mTitle = $Matches[4].Trim()
+                                $mStatus = $Matches[5].Trim()
 
+                                # 누락된 필드가 있는 경우 실제 메시지 파일에서 자동 복구
+                                if ((-not $mTitle -or -not $mDir) -and $msgFilesByNum.ContainsKey($mNum)) {
+                                    $mf = $msgFilesByNum[$mNum]
+                                    if (-not $mDir) {
+                                        if ($mf.Name -match '-(a2c|c2a)-') { $mDir = $Matches[1] }
+                                    }
+                                    if (-not $mTitle) {
+                                        try {
+                                            $firstLines = Get-Content -LiteralPath $mf.FullName -TotalCount 10 -Encoding UTF8
+                                            foreach ($fl in $firstLines) {
+                                                if ($fl -match '^#\s+(.+)$') {
+                                                    $mTitle = $Matches[1].Trim()
+                                                    break
+                                                }
+                                            }
+                                        } catch {}
+                                        if (-not $mTitle -and $mf.Name -match '^\d{4}-[a-z0-9]+-(.*)\.md$') {
+                                            $mTitle = $Matches[1].Replace('-', ' ')
+                                        }
+                                    }
+                                    if (-not $mTime) {
+                                        $mTime = $mf.LastWriteTime.ToString("yyyy-MM-dd HH:mm")
+                                    }
+                                }
 
-                        $msgDir = Join-Path $pDir "msg"
-
-                        $fileList = @()
-
-                        if (Test-Path $msgDir) {
-
-                            $files = Get-ChildItem -LiteralPath $msgDir -Filter "*.md" -File | Sort-Object Name
-
-                            foreach ($f in $files) {
-
-                                $fileList += $f.Name
-
+                                $parsedMessages += [PSCustomObject]@{
+                                    num    = $mNum
+                                    time   = $mTime
+                                    dir    = $mDir
+                                    title  = $mTitle
+                                    status = if ($mStatus) { $mStatus } else { "처리됨" }
+                                }
                             }
-
                         }
 
 

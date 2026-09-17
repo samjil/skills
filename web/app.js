@@ -42,6 +42,9 @@
   var currentHandoffProject = "";
   var currentHandoffData = null;
   var handoffMessageCache = {};
+  var openHandoffNums = {};
+  var lastProjectsKey = "";
+  var lastProjectDataHash = {};
 
   var allItems = [];      // 전체 기록, 최신순 정렬
   var filtered = [];      // 검색/필터 적용된 목록
@@ -611,9 +614,148 @@
     }
   }
 
+  // ==========================================================================
+  // Custom Select Component (UI 디자인 일체화 및 펼침 메뉴 스타일링)
+  // ==========================================================================
+  function initCustomSelects() {
+    var selects = document.querySelectorAll(".controls select");
+    selects.forEach(setupCustomSelect);
+
+    document.addEventListener("click", function (e) {
+      if (!e.target.closest(".custom-select")) {
+        closeAllCustomSelects();
+      }
+    });
+
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        closeAllCustomSelects();
+      }
+    });
+  }
+
+  function closeAllCustomSelects() {
+    document.querySelectorAll(".custom-select.open").forEach(function (el) {
+      el.classList.remove("open");
+      var btn = el.querySelector(".custom-select-trigger");
+      if (btn) { btn.setAttribute("aria-expanded", "false"); }
+    });
+  }
+
+  function setupCustomSelect(selectEl) {
+    if (!selectEl || selectEl.dataset.csInit === "true") {
+      syncCustomSelect(selectEl);
+      return;
+    }
+    selectEl.dataset.csInit = "true";
+
+    var wrap = document.createElement("div");
+    wrap.className = "custom-select";
+    wrap.dataset.selectId = selectEl.id;
+
+    var trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "custom-select-trigger";
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-expanded", "false");
+
+    var label = document.createElement("span");
+    label.className = "custom-select-label";
+
+    var arrow = document.createElement("span");
+    arrow.className = "custom-select-arrow";
+    arrow.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+
+    trigger.appendChild(label);
+    trigger.appendChild(arrow);
+
+    var menu = document.createElement("div");
+    menu.className = "custom-select-menu";
+    menu.setAttribute("role", "listbox");
+
+    selectEl.parentNode.insertBefore(wrap, selectEl);
+    wrap.appendChild(selectEl);
+    wrap.appendChild(trigger);
+    wrap.appendChild(menu);
+
+    trigger.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var wasOpen = wrap.classList.contains("open");
+      closeAllCustomSelects();
+      if (!wasOpen) {
+        wrap.classList.add("open");
+        trigger.setAttribute("aria-expanded", "true");
+        var sel = menu.querySelector(".custom-select-option.selected");
+        if (sel) { sel.scrollIntoView({ block: "nearest" }); }
+      }
+    });
+
+    selectEl.addEventListener("change", function () {
+      syncCustomSelect(selectEl);
+    });
+
+    if (window.MutationObserver) {
+      var observer = new MutationObserver(function () {
+        syncCustomSelect(selectEl);
+      });
+      observer.observe(selectEl, { childList: true });
+    }
+
+    syncCustomSelect(selectEl);
+  }
+
+  function syncCustomSelect(selectEl) {
+    if (!selectEl) { return; }
+    var wrap = selectEl.closest(".custom-select");
+    if (!wrap) { return; }
+
+    var label = wrap.querySelector(".custom-select-label");
+    var menu = wrap.querySelector(".custom-select-menu");
+    var trigger = wrap.querySelector(".custom-select-trigger");
+    if (!label || !menu) { return; }
+
+    var selectedOpt = selectEl.options[selectEl.selectedIndex];
+    label.textContent = selectedOpt ? selectedOpt.textContent : "선택...";
+
+    menu.innerHTML = "";
+    for (var i = 0; i < selectEl.options.length; i++) {
+      var opt = selectEl.options[i];
+      var optDiv = document.createElement("div");
+      optDiv.className = "custom-select-option" + (opt.selected ? " selected" : "");
+      optDiv.dataset.value = opt.value;
+
+      var textSpan = document.createElement("span");
+      textSpan.className = "option-text";
+      textSpan.textContent = opt.textContent;
+
+      var checkSpan = document.createElement("span");
+      checkSpan.className = "option-check";
+      checkSpan.textContent = "✓";
+
+      optDiv.appendChild(textSpan);
+      optDiv.appendChild(checkSpan);
+
+      (function (val, txt) {
+        optDiv.addEventListener("click", function (e) {
+          e.stopPropagation();
+          selectEl.value = val;
+          syncCustomSelect(selectEl);
+          wrap.classList.remove("open");
+          if (trigger) { trigger.setAttribute("aria-expanded", "false"); }
+          selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+      })(opt.value, opt.textContent);
+
+      menu.appendChild(optDiv);
+    }
+  }
+
   function switchTab(tabName) {
-    if (currentTab === tabName) { return; }
+    if (!tabName) { tabName = "qa"; }
     currentTab = tabName;
+    try { localStorage.setItem("samjil_active_tab", tabName); } catch (e) {}
+    closeAllCustomSelects();
 
     if (tabName === "qa") {
       els.tabBtnQa.classList.add("active");
@@ -653,42 +795,53 @@
       if (!Array.isArray(projects)) { projects = []; }
       handoffProjects = projects;
 
-      var prevSelected = els.handoffProjectSelect.value || currentHandoffProject;
-      els.handoffProjectSelect.innerHTML = "";
+      var currentProjectsKey = projects.map(function (p) { return p.name + ":" + p.msgCount + ":" + p.updated; }).join(",");
+      var projectsChanged = (currentProjectsKey !== lastProjectsKey);
+      lastProjectsKey = currentProjectsKey;
 
-      if (projects.length === 0) {
-        var opt = document.createElement("option");
-        opt.value = "";
-        opt.textContent = "프로젝트가 없습니다 (runtime/handoff)";
-        els.handoffProjectSelect.appendChild(opt);
-        els.handoffBriefCard.style.display = "none";
-        els.handoffCards.innerHTML = "<p class=\"empty\">기록된 핸드오프 프로젝트가 없습니다.<br><code>runtime/handoff/&lt;프로젝트&gt;/</code> 폴더에 채널이 개설되면 여기에 표시됩니다.</p>";
-        updateCount();
-        return;
+      var prevSelected = els.handoffProjectSelect.value || currentHandoffProject;
+
+      if (projectsChanged || force || els.handoffProjectSelect.options.length <= 1) {
+        els.handoffProjectSelect.innerHTML = "";
+
+        if (projects.length === 0) {
+          var opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = "프로젝트가 없습니다 (runtime/handoff)";
+          els.handoffProjectSelect.appendChild(opt);
+          els.handoffBriefCard.style.display = "none";
+          els.handoffCards.innerHTML = "<p class=\"empty\">기록된 핸드오프 프로젝트가 없습니다.<br><code>runtime/handoff/&lt;프로젝트&gt;/</code> 폴더에 채널이 개설되면 여기에 표시됩니다.</p>";
+          updateCount();
+          syncCustomSelect(els.handoffProjectSelect);
+          return;
+        }
+
+        var matched = false;
+        projects.forEach(function (p) {
+          var opt = document.createElement("option");
+          opt.value = p.name;
+          opt.textContent = p.name + " (" + p.msgCount + "건)";
+          if (p.name === prevSelected) {
+            opt.selected = true;
+            matched = true;
+          }
+          els.handoffProjectSelect.appendChild(opt);
+        });
+
+        var targetProject = matched ? prevSelected : projects[0].name;
+        els.handoffProjectSelect.value = targetProject;
+        currentHandoffProject = targetProject;
+        syncCustomSelect(els.handoffProjectSelect);
       }
 
-      var matched = false;
-      projects.forEach(function (p) {
-        var opt = document.createElement("option");
-        opt.value = p.name;
-        opt.textContent = p.name + " (" + p.msgCount + "건)";
-        if (p.name === prevSelected) {
-          opt.selected = true;
-          matched = true;
-        }
-        els.handoffProjectSelect.appendChild(opt);
-      });
-
-      var targetProject = matched ? prevSelected : projects[0].name;
-      els.handoffProjectSelect.value = targetProject;
-      currentHandoffProject = targetProject;
-      return loadHandoffProject(targetProject);
+      var activeProject = els.handoffProjectSelect.value || currentHandoffProject || (projects[0] && projects[0].name);
+      return loadHandoffProject(activeProject, force);
     }).catch(function (err) {
       els.handoffCards.innerHTML = "<p class=\"empty\">프로젝트 목록 로드 실패: " + escapeHtml(err.message) + "</p>";
     });
   }
 
-  function loadHandoffProject(projectName) {
+  function loadHandoffProject(projectName, force) {
     if (!projectName) { return Promise.resolve(); }
     currentHandoffProject = projectName;
 
@@ -699,10 +852,19 @@
       if (data && data.files && !Array.isArray(data.files)) {
         data.files = [data.files];
       }
+
+      var dataHash = JSON.stringify(data);
+      if (!force && lastProjectDataHash[projectName] === dataHash) {
+        // 데이터에 변화가 없으면 DOM을 재생성하지 않아 열린 탭 및 스크롤을 100% 보존합니다.
+        return;
+      }
+      lastProjectDataHash[projectName] = dataHash;
+
       currentHandoffData = data;
-      // BRIEF 렌더링
+      // BRIEF 렌더링 (열림 상태 보존)
       if (data && data.brief) {
         els.briefProjectName.textContent = projectName;
+        var wasOpen = els.handoffBriefCard.hasAttribute("open");
         try {
           var cleanHtml = DOMPurify.sanitize(marked.parse(data.brief));
           els.handoffBriefContent.innerHTML = cleanHtml;
@@ -710,6 +872,7 @@
           els.handoffBriefContent.innerHTML = "<pre>" + escapeHtml(data.brief) + "</pre>";
         }
         els.handoffBriefCard.style.display = "block";
+        if (wasOpen) { els.handoffBriefCard.setAttribute("open", ""); }
       } else {
         els.handoffBriefCard.style.display = "none";
       }
@@ -738,10 +901,15 @@
     var isOpen = (bodyEl.style.display !== "none");
     if (isOpen) {
       bodyEl.style.display = "none";
+      cardEl.classList.remove("is-open");
+      delete openHandoffNums[num];
       return;
     }
 
     bodyEl.style.display = "block";
+    cardEl.classList.add("is-open");
+    openHandoffNums[num] = true;
+
     if (bodyEl.dataset.loaded === "true") {
       return;
     }
@@ -819,6 +987,7 @@
     sortedMsgs.forEach(function (m) {
       var card = document.createElement("div");
       card.className = "handoff-card";
+      card.dataset.num = m.num;
 
       var header = document.createElement("div");
       header.className = "handoff-card-header";
@@ -832,11 +1001,11 @@
 
       var dirBadge = document.createElement("span");
       dirBadge.className = "badge dir-" + (m.dir || "unknown");
-      dirBadge.textContent = m.dir === "c2a" ? "Claude → agy" : (m.dir === "a2c" ? "agy → Claude" : m.dir);
+      dirBadge.textContent = m.dir === "c2a" ? "Claude → agy" : (m.dir === "a2c" ? "agy → Claude" : (m.dir || ""));
 
       var titleSpan = document.createElement("span");
       titleSpan.className = "handoff-title";
-      titleSpan.textContent = m.title;
+      titleSpan.textContent = m.title || "(제목 없음)";
 
       left.appendChild(numSpan);
       left.appendChild(dirBadge);
@@ -847,11 +1016,11 @@
 
       var timeSpan = document.createElement("span");
       timeSpan.className = "handoff-time";
-      timeSpan.textContent = m.time;
+      timeSpan.textContent = m.time || "";
 
       var statusBadge = document.createElement("span");
       statusBadge.className = "badge status-" + (m.status || "unknown");
-      statusBadge.textContent = m.status;
+      statusBadge.textContent = m.status || "";
 
       right.appendChild(timeSpan);
       right.appendChild(statusBadge);
@@ -861,7 +1030,35 @@
 
       var body = document.createElement("div");
       body.className = "handoff-card-body markdown-body";
-      body.style.display = "none";
+
+      // 이전에 열려 있던 카드면 열린 상태 유지
+      if (openHandoffNums[m.num]) {
+        body.style.display = "block";
+        card.classList.add("is-open");
+        var fileName = findHandoffFileForNum(m.num);
+        if (fileName) {
+          var cacheKey = currentHandoffProject + "/" + fileName;
+          if (handoffMessageCache[cacheKey]) {
+            renderMarkdownBody(body, handoffMessageCache[cacheKey]);
+            body.dataset.loaded = "true";
+          } else {
+            body.innerHTML = "<div class=\"handoff-card-body-loading\">메시지 본문을 불러오는 중...</div>";
+            fetchText("/api/handoff/message?project=" + encodeURIComponent(currentHandoffProject) + "&file=" + encodeURIComponent(fileName))
+              .then(function (markdown) {
+                handoffMessageCache[cacheKey] = markdown;
+                if (openHandoffNums[m.num]) {
+                  renderMarkdownBody(body, markdown);
+                  body.dataset.loaded = "true";
+                }
+              })
+              .catch(function (err) {
+                body.innerHTML = "<p class=\"empty\">본문 로드 실패: " + escapeHtml(err.message) + "</p>";
+              });
+          }
+        }
+      } else {
+        body.style.display = "none";
+      }
 
       header.addEventListener("click", function () {
         toggleHandoffMessage(card, m.num);
@@ -922,6 +1119,15 @@
   if (els.handoffDirFilter) { els.handoffDirFilter.addEventListener("change", renderHandoffMessages); }
   if (els.handoffStatusFilter) { els.handoffStatusFilter.addEventListener("change", renderHandoffMessages); }
 
+  initCustomSelects();
   initImagePopups();
+
+  var initialTab = "qa";
+  try {
+    var stored = localStorage.getItem("samjil_active_tab");
+    if (stored === "handoff" || stored === "qa") { initialTab = stored; }
+  } catch (e) {}
+  switchTab(initialTab);
+
   refresh(true).then(scheduleAutoRefresh);
 })();
