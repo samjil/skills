@@ -146,26 +146,7 @@ foreach ($sName in $targetSkills) {
 
     if (-not (Test-Path $srcSkillMd)) { continue }
 
-    # (1) Claude Code: ~/.claude/skills/<skill-name>/
-    $cDestDir = Join-Path $ClaudeSkillsRoot $sName
-    if (Test-Path $cDestDir) {
-        # 기존 정션 해제
-        $item = Get-Item -LiteralPath $cDestDir -Force
-        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-            cmd /c rmdir "$cDestDir" 2>&1 | Out-Null
-        }
-        # 불필요한 서브 디렉터리(scripts, viewer, templates 등) 제거
-        $subDirsToClean = @((Join-Path $cDestDir "scripts"), (Join-Path $cDestDir "viewer"), (Join-Path $cDestDir "templates"))
-        foreach ($sd in $subDirsToClean) {
-            if (Test-Path $sd) { Remove-Item -Recurse -Force -LiteralPath $sd -ErrorAction SilentlyContinue }
-        }
-    } else {
-        New-Item -ItemType Directory -Force -Path $cDestDir | Out-Null
-    }
-    Copy-Item -Force -LiteralPath $srcSkillMd -Destination (Join-Path $cDestDir "SKILL.md")
-    Write-Host "[+] Claude Code 스킬 배치 완료: $sName (SKILL.md)" -ForegroundColor Green
-
-    # (2) Antigravity AGY: ~/.agents/skills/<skill-name>/
+    # (1) 공용 스킬 저장소: ~/.agents/skills/<skill-name>/
     $aDestDir = Join-Path $AgentsSkillsRoot $sName
     if (Test-Path $aDestDir) {
         $subDirsToClean = @((Join-Path $aDestDir "scripts"), (Join-Path $aDestDir "viewer"), (Join-Path $aDestDir "templates"))
@@ -176,7 +157,20 @@ foreach ($sName in $targetSkills) {
         New-Item -ItemType Directory -Force -Path $aDestDir | Out-Null
     }
     Copy-Item -Force -LiteralPath $srcSkillMd -Destination (Join-Path $aDestDir "SKILL.md")
-    Write-Host "[+] Antigravity(AGY) 스킬 배치 완료: $sName (SKILL.md)" -ForegroundColor Green
+    Write-Host "[+] 공용 스킬 저장소 배치 완료: $sName (SKILL.md)" -ForegroundColor Green
+
+    # (2) Claude Code: ~/.claude/skills/<skill-name>/ -> ~/.agents/skills/<skill-name>/ 정션(Junction) 연결
+    $cDestDir = Join-Path $ClaudeSkillsRoot $sName
+    if (Test-Path $cDestDir) {
+        $item = Get-Item -LiteralPath $cDestDir -Force
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            cmd /c rmdir "$cDestDir" 2>&1 | Out-Null
+        } else {
+            Remove-Item -Recurse -Force -LiteralPath $cDestDir -ErrorAction SilentlyContinue
+        }
+    }
+    cmd /c mklink /J "$cDestDir" "$aDestDir" 2>&1 | Out-Null
+    Write-Host "[+] Claude Code 정션(Junction) 연결 완료: $sName -> ~/.agents/skills/$sName" -ForegroundColor Green
 }
 
 # -----------------------------------------------------------------------------
