@@ -1,4 +1,4 @@
-# ==========================================================
+﻿# ==========================================================
 #  samjil AI Agent Skills Uninstaller
 #  Antigravity & Claude Code 스킬 원클릭 제거 스크립트
 #
@@ -8,7 +8,7 @@
 #    2. 웹 원클릭 실행 (irm | iex):
 #       irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
 #
-#  * 에이전트 간 대화 기록(~/.samjil/agent-handoff/<프로젝트>/msg/)은 사용자의 소중한 자산이므로
+#  * 에이전트 간 대화 기록(~/.samjil/samjil-handoff/<프로젝트>/msg/)은 사용자의 소중한 자산이므로
 #    제거 시에도 절대 삭제되지 않고 영구 보존됩니다.
 # ==========================================================
 

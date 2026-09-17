@@ -1,4 +1,4 @@
-# log-qa.ps1
+﻿# log-qa.ps1
 # watch-agy.ps1가 관리하는 것과 같은 기록 저장소(runtime\logs\data\qa-*.jsonl)에
 # Q&A 한 건을 추가로 남깁니다. 워처(inbox 파일 위임) 경로를 거치지 않고
 # 다른 통로(예: antigravity MCP 직접 호출)로 주고받은 질문/답변을 같은 웹 뷰어에서

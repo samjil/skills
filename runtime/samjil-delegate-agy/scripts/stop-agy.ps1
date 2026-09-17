@@ -1,4 +1,4 @@
-# stop-agy.ps1
+﻿# stop-agy.ps1
 # watch-agy.ps1 워처를 강제로 죽이지 않고, "정상 종료 로그"를 남기면서 안전하게 멈춥니다.
 #
 # 동작 방식: runtime\logs\stop.signal 파일을 만들어두면, 워처가 폴링할 때마다(기본 2초 주기)

@@ -1,4 +1,4 @@
-# watch-agy.ps1
+﻿# watch-agy.ps1
 # Antigravity CLI(agy) 파일 기반 지시/응답 워처 (PC별 독립 실행)
 #
 # 사용법:

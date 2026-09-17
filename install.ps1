@@ -1,4 +1,4 @@
-# install.ps1
+﻿# install.ps1
 # samjil AI Agent Skills 전역 설치 스크립트 (Antigravity & Claude Code)
 #
 # [사용법 1: 로컬 실행]
@@ -41,7 +41,7 @@ Write-Host "  (Antigravity & Claude Code 전역 설치기)" -ForegroundColor Cya
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
 
-$isRemote = [string]::IsNullOrEmpty($PSScriptRoot) -or (-not (Test-Path (Join-Path $PSScriptRoot "agent-handoff")))
+$isRemote = [string]::IsNullOrEmpty($PSScriptRoot) -or (-not (Test-Path (Join-Path $PSScriptRoot "samjil-handoff")))
 
 if ($isRemote) {
     # 원격 실행 모드: GitHub에서 최신 소스 다운로드

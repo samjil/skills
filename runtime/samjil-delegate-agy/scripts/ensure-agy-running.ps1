@@ -1,4 +1,4 @@
-# ensure-agy-running.ps1
+﻿# ensure-agy-running.ps1
 # watch-agy.ps1 워처가 지금 살아있는지 확인하고, 죽어있으면(그리고 "일부러 끈 상태"가
 # 아니면) 자동으로 다시 실행합니다.
 #

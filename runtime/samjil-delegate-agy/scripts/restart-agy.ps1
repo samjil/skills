@@ -1,4 +1,4 @@
-# restart-agy.ps1
+﻿# restart-agy.ps1
 # watch-agy.ps1 워처를 안전하게 재시작합니다.
 #
 # 순서: (1) 기존 워처가 살아있으면 stop-agy.ps1과 같은 방식으로 정상 종료 신호를 보내고,
