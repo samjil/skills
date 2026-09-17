@@ -273,24 +273,19 @@ foreach ($legacy in $legacyHandoffPaths) {
                 }
             }
         }
-        $oldViewer = Join-Path $legacy "viewer"
-        if (Test-Path $oldViewer) { Remove-Item -Recurse -Force $oldViewer -ErrorAction SilentlyContinue }
-        $oldTemplates = Join-Path $legacy "templates"
-        if (Test-Path $oldTemplates) { Remove-Item -Recurse -Force $oldTemplates -ErrorAction SilentlyContinue }
+        Remove-Item -Recurse -Force -LiteralPath $legacy -ErrorAction SilentlyContinue
     }
 }
 
 $oldDelegateLogs = Join-Path $SamjilRoot "samjil-delegate-agy\runtime\logs"
 $newDelegateLogs = Join-Path $SamjilRoot "delegate-agy\runtime\logs"
-if ((Test-Path $oldDelegateLogs) -and (-not (Test-Path $newDelegateLogs))) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $SamjilRoot "delegate-agy\runtime") | Out-Null
-    Copy-Item -Recurse -Force -LiteralPath $oldDelegateLogs -Destination $newDelegateLogs
-    Write-Host "[*] 기존 위임 로그를 ~/.samjil/delegate-agy 로 이전했습니다" -ForegroundColor Green
-}
-
-$oldDelegateScripts = Join-Path $SamjilRoot "samjil-delegate-agy\scripts"
-if (Test-Path $oldDelegateScripts) {
-    Remove-Item -Recurse -Force $oldDelegateScripts -ErrorAction SilentlyContinue
+if (Test-Path $oldDelegateLogs) {
+    if (-not (Test-Path $newDelegateLogs)) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $SamjilRoot "delegate-agy\runtime") | Out-Null
+        Copy-Item -Recurse -Force -LiteralPath $oldDelegateLogs -Destination $newDelegateLogs
+        Write-Host "[*] 기존 위임 로그를 ~/.samjil/delegate-agy 로 이전했습니다" -ForegroundColor Green
+    }
+    Remove-Item -Recurse -Force -LiteralPath (Join-Path $SamjilRoot "samjil-delegate-agy") -ErrorAction SilentlyContinue
 }
 
 # 원격 설치 임시 파일 정리

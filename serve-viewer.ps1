@@ -28,10 +28,6 @@ if (-not $HandoffDir) {
 
         $HandoffDir = Join-Path $env:USERPROFILE ".samjil\handoff"
 
-    } elseif (Test-Path (Join-Path $env:USERPROFILE ".samjil\samjil-handoff")) {
-
-        $HandoffDir = Join-Path $env:USERPROFILE ".samjil\samjil-handoff"
-
     } elseif (Test-Path (Join-Path $PSScriptRoot "runtime\handoff")) {
 
         $HandoffDir = Join-Path $PSScriptRoot "runtime\handoff"
@@ -52,7 +48,6 @@ if (-not $DataDir) {
         $dataCandidates += (Join-Path $env:AGY_DELEGATE_RUNTIME "logs\data")
     }
     $dataCandidates += (Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime\logs\data")
-    $dataCandidates += (Join-Path $env:USERPROFILE ".samjil\samjil-delegate-agy\runtime\logs\data")
     $dataCandidates += (Join-Path $PSScriptRoot "runtime\delegate-agy\runtime\logs\data")
 
     foreach ($cand in $dataCandidates) {
