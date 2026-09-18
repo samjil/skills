@@ -64,68 +64,56 @@ $HeartbeatDir  = Join-Path $LogsDir "heartbeat"
 
 $HeartbeatFile = Join-Path $HeartbeatDir ("hb_{0}.txt" -f $env:COMPUTERNAME)
 
-$WatcherScript = Join-Path $PSScriptRoot "watch-agy.ps1"
-
-$StopScript    = Join-Path $PSScriptRoot "stop-agy.ps1"
-
-$CheckLog      = Join-Path $LogsDir "syntax-check.log"
-
-
-
+$WatcherScript = Join-Path $PSScriptRoot "sub\watch-agy.ps1"
 if (-not (Test-Path $WatcherScript)) {
-
-    Write-Error "watch-agy.ps1을 찾을 수 없습니다: $WatcherScript"
-
-    exit 1
-
+    $WatcherScript = Join-Path $PSScriptRoot "watch-agy.ps1"
 }
 
+$StopScript    = Join-Path $PSScriptRoot "stop-agy.ps1"
+$CheckLog      = Join-Path $LogsDir "syntax-check.log"
 
+if (-not (Test-Path $WatcherScript)) {
+    Write-Error "watch-agy.ps1을 찾을 수 없습니다: $WatcherScript"
+    exit 1
+}
 
 # -----------------------------------------------------------------------------
-
 # 1. 스크립트 문법 사전 검증
-
 # -----------------------------------------------------------------------------
-
-$targets = @("common.ps1", "watch-agy.ps1", "ensure-agy-running.ps1", "start-agy.ps1", "stop-agy.ps1", "log-qa.ps1")
+$targets = @(
+    "start-agy.ps1",
+    "stop-agy.ps1",
+    "sub\common.ps1",
+    "sub\watch-agy.ps1",
+    "sub\ensure-agy-running.ps1",
+    "sub\log-qa.ps1"
+)
 
 $lines = @("[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] 문법 검사 시작")
-
 $failed = $false
 
+foreach ($relPath in $targets) {
+    $file = Join-Path $PSScriptRoot $relPath
+    if (-not (Test-Path $file)) {
+        # sub 폴더가 아닌 현재 폴더에 있을 수도 있는 하위 호환 폴백
+        $file = Join-Path $PSScriptRoot (Split-Path -Leaf $relPath)
+        if (-not (Test-Path $file)) { continue }
+    }
 
-
-foreach ($name in $targets) {
-
-    $file = Join-Path $PSScriptRoot $name
-
-    if (-not (Test-Path $file)) { continue }
-
+    $displayName = Split-Path -Leaf $relPath
     $errs = $null
-
     $tokens = $null
-
     [void][System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errs)
 
     if ($errs -and $errs.Count -gt 0) {
-
         $failed = $true
-
-        $lines += "  FAIL $name"
-
+        $lines += "  FAIL $displayName"
         foreach ($e in $errs) {
-
             $lines += ("    line {0}: {1}" -f $e.Extent.StartLineNumber, $e.Message)
-
         }
-
     } else {
-
-        $lines += "  OK   $name"
-
+        $lines += "  OK   $displayName"
     }
-
 }
 
 
@@ -303,7 +291,7 @@ if (Test-WatcherAlive) {
 # -----------------------------------------------------------------------------
 $procParams = @{
     FilePath         = "powershell.exe"
-    ArgumentList     = @("-NoExit", "-ExecutionPolicy", "Bypass", "-File", "`"$WatcherScript`"")
+    ArgumentList     = @("-NoExit", "-ExecutionPolicy", "Bypass", "-File", "`"$WatcherScript`"", "-RuntimeDir", "`"$RuntimeDir`"")
     WorkingDirectory = $RuntimeDir
 }
 Start-Process @procParams

@@ -43,65 +43,38 @@
 
 
 param(
-
-    [string]$RepoRoot    = (Split-Path -Path $PSScriptRoot -Parent),
-
+    [string]$RepoRoot    = "",
     [string]$RuntimeDir  = "",
-
     [int]$PollSeconds    = 2,
-
     [switch]$SkipPermissions = $true
-
 )
 
-
-
 # 콘솔에서 한글이 깨지지 않도록 출력 인코딩을 UTF-8로 고정합니다.
-
 try {
-
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-
     $OutputEncoding = [System.Text.Encoding]::UTF8
-
     chcp 65001 > $null
-
 } catch {}
 
-
+if (-not $RepoRoot) {
+    $parent = Split-Path -Path $PSScriptRoot -Parent
+    if ((Split-Path -Leaf $PSScriptRoot) -eq "sub") {
+        $RepoRoot = Split-Path -Path $parent -Parent
+    } else {
+        $RepoRoot = $parent
+    }
+}
 
 if (-not $RuntimeDir) {
-
     if ($env:AGY_DELEGATE_RUNTIME) {
-
         $RuntimeDir = $env:AGY_DELEGATE_RUNTIME
-
-    } elseif (Test-Path (Join-Path $env:USERPROFILE ".samjil\samjil-delegate-agy\runtime")) {
-
-        $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\samjil-delegate-agy\runtime"
-
-    } elseif (Test-Path (Join-Path $env:USERPROFILE ".samjil\agent-delegate-agy\runtime")) {
-
-        $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\agent-delegate-agy\runtime"
-
-    } elseif (Test-Path (Join-Path $env:USERPROFILE ".samjil\delegate\runtime")) {
-
-        $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\delegate\runtime"
-
-    } elseif (Test-Path (Join-Path $env:USERPROFILE ".agent-delegate\runtime")) {
-
-        $RuntimeDir = Join-Path $env:USERPROFILE ".agent-delegate\runtime"
-
+    } elseif (Test-Path (Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime")) {
+        $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime"
     } elseif (Test-Path (Join-Path $RepoRoot "runtime")) {
-
         $RuntimeDir = Join-Path $RepoRoot "runtime"
-
     } else {
-
-        $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\samjil-delegate-agy\runtime"
-
+        $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime"
     }
-
 }
 
 
@@ -550,7 +523,11 @@ $script:QaTotal    = 0
 
 # (common.ps1 참고 - 두 곳에 복사해두면 한쪽만 고치고 놓치는 사고가 나기 쉽습니다).
 
-. (Join-Path $PSScriptRoot "common.ps1")
+$commonFile = Join-Path $PSScriptRoot "common.ps1"
+if (-not (Test-Path $commonFile)) {
+    $commonFile = Join-Path (Split-Path $PSScriptRoot -Parent) "common.ps1"
+}
+. $commonFile
 
 
 
