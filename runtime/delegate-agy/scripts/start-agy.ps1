@@ -1,4 +1,4 @@
-﻿# start-agy.ps1
+# start-agy.ps1
 # Antigravity CLI(agy) 위임 워처(watch-agy.ps1)를 안전하게 시작/재시작합니다.
 #
 # 순서:
@@ -299,16 +299,14 @@ if (Test-WatcherAlive) {
 
 
 # -----------------------------------------------------------------------------
-
 # 3. 새 콘솔 창에서 워처 기동
-
 # -----------------------------------------------------------------------------
-
-Start-Process -FilePath "powershell.exe" `
-
-    -ArgumentList @("-NoExit", "-ExecutionPolicy", "Bypass", "-File", "`"$WatcherScript`"") `
-
-    -WorkingDirectory $RuntimeDir
+$procParams = @{
+    FilePath         = "powershell.exe"
+    ArgumentList     = @("-NoExit", "-ExecutionPolicy", "Bypass", "-File", "`"$WatcherScript`"")
+    WorkingDirectory = $RuntimeDir
+}
+Start-Process @procParams
 
 
 
