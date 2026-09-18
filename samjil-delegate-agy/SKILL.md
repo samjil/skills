@@ -207,7 +207,7 @@ done
 
 ## agy 모델과 로그
 
-`watch-agy.ps1`이 `$ModelPriority` 배열에 따라 `--model`을 직접 지정해 호출한다(현재 Gemini 계열). 위임할 때 모델을 지정할 필요는 없다. 결과는 `~/.samjil/delegate-agy/runtime/logs/usage.csv`(작업별), `usage_summary.csv`(모델별 집계), `data/qa-*.jsonl`에 자동 기록된다. 이 위임 기록과 Handoff 인수인계 내역은 통합 대시보드(`~/.samjil/serve-viewer.ps1` / http://127.0.0.1:8787)에서 브라우저 탭으로 실시간 확인할 수 있다.
+`watch-agy.ps1`이 `$ModelPriority` 배열에 따라 `--model`을 직접 지정해 호출한다(현재 Gemini 계열). 위임할 때 모델을 지정할 필요는 없다. 결과는 `~/.samjil/delegate-agy/runtime/logs/usage.csv`(작업별), `usage_summary.csv`(모델별 집계), `data/qa-*.jsonl`에 자동 기록된다. 이 위임 기록과 Handoff 인수인계 내역은 통합 대시보드(`~/.samjil/viewer/serve-viewer.ps1` / http://127.0.0.1:8787)에서 브라우저 탭으로 실시간 확인할 수 있다.
 
 ## 구현 상세 (시행착오 기록 - 재발견 방지용)
 

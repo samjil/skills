@@ -11,36 +11,29 @@ param(
     [string]$DataDir    = "",
     [string]$WebDir     = "",
     [int]$Port          = 8787,
-    [switch]$NoBrowser  = $false
+    [switch]$NoBrowser  = $false,
+    [switch]$NoAgent    = $false
 )
 
 $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 
+$parentDir = Split-Path $PSScriptRoot -Parent
+
 if (-not $HandoffDir) {
-
     if ($env:AGENT_HANDOFF_ROOT) {
-
         $HandoffDir = $env:AGENT_HANDOFF_ROOT
-
     } elseif (Test-Path (Join-Path $env:USERPROFILE ".samjil\handoff")) {
-
         $HandoffDir = Join-Path $env:USERPROFILE ".samjil\handoff"
-
+    } elseif ($parentDir -and (Test-Path (Join-Path $parentDir "handoff"))) {
+        $HandoffDir = Join-Path $parentDir "handoff"
     } elseif (Test-Path (Join-Path $PSScriptRoot "runtime\handoff")) {
-
         $HandoffDir = Join-Path $PSScriptRoot "runtime\handoff"
-
     } else {
-
         $HandoffDir = Join-Path $env:USERPROFILE ".samjil\handoff"
-
     }
-
 }
-
-
 
 if (-not $DataDir) {
     $dataCandidates = @()
@@ -48,26 +41,21 @@ if (-not $DataDir) {
         $dataCandidates += (Join-Path $env:AGY_DELEGATE_RUNTIME "logs\data")
     }
     $dataCandidates += (Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime\logs\data")
+    if ($parentDir) {
+        $dataCandidates += (Join-Path $parentDir "delegate-agy\runtime\logs\data")
+    }
     $dataCandidates += (Join-Path $PSScriptRoot "runtime\delegate-agy\runtime\logs\data")
 
     foreach ($cand in $dataCandidates) {
-
         if ($cand -and (Test-Path (Join-Path $cand "index.json"))) {
-
             $DataDir = $cand
-
             break
-
         }
-
     }
 
     if (-not $DataDir) {
-
         $DataDir = Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime\logs\data"
-
     }
-
 }
 
 
@@ -398,19 +386,54 @@ if (-not $started) {
 
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-
 Write-Host "  samjil 에이전트 통합 대시보드 (Unified Dashboard)" -ForegroundColor Cyan
-
 Write-Host "==========================================================" -ForegroundColor Cyan
-
 Write-Host "  웹 대시보드     : $prefix" -ForegroundColor Green
-
 Write-Host "  위임 기록(/data): $DataDir" -ForegroundColor White
-
 Write-Host "  대화 저장소     : $HandoffDir" -ForegroundColor White
 
-Write-Host "  종료 방법       : 이 창에서 Ctrl+C" -ForegroundColor Gray
+# --- agy agent (워처) 자동 연동 ---
+if (-not $NoAgent) {
+    $watcherRunning = $false
+    try {
+        $wProcs = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -like "*watch-agy.ps1*" -and $_.ProcessId -ne $PID })
+        if ($wProcs.Count -gt 0) { $watcherRunning = $true }
+    } catch {}
 
+    $startCandidates = @(
+        (Join-Path $env:USERPROFILE ".samjil\delegate-agy\scripts\start-agy.ps1"),
+        (Join-Path (Split-Path $PSScriptRoot -Parent) "delegate-agy\scripts\start-agy.ps1"),
+        (Join-Path $PSScriptRoot "runtime\delegate-agy\scripts\start-agy.ps1")
+    )
+    if ($env:AGY_DELEGATE_SCRIPTS) {
+        $startCandidates = @((Join-Path $env:AGY_DELEGATE_SCRIPTS "start-agy.ps1")) + $startCandidates
+    }
+
+    $startScript = $null
+    foreach ($cand in $startCandidates) {
+        if ($cand -and (Test-Path $cand)) {
+            $startScript = $cand
+            break
+        }
+    }
+
+    if ($watcherRunning) {
+        Write-Host "  agy agent (워처): 이미 실행 중 (정상)" -ForegroundColor Green
+    } elseif ($startScript) {
+        Write-Host "  agy agent (워처): 미실행 감지 -> 새 창으로 자동 기동..." -ForegroundColor Yellow
+        try {
+            & $startScript | Out-Null
+            Write-Host "  agy agent (워처): 기동 완료" -ForegroundColor Green
+        } catch {
+            Write-Host "  agy agent (워처): 자동 기동 실패 ($($_.Exception.Message))" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "  agy agent (워처): start-agy.ps1 스크립트를 찾을 수 없음" -ForegroundColor Gray
+    }
+}
+
+Write-Host "  종료 방법       : 이 창에서 Ctrl+C" -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 Write-Host ""

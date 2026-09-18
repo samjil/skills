@@ -135,7 +135,12 @@ if (Test-Path $skillLockPath) {
 # -----------------------------------------------------------------------------
 $samjilDir = Join-Path $env:USERPROFILE ".samjil"
 if (Test-Path -LiteralPath $samjilDir) {
-    # 4-1. 통합 웹 뷰어 실행부 제거
+    # 4-1. 통합 웹 뷰어 실행부 제거
+    $viewerDir = Join-Path $samjilDir "viewer"
+    if (Test-Path -LiteralPath $viewerDir) {
+        Remove-Item -Recurse -Force -LiteralPath $viewerDir -ErrorAction SilentlyContinue
+        Write-Host "[+] 통합 웹 뷰어 디렉터리 삭제 완료: $viewerDir" -ForegroundColor Green
+    }
     $webDir = Join-Path $samjilDir "web"
     if (Test-Path -LiteralPath $webDir) {
         Remove-Item -Recurse -Force -LiteralPath $webDir -ErrorAction SilentlyContinue

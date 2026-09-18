@@ -57,7 +57,7 @@ flowchart TD
 
 ### Step 2. 사용자에게 커밋 승인 요청 (대기)
 사용자에게 아래 형식으로 보고하고 승인을 기다립니다:
-> **변경 파일**: `serve-viewer.ps1`  
+> **변경 파일**: `runtime/viewer/serve-viewer.ps1`  
 > **변경 요약**: 뷰어 실행 시 워처가 켜져 있지 않으면 자동으로 감지하여 새 콘솔 창으로 띄우는 기능 추가  
 > **한글 커밋 메시지**: `feat(viewer): serve-viewer 실행 시 agy 워처 자동 감지 및 기동 기능 추가`  
 >  

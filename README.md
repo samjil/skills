@@ -86,7 +86,9 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
 
 - **🤝 통합 웹 대시보드 뷰어 (Handoff & Delegate QA)**:
   ```powershell
-  ~\.samjil\serve-viewer.ps1
+  ~\.samjil\viewer\serve-viewer.ps1
+  # 또는
+  ~\.samjil\viewer\serve-viewer.bat
   ```
   실행 시 로컬 브라우저(`http://127.0.0.1:8787`)에서 탭 전환을 통해:
   - **Handoff 탭**: 프로젝트별 핸드오프 대화 타임라인, 상태 배지, 마크다운 본문 실시간 열람

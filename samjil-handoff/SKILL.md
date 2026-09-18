@@ -35,13 +35,13 @@ Claude 와 Antigravity(agy) 가 **파일로 주고받는 비동기 대화 채널
 않는다 — 저장소는 채널을 모른다. `~/.samjil/handoff/`는 코드 저장소 외부이므로 저장소에
 영향을 주지 않는다.
 
-또한 `~/.samjil/handoff/`에 쌓인 대화 기록과 위임 실행 기록은 **통합 웹 대시보드(`~/.samjil/serve-viewer.ps1` / http://127.0.0.1:8787)**에서
+또한 `~/.samjil/handoff/`에 쌓인 대화 기록과 위임 실행 기록은 **통합 웹 대시보드(`~/.samjil/viewer/serve-viewer.ps1` / http://127.0.0.1:8787)**에서
 실시간으로 함께 열람할 수 있다 (상단 탭으로 Handoff ↔ Delegate QA 전환).
 
 ## 런타임 환경 확인
 
-웹 뷰어 서버 및 부속 도구는 `~/.samjil/` 및 `~/.samjil/handoff/templates/`에 위치합니다.
-만약 웹 뷰어 실행 요청이 있거나 템플릿 파일이 필요한 시점에 `~/.samjil/serve-viewer.ps1` 또는 `~/.samjil/handoff/templates/BRIEF.md` 파일이 존재하지 않는다면(스킬 규약만 단독 설치된 경우), 사용자에게 다음과 같이 설치 안내를 출력합니다:
+웹 뷰어 서버 및 부속 도구는 `~/.samjil/viewer/` 및 `~/.samjil/handoff/templates/`에 위치합니다.
+만약 웹 뷰어 실행 요청이 있거나 템플릿 파일이 필요한 시점에 `~/.samjil/viewer/serve-viewer.ps1` 또는 `~/.samjil/handoff/templates/BRIEF.md` 파일이 존재하지 않는다면(스킬 규약만 단독 설치된 경우), 사용자에게 다음과 같이 설치 안내를 출력합니다:
 > "samjil 런타임 환경 및 웹 뷰어 파일이 감지되지 않았습니다. 저장소의 install.ps1을 실행하여 환경을 구성해 주세요."
 
 ## 폴더 구조

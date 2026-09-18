@@ -1,4 +1,4 @@
-# install.ps1
+﻿# install.ps1
 # samjil AI Agent Skills 전역 설치 스크립트 (Antigravity & Claude Code)
 #
 # [사용법 1: 로컬 실행]
@@ -214,28 +214,20 @@ if (Test-Path $srcRuntime) {
         Copy-Item -Recurse -Force -Path (Join-Path $srcHandoff "*") -Destination $destHandoff
         Write-Host "[+] handoff 템플릿 배치 완료 (~/.samjil/handoff)" -ForegroundColor Green
     }
-}
 
-# 3-2. 통합 웹 뷰어 실행부 배치 (~/.samjil/web, ~/.samjil/serve-viewer.*)
-$srcWeb = Join-Path $SkillsSourceDir "web"
-if (Test-Path $srcWeb) {
-    $destWeb = Join-Path $SamjilRoot "web"
-    New-Item -ItemType Directory -Force -Path $destWeb | Out-Null
-    Copy-Item -Recurse -Force -Path (Join-Path $srcWeb "*") -Destination $destWeb
-    Write-Host "[+] 통합 대시보드 웹 파일 배치 완료 (~/.samjil/web)" -ForegroundColor Green
-}
-
-$viewerFiles = @("serve-viewer.ps1", "serve-viewer.bat")
-foreach ($vf in $viewerFiles) {
-    $srcVf = Join-Path $SkillsSourceDir $vf
-    if (Test-Path $srcVf) {
-        Copy-Item -Force -LiteralPath $srcVf -Destination (Join-Path $SamjilRoot $vf)
+    $srcViewer = Join-Path $srcRuntime "viewer"
+    if (Test-Path $srcViewer) {
+        $destViewer = Join-Path $SamjilRoot "viewer"
+        New-Item -ItemType Directory -Force -Path $destViewer | Out-Null
+        Copy-Item -Recurse -Force -Path (Join-Path $srcViewer "*") -Destination $destViewer
+        Write-Host "[+] 통합 웹 뷰어 배치 완료 (~/.samjil/viewer)" -ForegroundColor Green
     }
 }
-Write-Host "[+] 통합 뷰어 실행 스크립트 배치 완료 (~/.samjil/serve-viewer.bat / .ps1)" -ForegroundColor Green
 
-# 3-3. 중복/구버전 스크립트 정리 (~/.samjil/)
+# 3-2. 중복/구버전 스크립트 및 이전 루트 파일 정리 (~/.samjil/)
 $oldRedundantFiles = @(
+    (Join-Path $SamjilRoot "serve-viewer.ps1"),
+    (Join-Path $SamjilRoot "serve-viewer.bat"),
     (Join-Path $SamjilRoot "serve-dashboard.bat"),
     (Join-Path $SamjilRoot "delegate-agy\scripts\start-agy.bat"),
     (Join-Path $SamjilRoot "delegate-agy\scripts\stop-agy.bat"),
@@ -250,6 +242,10 @@ foreach ($orf in $oldRedundantFiles) {
     if (Test-Path -LiteralPath $orf) {
         Remove-Item -Force -LiteralPath $orf -ErrorAction SilentlyContinue
     }
+}
+$oldRootWeb = Join-Path $SamjilRoot "web"
+if (Test-Path -LiteralPath $oldRootWeb) {
+    Remove-Item -Recurse -Force -LiteralPath $oldRootWeb -ErrorAction SilentlyContinue
 }
 
 # 3-4. 기존 레거시 데이터 자동 마이그레이션 (대화 기록 및 QA 로그 보존)
@@ -301,7 +297,7 @@ Write-Host "  [스킬 (순수 SKILL.md)]" -ForegroundColor White
 Write-Host "    - Claude Code : ~/.claude/skills/samjil-*" -ForegroundColor Gray
 Write-Host "    - Antigravity : ~/.agents/skills/samjil-*" -ForegroundColor Gray
 Write-Host "  [도구 및 웹 파일 (~/.samjil)]" -ForegroundColor White
-Write-Host "    - 통합 웹 뷰어 실행 : ~/.samjil/serve-viewer.bat (또는 .ps1)" -ForegroundColor Cyan
+Write-Host "    - 통합 웹 뷰어 실행 : ~/.samjil/viewer/serve-viewer.bat (또는 .ps1)" -ForegroundColor Cyan
 Write-Host "      (브라우저에서 Delegate QA / Handoff 탭 선택 열람)" -ForegroundColor Gray
 Write-Host "    - 위임 워처 시작/재시작 : ~/.samjil/delegate-agy/scripts/start-agy.ps1" -ForegroundColor Gray
 Write-Host "    - 위임 워처 안전 중지   : ~/.samjil/delegate-agy/scripts/stop-agy.ps1" -ForegroundColor Gray
