@@ -1,4 +1,4 @@
-# start-agy.ps1
+﻿# start-agy.ps1
 # Antigravity CLI(agy) 위임 워처(watch-agy.ps1)를 안전하게 시작/재시작합니다.
 #
 # 순서:
