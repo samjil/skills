@@ -155,7 +155,7 @@ foreach ($old in $legacySkills) {
     }
 }
 
-$targetSkills = @("samjil-handoff", "samjil-delegate-agy")
+$targetSkills = @("samjil-handoff", "samjil-delegate-agy", "samjil-git-commit")
 
 foreach ($sName in $targetSkills) {
     $srcSkillDir = Join-Path $SkillsSourceDir $sName

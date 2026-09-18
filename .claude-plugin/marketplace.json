@@ -11,7 +11,8 @@
       "description": "samjil AI Agent Skills",
       "skills": [
         "./samjil-delegate-agy",
-        "./samjil-handoff"
+        "./samjil-handoff",
+        "./samjil-git-commit"
       ]
     }
   ]

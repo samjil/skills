@@ -3,6 +3,7 @@
   "description": "Skills for Antigravity and Claude Code integration",
   "skills": [
     "./samjil-delegate-agy",
-    "./samjil-handoff"
+    "./samjil-handoff",
+    "./samjil-git-commit"
   ]
 }
