@@ -1017,7 +1017,10 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
 
             $result.ModelUsed      = if ($conversationId) {
 
-                if ($knownModel) { $knownModel } else { $ModelPriority[0] }
+                # 세션에 실제로 기록된 모델명이 없으면 추측해서 채우지 않습니다 - 검증 안 된
+                # 값을 사실처럼 기록하지 않는다는 원칙(SKILL.md 참고). 빈 값으로 두면
+                # usage.csv/usage_summary.csv 쪽에서 이미 "(모델 미확정/실패)"로 집계됩니다.
+                $knownModel
 
             } else {
 
@@ -1463,9 +1466,11 @@ try {
 
 
 
+                    $modelDisplay = if ($agyResult.ModelUsed) { $agyResult.ModelUsed } else { "(확인불가)" }
+
                     Log "완료 -> $outFile"
 
-                    Log "  사용 모델: $($agyResult.ModelUsed)$attemptNote$sessionNote | 토큰: $tokStr | 소요시간: ${elapsedForLog}초 ($timeSrc)"
+                    Log "  사용 모델: $modelDisplay$attemptNote$sessionNote | 토큰: $tokStr | 소요시간: ${elapsedForLog}초 ($timeSrc)"
 
 
 

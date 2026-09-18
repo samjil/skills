@@ -64,6 +64,8 @@ $HeartbeatDir  = Join-Path $LogsDir "heartbeat"
 
 $HeartbeatFile = Join-Path $HeartbeatDir ("hb_{0}.txt" -f $env:COMPUTERNAME)
 
+$LockFile      = Join-Path $LogsDir ("watcher_{0}.lock" -f $env:COMPUTERNAME)
+
 $WatcherScript = Join-Path $PSScriptRoot "sub\watch-agy.ps1"
 if (-not (Test-Path $WatcherScript)) {
     $WatcherScript = Join-Path $PSScriptRoot "watch-agy.ps1"
@@ -178,6 +180,28 @@ function Get-WatcherProcessCount {
 
 function Test-WatcherAlive {
 
+    # (1) PID 잠금 파일 - 가장 확실한 근거입니다. ensure-agy-running.ps1의
+    #     Test-AgyWatcherAlive와 같은 방식입니다. CommandLine 문자열 매칭만 믿으면,
+    #     watch-agy.ps1이 이미 죽었는데도 그걸 띄웠던 -NoExit 창은 계속 남아있는
+    #     경우("*watch-agy.ps1*"이 여전히 CommandLine에 남음) "살아있다"고 오판해서
+    #     재시작을 계속 거부하게 됩니다.
+    if (Test-Path $LockFile) {
+
+        $lockPid = 0
+
+        try { $lockPid = [int]((Get-Content -Path $LockFile -Raw -ErrorAction SilentlyContinue).Trim()) } catch { $lockPid = 0 }
+
+        if ($lockPid -gt 0) {
+
+            $proc = Get-Process -Id $lockPid -ErrorAction SilentlyContinue
+
+            if ($proc -and $proc.ProcessName -eq "powershell") { return $true }
+
+        }
+
+    }
+
+    # (2) 보조 수단: 프로세스 목록에서 watch-agy.ps1을 찾습니다.
     try {
 
         $procs = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
@@ -188,6 +212,7 @@ function Test-WatcherAlive {
 
     } catch {}
 
+    # (3) 마지막 보조 수단: 하트비트가 최근이면 살아있는 것으로 봅니다.
     if (-not (Test-Path $HeartbeatFile)) { return $false }
 
     $ageSec = [int]((Get-Date) - (Get-Item $HeartbeatFile).LastWriteTime).TotalSeconds

@@ -129,7 +129,12 @@ if (-not $hasAgentsSkills) {
 
 $configObj.entries = $cleanedEntries
 $jsonOutput = $configObj | ConvertTo-Json -Depth 10
-[System.IO.File]::WriteAllText($SkillsJsonPath, $jsonOutput, [System.Text.Encoding]::UTF8)
+# [System.Text.Encoding]::UTF8은 BOM을 함께 씁니다. 이 파일은 Antigravity(Gemini CLI)가
+# 별도로 읽는 설정 파일이라, 그쪽 JSON 파서가 BOM을 벗기지 않으면 파싱이 깨질 수 있습니다.
+# UTF8Encoding($false)로 BOM 없이 순수 UTF-8로만 써도 한글 등 비ASCII 문자는 그대로
+# 정확하게 인코딩되므로(깨짐 방지 목적은 그대로 유지), 여기서는 BOM만 뺍니다.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($SkillsJsonPath, $jsonOutput, $utf8NoBom)
 
 # -----------------------------------------------------------------------------
 # 2. 에이전트 스킬 배포 (Claude Code & Antigravity AGY)
