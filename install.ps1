@@ -1,4 +1,23 @@
-﻿# install.ps1
+if ($MyInvocation.MyCommand.Path -and (-not $env:SAMJIL_UTF8_ACTIVE)) {
+    # 이 파일은 BOM 없이 저장돼 있습니다(의도적). Windows PowerShell 5.1이 로컬 .ps1 파일을
+    # 시스템 기본 코드페이지(예: CP949)로 읽어서 한글이 깨질 수 있는데, BOM을 붙이면 그건
+    # 막지만 대신 `irm | iex`로 원격 실행할 때 문자열 맨 앞에 BOM 문자(U+FEFF)가 남아
+    # 첫 줄 "if"가 예약어로 인식되지 않는 오류가 생깁니다. 그래서 BOM 대신, 로컬 파일로
+    # 실행될 때만 자기 자신을 UTF-8로 다시 읽어 재실행해서 두 경로 모두 오류 없이 해결합니다.
+    $env:SAMJIL_UTF8_ACTIVE = "1"
+    $env:SAMJIL_SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
+    try {
+        $utf8Content = [System.IO.File]::ReadAllText($MyInvocation.MyCommand.Path, [System.Text.Encoding]::UTF8)
+        $sb = [scriptblock]::Create($utf8Content)
+        & $sb @args
+        exit $LASTEXITCODE
+    } finally {
+        $env:SAMJIL_UTF8_ACTIVE = $null
+        $env:SAMJIL_SCRIPT_DIR = $null
+    }
+}
+
+# install.ps1
 # samjil AI Agent Skills 전역 설치 스크립트 (Antigravity & Claude Code)
 #
 # [사용법 1: 로컬 실행]
@@ -13,7 +32,7 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 
-$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { "" }
+$ScriptDir = if ($env:SAMJIL_SCRIPT_DIR) { $env:SAMJIL_SCRIPT_DIR } elseif ($PSScriptRoot) { $PSScriptRoot } else { "" }
 $TargetDir = ""
 $Uninstall = $false
 if ($args) {
