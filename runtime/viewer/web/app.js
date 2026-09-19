@@ -27,7 +27,7 @@
     handoffControls:      document.getElementById("handoff-controls"),
     qaView:               document.getElementById("qa-view"),
     handoffView:          document.getElementById("handoff-view"),
-    handoffProjectSelect: document.getElementById("handoff-project-select"),
+    handoffProjectTabs:   document.getElementById("handoff-project-tabs"),
     handoffSearch:        document.getElementById("handoff-search"),
     handoffDirFilter:     document.getElementById("handoff-dir-filter"),
     handoffStatusFilter:  document.getElementById("handoff-status-filter"),
@@ -45,6 +45,7 @@
   var openHandoffNums = {};
   var lastProjectsKey = "";
   var lastProjectDataHash = {};
+  var currentRenderedProject = "";
 
   var allItems = [];      // 전체 기록, 최신순 정렬
   var filtered = [];      // 검색/필터 적용된 목록
@@ -910,55 +911,162 @@
     }
   }
 
+  function formatProjectUpdateTime(timeStr) {
+    if (!timeStr) { return ""; }
+    var d = new Date(timeStr.replace(/-/g, "/"));
+    if (isNaN(d.getTime())) {
+      return timeStr.length > 16 ? timeStr.slice(5, 16) : timeStr;
+    }
+    var now = new Date();
+    var isToday = (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate());
+    var yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    var isYesterday = (d.getFullYear() === yesterday.getFullYear() && d.getMonth() === yesterday.getMonth() && d.getDate() === yesterday.getDate());
+
+    var pad = function (n) { return (n < 10 ? "0" : "") + n; };
+    var timePart = pad(d.getHours()) + ":" + pad(d.getMinutes());
+
+    if (isToday) {
+      return "오늘 " + timePart;
+    }
+    if (isYesterday) {
+      return "어제 " + timePart;
+    }
+    if (d.getFullYear() === now.getFullYear()) {
+      return pad(d.getMonth() + 1) + "." + pad(d.getDate()) + " " + timePart;
+    }
+    return d.getFullYear() + "." + pad(d.getMonth() + 1) + "." + pad(d.getDate());
+  }
+
+  function selectHandoffProject(projectName) {
+    if (!projectName) { return; }
+    currentHandoffProject = projectName;
+    if (els.handoffProjectTabs) {
+      var btns = els.handoffProjectTabs.querySelectorAll(".project-tab-btn");
+      for (var i = 0; i < btns.length; i++) {
+        var b = btns[i];
+        var isSel = (b.dataset.project === projectName);
+        b.classList.toggle("active", isSel);
+        b.setAttribute("aria-selected", isSel ? "true" : "false");
+      }
+    }
+    loadHandoffProject(projectName, true);
+  }
+
   function loadHandoffProjects(force) {
     return fetchJson("/api/handoff/projects").then(function (projects) {
       if (projects && !Array.isArray(projects)) {
         projects = [projects];
       }
       if (!Array.isArray(projects)) { projects = []; }
+
+      // 최근 메시지가 올라온(가장 최근 업데이트된) 프로젝트 순으로 내림차순 정렬
+      projects.sort(function (a, b) {
+        var tA = a.updated || (a.latestMsg && a.latestMsg.time) || "";
+        var tB = b.updated || (b.latestMsg && b.latestMsg.time) || "";
+        return tB.localeCompare(tA);
+      });
+
       handoffProjects = projects;
 
       var currentProjectsKey = projects.map(function (p) { return p.name + ":" + p.msgCount + ":" + p.updated; }).join(",");
       var projectsChanged = (currentProjectsKey !== lastProjectsKey);
       lastProjectsKey = currentProjectsKey;
 
-      var prevSelected = els.handoffProjectSelect.value || currentHandoffProject;
+      if (!els.handoffProjectTabs) { return; }
 
-      if (projectsChanged || force || els.handoffProjectSelect.options.length <= 1) {
-        els.handoffProjectSelect.innerHTML = "";
-
-        if (projects.length === 0) {
-          var opt = document.createElement("option");
-          opt.value = "";
-          opt.textContent = "프로젝트가 없습니다 (runtime/handoff)";
-          els.handoffProjectSelect.appendChild(opt);
-          els.handoffBriefCard.style.display = "none";
-          els.handoffCards.innerHTML = "<p class=\"empty\">기록된 핸드오프 프로젝트가 없습니다.<br><code>runtime/handoff/&lt;프로젝트&gt;/</code> 폴더에 채널이 개설되면 여기에 표시됩니다.</p>";
-          updateCount();
-          syncCustomSelect(els.handoffProjectSelect);
-          return;
-        }
-
-        var matched = false;
-        projects.forEach(function (p) {
-          var opt = document.createElement("option");
-          opt.value = p.name;
-          opt.textContent = p.name + " (" + p.msgCount + "건)";
-          if (p.name === prevSelected) {
-            opt.selected = true;
-            matched = true;
-          }
-          els.handoffProjectSelect.appendChild(opt);
-        });
-
-        var targetProject = matched ? prevSelected : projects[0].name;
-        els.handoffProjectSelect.value = targetProject;
-        currentHandoffProject = targetProject;
-        syncCustomSelect(els.handoffProjectSelect);
+      if (projects.length === 0) {
+        els.handoffProjectTabs.innerHTML = '<span class="empty-tabs-msg">등록된 프로젝트가 없습니다 (runtime/handoff)</span>';
+        els.handoffBriefCard.style.display = "none";
+        els.handoffCards.innerHTML = "<p class=\"empty\">기록된 핸드오프 프로젝트가 없습니다.<br><code>runtime/handoff/&lt;프로젝트&gt;/</code> 폴더에 채널이 개설되면 여기에 표시됩니다.</p>";
+        currentHandoffProject = "";
+        updateCount();
+        return;
       }
 
-      var activeProject = els.handoffProjectSelect.value || currentHandoffProject || (projects[0] && projects[0].name);
-      return loadHandoffProject(activeProject, force);
+      // 페이지 새로고침 시 currentHandoffProject는 빈 문자열이므로,
+      // 가장 최근 프로젝트(projects[0].name)가 기본 선택되어 맨 처음 표시됩니다!
+      var targetProject = "";
+      var hasPrev = false;
+      if (currentHandoffProject) {
+        for (var j = 0; j < projects.length; j++) {
+          if (projects[j].name === currentHandoffProject) {
+            hasPrev = true;
+            break;
+          }
+        }
+      }
+      targetProject = hasPrev ? currentHandoffProject : projects[0].name;
+      currentHandoffProject = targetProject;
+
+      // 프로젝트 탭 버튼들 렌더링 (프로젝트 목록이 변경되었거나 강제 갱신이거나 탭이 비어있을 때)
+      if (projectsChanged || force || els.handoffProjectTabs.children.length === 0 || els.handoffProjectTabs.querySelector(".empty-tabs-msg")) {
+        els.handoffProjectTabs.innerHTML = "";
+        projects.forEach(function (p) {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "project-tab-btn" + (p.name === targetProject ? " active" : "");
+          btn.setAttribute("role", "tab");
+          btn.setAttribute("aria-selected", p.name === targetProject ? "true" : "false");
+          btn.dataset.project = p.name;
+
+          var fullTime = p.updated || (p.latestMsg && p.latestMsg.time) || "";
+          var timeFormatted = formatProjectUpdateTime(fullTime);
+
+          var titleSpan = document.createElement("span");
+          titleSpan.className = "proj-tab-title";
+          titleSpan.textContent = p.name;
+
+          var countSpan = document.createElement("span");
+          countSpan.className = "proj-tab-count";
+          countSpan.textContent = (p.msgCount || 0) + "건";
+
+          btn.appendChild(titleSpan);
+          btn.appendChild(countSpan);
+
+          if (timeFormatted) {
+            var timeSpan = document.createElement("span");
+            timeSpan.className = "proj-tab-time";
+            timeSpan.textContent = timeFormatted;
+            timeSpan.title = "최근 업데이트: " + fullTime;
+            btn.appendChild(timeSpan);
+          }
+
+          btn.addEventListener("click", function () {
+            var proj = this.dataset.project;
+            selectHandoffProject(proj);
+          });
+
+          els.handoffProjectTabs.appendChild(btn);
+        });
+      } else {
+        // 이미 탭이 있고 프로젝트 목록 데이터만 일부 갱신된 경우 활성 상태 및 건수/시간 업데이트
+        var tabBtns = els.handoffProjectTabs.querySelectorAll(".project-tab-btn");
+        for (var k = 0; k < tabBtns.length; k++) {
+          var b = tabBtns[k];
+          var pName = b.dataset.project;
+          var isSel = (pName === targetProject);
+          b.classList.toggle("active", isSel);
+          b.setAttribute("aria-selected", isSel ? "true" : "false");
+
+          var pData = null;
+          for (var m = 0; m < projects.length; m++) {
+            if (projects[m].name === pName) { pData = projects[m]; break; }
+          }
+          if (pData) {
+            var cntEl = b.querySelector(".proj-tab-count");
+            if (cntEl) { cntEl.textContent = (pData.msgCount || 0) + "건"; }
+            var timeEl = b.querySelector(".proj-tab-time");
+            var fullTime = pData.updated || (pData.latestMsg && pData.latestMsg.time) || "";
+            var timeFormatted = formatProjectUpdateTime(fullTime);
+            if (timeEl && timeFormatted) {
+              timeEl.textContent = timeFormatted;
+              timeEl.title = "최근 업데이트: " + fullTime;
+            }
+          }
+        }
+      }
+
+      return loadHandoffProject(targetProject, force);
     }).catch(function (err) {
       els.handoffCards.innerHTML = "<p class=\"empty\">프로젝트 목록 로드 실패: " + escapeHtml(err.message) + "</p>";
     });
@@ -977,11 +1085,13 @@
       }
 
       var dataHash = JSON.stringify(data);
-      if (!force && lastProjectDataHash[projectName] === dataHash) {
-        // 데이터에 변화가 없으면 DOM을 재생성하지 않아 열린 탭 및 스크롤을 100% 보존합니다.
+      var isSameProject = (currentRenderedProject === projectName);
+      if (!force && isSameProject && lastProjectDataHash[projectName] === dataHash) {
+        // 동일 프로젝트이고 데이터에 변화가 없으면 DOM을 재생성하지 않아 열린 탭 및 스크롤을 100% 보존합니다.
         return;
       }
       lastProjectDataHash[projectName] = dataHash;
+      currentRenderedProject = projectName;
 
       currentHandoffData = data;
       // BRIEF 렌더링 (열림 상태 보존)
