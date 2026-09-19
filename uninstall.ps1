@@ -133,6 +133,51 @@ if (Test-Path $skillLockPath) {
 }
 
 # -----------------------------------------------------------------------------
+# 3-1. Antigravity 전역 플러그인 정리 (~/.gemini/config/plugins/samjil-skills)
+# -----------------------------------------------------------------------------
+$geminiPluginsDir = Join-Path $env:USERPROFILE ".gemini\config\plugins"
+$samjilPluginDir = Join-Path $geminiPluginsDir "samjil-skills"
+$samjilPluginSkillsDir = Join-Path $samjilPluginDir "skills"
+
+if (Test-Path -LiteralPath $samjilPluginDir) {
+    # 플러그인 내부의 개별 스킬 정션 링크 안전 해제
+    if (Test-Path -LiteralPath $samjilPluginSkillsDir) {
+        foreach ($s in $targetSkills) {
+            $pTarget = Join-Path $samjilPluginSkillsDir $s
+            if (Test-Path -LiteralPath $pTarget) {
+                Remove-SkillTarget $pTarget
+            }
+        }
+    }
+    # 플러그인 폴더 전체 삭제
+    try {
+        Remove-Item -Recurse -Force -LiteralPath $samjilPluginDir -ErrorAction SilentlyContinue
+        Write-Host "[+] Antigravity 전역 플러그인 디렉터리 삭제 완료: $samjilPluginDir" -ForegroundColor Green
+    } catch {
+        Write-Warning "플러그인 디렉터리 삭제 중 오류: $_"
+    }
+}
+
+# ~/.gemini/config/config.json 에서 samjil-skills 플러그인 등록 해제
+$geminiConfigJson = Join-Path $env:USERPROFILE ".gemini\config\config.json"
+if (Test-Path -LiteralPath $geminiConfigJson) {
+    try {
+        $rawConf = Get-Content -LiteralPath $geminiConfigJson -Raw -Encoding UTF8
+        if ($rawConf -and $rawConf.Trim()) {
+            $confObj = ConvertFrom-Json $rawConf
+            if ($confObj.plugins -and $confObj.plugins.PSObject.Properties['samjil-skills']) {
+                $confObj.plugins.PSObject.Properties.Remove('samjil-skills')
+                $updatedConf = ConvertTo-Json $confObj -Depth 10
+                [System.IO.File]::WriteAllText($geminiConfigJson, $updatedConf, (New-Object System.Text.UTF8Encoding($false)))
+                Write-Host "[+] Antigravity config.json 플러그인 등록 해제 완료: samjil-skills" -ForegroundColor Green
+            }
+        }
+    } catch {
+        Write-Warning "config.json 정리 중 오류: $_"
+    }
+}
+
+# -----------------------------------------------------------------------------
 # 4. 부속 도구 및 런타임 정리 (~/.samjil/)
 # -----------------------------------------------------------------------------
 $samjilDir = Join-Path $env:USERPROFILE ".samjil"

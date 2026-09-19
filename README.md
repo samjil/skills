@@ -21,8 +21,8 @@ Antigravity(agy) 및 Claude Code 등 AI 코딩 에이전트를 위한 공용 스
 1. **저장소(`samjil/skills`)는 소스 코드 및 설치 패키지 전용**:
    - Git 저장소는 개발 및 배포용으로만 사용되며, 에이전트 스킬로 직접 연결되지 않습니다.
 2. **순수 스킬 정의(`SKILL.md`)만 에이전트에 등록**:
-   - **Claude Code**: `~/.claude/skills/<스킬명>` (정션 링크)
-   - **Antigravity (AGY)**: `~/.agents/skills/<스킬명>/SKILL.md`
+   - **Claude Code**: `~/.claude/skills/<스킬명>` (단일 스킬 정션 링크)
+   - **Antigravity (AGY)**: `~/.gemini/config/plugins/samjil-skills/` (전역 플러그인 및 단일 스킬 정션 링크) & `~/.agents/skills/<스킬명>/SKILL.md`
    - 에이전트 디렉터리에는 불필요한 스크립트나 웹 파일을 두지 않고 순수 스킬 정의만 깔끔하게 유지합니다.
 3. **부속 도구/스크립트/웹 파일은 `~/.samjil/`에서 통합 관리**:
    - 웹 뷰어 서버 및 위임 실행 워처 등 추가 실행 도구는 `~/.samjil/` 아래에 안전하게 격리되어 관리됩니다.
@@ -108,6 +108,6 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
 ---
 
 ## 💡 지원 에이전트
-- **Google Antigravity**: `~/.gemini/config/skills.json` (`~/.agents/skills`)을 통한 전역 자동 감지
+- **Google Antigravity**: 전역 플러그인(`~/.gemini/config/plugins/samjil-skills/`) 및 단일 스킬 정션을 통한 전역 자동 감지
 - **Claude Code**: `~/.claude/skills/` 전역 스킬 자동 감지
 - **Cursor / Windsurf / Cline**: `~/.agents/skills` 또는 `npx skills add`를 통한 지원
