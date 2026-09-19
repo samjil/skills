@@ -212,6 +212,61 @@ foreach ($sName in $targetSkills) {
     }
     cmd /c mklink /J "$cDestDir" "$aDestDir" 2>&1 | Out-Null
     Write-Host "[+] Claude Code 정션(Junction) 연결 완료: $sName -> ~/.agents/skills/$sName" -ForegroundColor Green
+
+    # (3) Antigravity Plugin: ~/.gemini/config/plugins/samjil-skills/skills/<skill-name>/ -> ~/.agents/skills/<skill-name>/ 정션(Junction) 연결
+    $GeminiPluginDir = Join-Path $GeminiConfigDir "plugins\samjil-skills"
+    $GeminiPluginSkillsDir = Join-Path $GeminiPluginDir "skills"
+    if (-not (Test-Path $GeminiPluginSkillsDir)) {
+        New-Item -ItemType Directory -Force -Path $GeminiPluginSkillsDir | Out-Null
+    }
+
+    $pluginManifestPath = Join-Path $GeminiPluginDir "plugin.json"
+    if (-not (Test-Path $pluginManifestPath)) {
+        $pluginManifest = [ordered]@{
+            name        = "samjil-skills"
+            version     = "1.0.0"
+            description = "samjil AI Agent Skills for Antigravity & Claude Code"
+        }
+        $pluginJsonText = $pluginManifest | ConvertTo-Json -Depth 5
+        [System.IO.File]::WriteAllText($pluginManifestPath, $pluginJsonText, [System.Text.Encoding]::UTF8)
+        Write-Host "[+] Antigravity plugin.json 생성 완료: $pluginManifestPath" -ForegroundColor Green
+    }
+
+    $pDestDir = Join-Path $GeminiPluginSkillsDir $sName
+    if (Test-Path $pDestDir) {
+        $item = Get-Item -LiteralPath $pDestDir -Force
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            cmd /c rmdir "$pDestDir" 2>&1 | Out-Null
+        } else {
+            Remove-Item -Recurse -Force -LiteralPath $pDestDir -ErrorAction SilentlyContinue
+        }
+    }
+    cmd /c mklink /J "$pDestDir" "$aDestDir" 2>&1 | Out-Null
+    Write-Host "[+] Antigravity 플러그인 정션(Junction) 연결 완료: $sName -> ~/.agents/skills/$sName" -ForegroundColor Green
+}
+
+# (4) Antigravity config.json 에 samjil-skills 플러그인 활성화 등록
+$ConfigJsonPath = Join-Path $GeminiConfigDir "config.json"
+if (Test-Path $ConfigJsonPath) {
+    try {
+        $cRaw = Get-Content -LiteralPath $ConfigJsonPath -Raw -Encoding UTF8
+        if ($cRaw -and $cRaw.Trim()) {
+            $cObj = $cRaw | ConvertFrom-Json
+            if (-not $cObj.plugins) {
+                $cObj | Add-Member -MemberType NoteProperty -Name "plugins" -Value ([PSCustomObject]@{})
+            }
+            if (-not $cObj.plugins.'samjil-skills') {
+                $cObj.plugins | Add-Member -MemberType NoteProperty -Name "samjil-skills" -Value ([PSCustomObject]@{ enabled = $true }) -Force
+            } else {
+                $cObj.plugins.'samjil-skills'.enabled = $true
+            }
+            $updatedConfigJson = $cObj | ConvertTo-Json -Depth 10
+            [System.IO.File]::WriteAllText($ConfigJsonPath, $updatedConfigJson, (New-Object System.Text.UTF8Encoding($false)))
+            Write-Host "[+] Antigravity config.json 플러그인 활성화 등록 완료: samjil-skills" -ForegroundColor Green
+        }
+    } catch {
+        Write-Warning "config.json 플러그인 활성화 등록 중 오류: $($_.Exception.Message)"
+    }
 }
 
 # -----------------------------------------------------------------------------
@@ -318,8 +373,9 @@ Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "  설치가 성공적으로 완료되었습니다!" -ForegroundColor Green
 Write-Host "  [스킬 (순수 SKILL.md)]" -ForegroundColor White
-Write-Host "    - Claude Code : ~/.claude/skills/samjil-*" -ForegroundColor Gray
-Write-Host "    - Antigravity : ~/.agents/skills/samjil-*" -ForegroundColor Gray
+Write-Host "    - Claude Code        : ~/.claude/skills/samjil-*" -ForegroundColor Gray
+Write-Host "    - Antigravity Skills : ~/.agents/skills/samjil-*" -ForegroundColor Gray
+Write-Host "    - Antigravity Plugin : ~/.gemini/config/plugins/samjil-skills/" -ForegroundColor Gray
 Write-Host "  [도구 및 웹 파일 (~/.samjil)]" -ForegroundColor White
 Write-Host "    - 통합 웹 뷰어 실행 : ~/.samjil/viewer/serve-viewer.bat (또는 .ps1)" -ForegroundColor Cyan
 Write-Host "      (브라우저에서 Delegate QA / Handoff 탭 선택 열람)" -ForegroundColor Gray
