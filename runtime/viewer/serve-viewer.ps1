@@ -514,7 +514,17 @@ try {
 
                         }
 
-                        $lastUpdated = $d.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+                        $candidates = @($d.LastWriteTime)
+                        if (Test-Path $indexPath) {
+                            $idxItem = Get-Item -LiteralPath $indexPath -ErrorAction SilentlyContinue
+                            if ($idxItem) { $candidates += $idxItem.LastWriteTime }
+                        }
+                        if ($msgFiles -and $msgFiles.Count -gt 0) {
+                            $latestMsgFile = $msgFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                            if ($latestMsgFile) { $candidates += $latestMsgFile.LastWriteTime }
+                        }
+                        $maxTime = ($candidates | Sort-Object -Descending | Select-Object -First 1)
+                        $lastUpdated = $maxTime.ToString("yyyy-MM-dd HH:mm:ss")
 
                         $latestMsg = $null
 
@@ -576,7 +586,7 @@ try {
 
                 }
 
-                $arr = @($projects)
+                $arr = @($projects | Sort-Object { $_.updated } -Descending)
 
                 if ($arr.Count -eq 0) {
 
