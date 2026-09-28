@@ -56,12 +56,9 @@ if (-not $RuntimeDir) {
 
 New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
 
-
-
 $LogsDir       = Join-Path $RuntimeDir "logs"
-
 $HeartbeatDir  = Join-Path $LogsDir "heartbeat"
-
+New-Item -ItemType Directory -Force -Path $LogsDir, $HeartbeatDir | Out-Null
 $HeartbeatFile = Join-Path $HeartbeatDir ("hb_{0}.txt" -f $env:COMPUTERNAME)
 
 $LockFile      = Join-Path $LogsDir ("watcher_{0}.lock" -f $env:COMPUTERNAME)
@@ -161,64 +158,40 @@ if ($CheckOnly) {
 # -----------------------------------------------------------------------------
 
 function Get-WatcherProcessCount {
-
     try {
-
         return @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
-
-            Where-Object { $_.CommandLine -like "*watch-agy.ps1*" }).Count
-
+            Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like "*watch-agy.ps1*" }).Count
     } catch {
-
         return -1
-
     }
-
 }
 
-
-
 function Test-WatcherAlive {
-
     # (1) PID 잠금 파일 - 가장 확실한 근거입니다. ensure-agy-running.ps1의
-    #     Test-AgyWatcherAlive와 같은 방식입니다. CommandLine 문자열 매칭만 믿으면,
-    #     watch-agy.ps1이 이미 죽었는데도 그걸 띄웠던 -NoExit 창은 계속 남아있는
-    #     경우("*watch-agy.ps1*"이 여전히 CommandLine에 남음) "살아있다"고 오판해서
-    #     재시작을 계속 거부하게 됩니다.
+    #     Test-AgyWatcherAlive와 같은 방식입니다.
     if (Test-Path $LockFile) {
-
         $lockPid = 0
-
         try { $lockPid = [int]((Get-Content -Path $LockFile -Raw -ErrorAction SilentlyContinue).Trim()) } catch { $lockPid = 0 }
-
-        if ($lockPid -gt 0) {
-
+        if ($lockPid -gt 0 -and $lockPid -ne $PID) {
             $proc = Get-Process -Id $lockPid -ErrorAction SilentlyContinue
-
             if ($proc -and $proc.ProcessName -eq "powershell") { return $true }
-
         }
-
     }
 
-    # (2) 보조 수단: 프로세스 목록에서 watch-agy.ps1을 찾습니다.
+    # (2) 보조 수단: 잠금 파일이 비정상 유실된 경우를 대비해 프로세스 목록과 하트비트를 함께 확인합니다.
+    #     주의: -NoExit 창은 스크립트가 이미 종료되었어도 CommandLine에 영구적으로 "watch-agy.ps1"이 남고,
+    #     현재 콘솔 창($PID)에서 start-agy.ps1을 재실행했을 때도 CommandLine에 남아있습니다.
+    #     따라서 $PID는 제외하고, 하트비트가 최근(30초 이내)일 때만 실제 살아있는 것으로 판정합니다.
     try {
-
         $procs = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
-
-            Where-Object { $_.CommandLine -like "*watch-agy.ps1*" })
-
-        if ($procs.Count -gt 0) { return $true }
-
+            Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like "*watch-agy.ps1*" })
+        if ($procs.Count -gt 0 -and (Test-Path $HeartbeatFile)) {
+            $ageSec = [int]((Get-Date) - (Get-Item $HeartbeatFile).LastWriteTime).TotalSeconds
+            if ($ageSec -le 30) { return $true }
+        }
     } catch {}
 
-    # (3) 마지막 보조 수단: 하트비트가 최근이면 살아있는 것으로 봅니다.
-    if (-not (Test-Path $HeartbeatFile)) { return $false }
-
-    $ageSec = [int]((Get-Date) - (Get-Item $HeartbeatFile).LastWriteTime).TotalSeconds
-
-    return ($ageSec -le 30)
-
+    return $false
 }
 
 

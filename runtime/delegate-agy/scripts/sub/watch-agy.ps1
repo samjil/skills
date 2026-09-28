@@ -222,17 +222,14 @@ function Log($msg) {
     Write-Host $line
 
     try {
-
-        if ((Test-Path $LogFile) -and ((Get-Item $LogFile).Length -gt $LogMaxBytes)) {
-
-            $tail = Get-Content -Path $LogFile -Tail $LogKeepLines
-
-            Set-Content -Path $LogFile -Value $tail -Encoding UTF8
-
+        if (-not (Test-Path $LogsDir)) {
+            New-Item -ItemType Directory -Force -Path $LogsDir -ErrorAction SilentlyContinue | Out-Null
         }
-
-        Add-Content -Path $LogFile -Value $line -Encoding UTF8
-
+        if ((Test-Path $LogFile) -and ((Get-Item $LogFile).Length -gt $LogMaxBytes)) {
+            $tail = Get-Content -Path $LogFile -Tail $LogKeepLines -ErrorAction SilentlyContinue
+            Set-Content -Path $LogFile -Value $tail -Encoding UTF8 -ErrorAction SilentlyContinue
+        }
+        Add-Content -Path $LogFile -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
     } catch {}
 
 }
@@ -1535,17 +1532,14 @@ try {
 
 
         # 하트비트: $HeartbeatIntervalSec 마다만 씁니다.
-
         try {
-
             if (((Get-Date) - $script:LastHeartbeatAt).TotalSeconds -ge $HeartbeatIntervalSec) {
-
-                Get-Date -Format "yyyy-MM-dd HH:mm:ss" | Set-Content -Path $HeartbeatFile -Encoding UTF8
-
+                if (-not (Test-Path $HeartbeatDir)) {
+                    New-Item -ItemType Directory -Force -Path $HeartbeatDir -ErrorAction SilentlyContinue | Out-Null
+                }
+                Get-Date -Format "yyyy-MM-dd HH:mm:ss" | Set-Content -Path $HeartbeatFile -Encoding UTF8 -ErrorAction Stop
                 $script:LastHeartbeatAt = Get-Date
-
             }
-
         } catch {}
 
 
