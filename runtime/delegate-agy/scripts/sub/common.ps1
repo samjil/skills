@@ -22,11 +22,14 @@ function ConvertTo-ReadableJson($InputObject, [int]$Depth = 6, [switch]$Pretty) 
             ConvertTo-Json -InputObject $InputObject -Depth $Depth -Compress
         }
         if ($null -eq $json) { return "" }
-        return [regex]::Replace($json, '\\u([0-9a-fA-F]{4})', {
+        # 역슬래시가 짝수 개 앞선 \uXXXX 만 이스케이프 표기다. 홀수 개면 본문에 원래 있던
+        # 글자(지시문 속 "\ufeff" 처럼)라, 바꾸면 역슬래시가 홀로 남아 그 줄 전체가 JSON 으로
+        # 안 읽힌다. 큰따옴표 · 역슬래시도 글자로 풀면 문자열이 끊기므로 그대로 둔다.
+        return [regex]::Replace($json, '(?<!\\)((?:\\\\)*)\\u([0-9a-fA-F]{4})', {
             param($m)
-            $code = [Convert]::ToInt32($m.Groups[1].Value, 16)
-            if ($code -lt 0x20) { return $m.Value }
-            return [string][char]$code
+            $code = [Convert]::ToInt32($m.Groups[2].Value, 16)
+            if ($code -lt 0x20 -or $code -eq 0x22 -or $code -eq 0x5C) { return $m.Value }
+            return $m.Groups[1].Value + [string][char]$code
         })
     } catch {
         return ""
