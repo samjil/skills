@@ -803,6 +803,90 @@ try {
 
                 }
 
+            } elseif ($urlPath -eq "/api/delegate/pending") {
+
+                $runtimeDir = Split-Path (Split-Path $DataDir -Parent) -Parent
+                $inboxDir = Join-Path $runtimeDir "inbox"
+                $heartbeatDir = Join-Path $runtimeDir "logs\heartbeat"
+
+                $watcherAlive = $false
+                if (Test-Path -LiteralPath $heartbeatDir -PathType Container) {
+                    $latestHb = Get-ChildItem -LiteralPath $heartbeatDir -Filter "hb_*.txt" -File -ErrorAction SilentlyContinue |
+                        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                    if ($latestHb) {
+                        $diffSec = ((Get-Date) - $latestHb.LastWriteTime).TotalSeconds
+                        if ($diffSec -ge 0 -and $diffSec -le 300) {
+                            $watcherAlive = $true
+                        }
+                    }
+                }
+
+                $pendingList = @()
+                if (Test-Path -LiteralPath $inboxDir -PathType Container) {
+                    $inboxFiles = @(Get-ChildItem -LiteralPath $inboxDir -File -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Extension -match '^\.(md|txt)$' } |
+                        Sort-Object CreationTime)
+
+                    foreach ($f in $inboxFiles) {
+                        try {
+                            $rawText = [System.IO.File]::ReadAllText($f.FullName, [System.Text.Encoding]::UTF8)
+                            if ($rawText.Length -gt 0 -and $rawText[0] -eq [char]0xFEFF) {
+                                $rawText = $rawText.Substring(1)
+                            }
+                            $lines = $rawText -split "\r?\n"
+                            $cwdVal = ""
+                            $sessionVal = ""
+                            $bodyStartIdx = $lines.Length
+                            for ($i = 0; $i -lt $lines.Length; $i++) {
+                                $trimmed = $lines[$i].Trim()
+                                if ([string]::IsNullOrWhiteSpace($trimmed)) {
+                                    continue
+                                }
+                                if ($trimmed -match '^@cwd:\s*(.*)$') {
+                                    $cwdVal = $Matches[1].Trim()
+                                    continue
+                                }
+                                if ($trimmed -match '^@session:\s*(.*)$') {
+                                    $sessionVal = $Matches[1].Trim()
+                                    continue
+                                }
+                                $bodyStartIdx = $i
+                                break
+                            }
+                            $question = if ($bodyStartIdx -lt $lines.Length) {
+                                ($lines[$bodyStartIdx..($lines.Length - 1)] -join "`r`n").Trim()
+                            } else {
+                                ""
+                            }
+                            $state = if ($watcherAlive -and $pendingList.Count -eq 0) { "processing" } else { "queued" }
+                            $pendingList += [PSCustomObject]@{
+                                task_id  = $f.BaseName
+                                created  = $f.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")
+                                question = $question
+                                cwd      = $cwdVal
+                                session  = $sessionVal
+                                state    = $state
+                            }
+                        } catch {
+                            continue
+                        }
+                    }
+                }
+
+                $json = if ($pendingList.Count -eq 0) {
+                    "[]"
+                } elseif ($pendingList.Count -eq 1) {
+                    "[" + ($pendingList[0] | ConvertTo-Json -Depth 5) + "]"
+                } else {
+                    $pendingList | ConvertTo-Json -Depth 5
+                }
+
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+                $response.ContentType = "application/json; charset=utf-8"
+                $response.ContentLength64 = $bytes.Length
+                $response.Headers.Add("Cache-Control", "no-store")
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
+
             } elseif ($urlPath -eq "/image") {
 
                 $params = Get-Utf8QueryParams $request.Url

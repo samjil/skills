@@ -759,6 +759,100 @@ body {
   font-style: italic;
 }
 
+/* ==========================================================================
+   Pending Questions (진행 중 / 대기 중인 위임 작업)
+   ========================================================================== */
+
+.card.pending-card {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+  box-shadow: 0 1px 4px rgba(59, 130, 246, 0.08);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card.pending-card.queued {
+  border-color: #e4e4e7;
+  background: #fafaf9;
+  box-shadow: none;
+}
+
+.badge.status-pending-processing {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  font-weight: 600;
+}
+
+.badge.status-pending-queued {
+  background: #f4f4f5;
+  color: #71717a;
+  border: 1px solid #e4e4e7;
+  font-weight: 500;
+}
+
+.qa.a.qa-pending-a {
+  border-left-color: #3b82f6;
+  border-color: #dbeafe #dbeafe #dbeafe #3b82f6;
+}
+
+.qa.a.qa-pending-a > summary {
+  color: #1e40af;
+  background: #eff6ff;
+}
+
+.qa.a.qa-pending-a > summary:hover {
+  background: #dbeafe;
+}
+
+.qa.a.qa-pending-a .qa-type-badge {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+
+.qa.a.qa-pending-a .qa-preview-keyword {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.pending-body {
+  background: #ffffff;
+  padding: 12px 14px;
+}
+
+.pending-status-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+}
+
+.pending-status-wrap.processing {
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.pending-status-wrap.queued {
+  color: #71717a;
+  font-weight: 500;
+}
+
+.pending-spinner {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  border: 2px solid #bfdbfe;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: pending-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pending-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
 footer { color: #888; font-size: 12px; line-height: 1.7; margin-top: 22px; border-top: 1px solid #ddd; padding-top: 12px; }
 footer code { background: #eee; border-radius: 4px; padding: 1px 5px; font-family: Consolas, "D2Coding", monospace; }
 
@@ -975,4 +1069,57 @@ footer code { background: #eee; border-radius: 4px; padding: 1px 5px; font-famil
     color: #93c5fd;
     border-left-color: rgba(96, 165, 250, 0.4);
   }
+
+  /* Pending questions in dark mode */
+  .card.pending-card {
+    background: #1e2638;
+    border-color: #2e4368;
+  }
+  .card.pending-card.queued {
+    background: #232326;
+    border-color: #38383e;
+  }
+  .badge.status-pending-processing {
+    background: #1e3a8a;
+    color: #bfdbfe;
+    border-color: #3b82f6;
+  }
+  .badge.status-pending-queued {
+    background: #2e2e32;
+    color: #a1a1aa;
+    border-color: #44444a;
+  }
+  .qa.a.qa-pending-a {
+    border-left-color: #3b82f6;
+    border-color: #2e3b50 #2e3b50 #2e3b50 #3b82f6;
+  }
+  .qa.a.qa-pending-a > summary {
+    color: #93c5fd;
+    background: #1e293b;
+  }
+  .qa.a.qa-pending-a > summary:hover {
+    background: #273549;
+  }
+  .qa.a.qa-pending-a .qa-type-badge {
+    background: #1e3a8a;
+    color: #bfdbfe;
+    border-color: #3b82f6;
+  }
+  .qa.a.qa-pending-a .qa-preview-keyword {
+    color: #93c5fd;
+  }
+  .pending-body {
+    background: #1a1e28;
+  }
+  .pending-status-wrap.processing {
+    color: #93c5fd;
+  }
+  .pending-status-wrap.queued {
+    color: #a1a1aa;
+  }
+  .pending-spinner {
+    border-color: #2e4368;
+    border-top-color: #60a5fa;
+  }
 }
+

@@ -53,6 +53,10 @@
   var knownShardKey = ""; // 데이터가 실제로 바뀌었는지 판단하는 키 (shard 파일명+크기)
   var refreshTimer = null;
 
+  var pendingItems = [];    // inbox 대기/진행 중인 질문 목록 (/api/delegate/pending)
+  var lastPendingKey = "";  // pending 목록 변경 감지용 키 (task_id:state,...)
+  var filteredPending = []; // 검색/필터 적용된 pending 목록
+
   function fetchText(url) {
     return fetch(url, { cache: "no-store" }).then(function (res) {
       if (!res.ok) { throw new Error(url + " -> HTTP " + res.status); }
@@ -83,6 +87,26 @@
   function shardKeyOf(index) {
     if (!index || !index.shards) { return ""; }
     return index.shards.map(function (s) { return s.file + ":" + s.bytes; }).join(",");
+  }
+
+  // pending 목록의 task_id와 state 조합으로 변경 여부를 감지합니다.
+  function pendingKeyOf(list) {
+    if (!list || !list.length) { return ""; }
+    return list.map(function (p) {
+      return (p.task_id || "") + ":" + (p.state || "");
+    }).join(",");
+  }
+
+  // inbox 에 아직 답이 나오지 않은 질문 목록을 읽어옵니다.
+  function loadPending() {
+    return fetchJson("/api/delegate/pending")
+      .then(function (data) {
+        return Array.isArray(data) ? data : [];
+      })
+      .catch(function () {
+        // 구버전 서버 등 요청 실패 시 조용히 빈 배열로 취급합니다 (기존 동작 보호)
+        return [];
+      });
   }
 
   // index.json에 나열된 모든 shard(qa-YYYY-MM[.pN].jsonl)를 읽어와 합칩니다.
@@ -162,6 +186,35 @@
     var session = els.sessionFilter ? els.sessionFilter.value : "";
     var status = els.statusFilter.value;
 
+    // 1. 이미 완료된 기록에 존재하는 task_id 집합 (답이 나와 기록에 생기면 pending 카드 제외)
+    var finishedTaskIds = {};
+    allItems.forEach(function (r) {
+      if (r && r.task_id) { finishedTaskIds[r.task_id] = true; }
+    });
+
+    // 2. pending 목록 필터링
+    // 모델 필터가 걸려 있으면 pending은 모델이 아직 없으므로 숨깁니다.
+    // 완료 상태(OK/ERROR) 필터가 걸려 있어도 pending은 아직 완료되지 않았으므로 숨깁니다.
+    if (model || status) {
+      filteredPending = [];
+    } else {
+      filteredPending = pendingItems.filter(function (p) {
+        if (!p || !p.task_id) { return false; }
+        // 같은 task_id 가 이미 기록에 있으면 숨김 (잠깐 겹치는 순간 두 번 보이지 않게)
+        if (finishedTaskIds[p.task_id]) { return false; }
+        // 세션 필터
+        if (session === "__none__" && p.session) { return false; }
+        if (session && session !== "__none__" && p.session !== session) { return false; }
+        // 검색어: pending 카드는 검색어가 question 에 들어 있을 때만 보임
+        if (q) {
+          var qText = (p.question || "").toLowerCase();
+          if (qText.indexOf(q) === -1) { return false; }
+        }
+        return true;
+      });
+    }
+
+    // 3. 완료 기록 필터링
     filtered = allItems.filter(function (r) {
       if (model && r.model !== model) { return false; }
       if (session === "__none__" && r.session) { return false; }
@@ -182,6 +235,18 @@
 
     shown = 0;
     els.cards.innerHTML = "";
+
+    // pending 카드가 있으면 위임 실행 기록 목록 맨 위에 붙입니다
+    if (filteredPending.length > 0) {
+      var pFrag = document.createDocumentFragment();
+      filteredPending.forEach(function (p) {
+        var queueIdx = pendingItems.indexOf(p);
+        if (queueIdx < 0) { queueIdx = 0; }
+        pFrag.appendChild(buildPendingCard(p, queueIdx));
+      });
+      els.cards.appendChild(pFrag);
+    }
+
     renderMore();
   }
 
@@ -691,13 +756,135 @@
     return card;
   }
 
+  // inbox 에 대기/진행 중인 질문 카드를 구성합니다.
+  function buildPendingCard(p, queueIndex) {
+    var isProcessing = (p.state === "processing");
+
+    var card = document.createElement("div");
+    card.className = "card pending-card" + (isProcessing ? " processing" : " queued");
+
+    var meta = document.createElement("div");
+    meta.className = "meta";
+    var ts = document.createElement("span");
+    ts.className = "ts";
+    ts.textContent = p.created || "";
+    meta.appendChild(ts);
+
+    if (isProcessing) {
+      meta.appendChild(badge("status-pending-processing", "⚡ 진행 중"));
+    } else {
+      meta.appendChild(badge("status-pending-queued", "⏳ 대기 중"));
+    }
+
+    meta.appendChild(badge("source-bridge", "📁 bridge"));
+
+    if (p.task_id) {
+      meta.appendChild(badge("taskid", p.task_id));
+    }
+    card.appendChild(meta);
+
+    // 세션 정보 (세션이 있는 작업인 경우 별도 표시)
+    if (p.session) {
+      var sMeta = document.createElement("div");
+      sMeta.className = "meta session-meta";
+      sMeta.appendChild(badge("session-flag", "(session)"));
+      sMeta.appendChild(badge("session", "🧵 " + p.session));
+      card.appendChild(sMeta);
+    }
+
+    // 질문 영역 (기존 카드와 동일한 구조/렌더링)
+    var dq = document.createElement("details");
+    dq.className = "qa q";
+    var sq = document.createElement("summary");
+    var qBadge = document.createElement("span");
+    qBadge.className = "qa-type-badge q-type";
+    qBadge.textContent = "질문";
+    sq.appendChild(qBadge);
+
+    var qKw = extractQuestionKeyword(p.question);
+    if (qKw) {
+      var qKwSpan = document.createElement("span");
+      qKwSpan.className = "qa-preview-keyword";
+      qKwSpan.textContent = qKw;
+      qKwSpan.title = qKw;
+      sq.appendChild(qKwSpan);
+    }
+    dq.appendChild(sq);
+
+    var qb = document.createElement("div");
+    qb.className = "body";
+
+    var qImgInfo = extractImagesFromText(p.question);
+    var effectiveCwd = p.cwd || qImgInfo.cwd;
+    var qGallery = createImageGallery(qImgInfo.images, effectiveCwd);
+    if (qGallery) {
+      qb.appendChild(qGallery);
+    }
+    var qContent = document.createElement("div");
+    qContent.className = "qa-content";
+    renderBody(qContent, p.question, effectiveCwd);
+    qb.appendChild(qContent);
+
+    dq.appendChild(qb);
+    card.appendChild(dq);
+
+    // 답변 영역 (진행 중: 스피너 + "생각 중…", 대기 중: "대기 중 (앞에 N건)")
+    var da = document.createElement("details");
+    da.className = "qa a qa-pending-a";
+    da.open = true;
+    var sa = document.createElement("summary");
+    var aBadge = document.createElement("span");
+    aBadge.className = "qa-type-badge a-type";
+    aBadge.textContent = "답변";
+    sa.appendChild(aBadge);
+
+    var aKwSpan = document.createElement("span");
+    aKwSpan.className = "qa-preview-keyword";
+    if (isProcessing) {
+      aKwSpan.textContent = "생각 중…";
+    } else {
+      aKwSpan.textContent = "대기 중 (앞에 " + queueIndex + "건)";
+    }
+    sa.appendChild(aKwSpan);
+    da.appendChild(sa);
+
+    var ab = document.createElement("div");
+    ab.className = "body pending-body";
+
+    var statusWrap = document.createElement("div");
+    statusWrap.className = "pending-status-wrap " + (isProcessing ? "processing" : "queued");
+
+    if (isProcessing) {
+      var spinner = document.createElement("span");
+      spinner.className = "pending-spinner";
+      var statusText = document.createElement("span");
+      statusText.className = "pending-text";
+      statusText.textContent = "생각 중…";
+      statusWrap.appendChild(spinner);
+      statusWrap.appendChild(statusText);
+    } else {
+      var qStatusText = document.createElement("span");
+      qStatusText.className = "pending-text";
+      qStatusText.textContent = "대기 중 (앞에 " + queueIndex + "건)";
+      statusWrap.appendChild(qStatusText);
+    }
+
+    ab.appendChild(statusWrap);
+    da.appendChild(ab);
+    card.appendChild(da);
+
+    return card;
+  }
+
   function renderMore() {
     if (filtered.length === 0) {
-      els.cards.innerHTML = '<p class="empty">' +
-        (allItems.length === 0
-          ? "아직 처리된 작업이 없습니다. runtime\\inbox 폴더에 지시파일을 넣으면 여기에 나타납니다."
-          : "검색/필터 조건에 맞는 기록이 없습니다.") +
-        "</p>";
+      if (filteredPending.length === 0) {
+        els.cards.innerHTML = '<p class="empty">' +
+          (allItems.length === 0 && pendingItems.length === 0
+            ? "아직 처리된 작업이 없습니다. runtime\\inbox 폴더에 지시파일을 넣으면 여기에 나타납니다."
+            : "검색/필터 조건에 맞는 기록이 없습니다.") +
+          "</p>";
+      }
       els.loadMoreBtn.hidden = true;
       updateCount();
       return;
@@ -716,6 +903,9 @@
   function updateCount() {
     if (currentTab === "qa") {
       var text = "총 " + allItems.length + "건";
+      if (filteredPending.length > 0) {
+        text += " · 대기/진행 " + filteredPending.length + "건";
+      }
       if (filtered.length !== allItems.length) {
         text += " · 필터 결과 " + filtered.length + "건";
       }
@@ -1311,8 +1501,18 @@
     if (currentTab === "handoff") {
       return loadHandoffProjects(force);
     }
-    return loadAll(force).then(function (r) {
-      if (force || r.changed) {
+    if (force) {
+      lastPendingKey = "";
+    }
+    return Promise.all([loadAll(force), loadPending()]).then(function (results) {
+      var r = results[0];
+      var pList = results[1];
+      var pKey = pendingKeyOf(pList);
+      var pChanged = (pKey !== lastPendingKey);
+      lastPendingKey = pKey;
+      pendingItems = pList;
+
+      if (force || r.changed || pChanged) {
         populateModelFilter();
         populateSessionFilter();
         applyFilters();
