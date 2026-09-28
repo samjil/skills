@@ -162,7 +162,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $ClaudeSkillsRoot = Join-Path $env:USERPROFILE ".claude\skills"
 $AgentsSkillsRoot = Join-Path $env:USERPROFILE ".agents\skills"
 
-New-Item -ItemType Directory -Force -Path $ClaudeSkillsRoot, $AgentsSkillsRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $AgentsSkillsRoot | Out-Null
 
 # 구버전 스킬 정리 (agent-handoff, agent-delegate-agy)
 $legacySkills = @("agent-handoff", "agent-delegate-agy")
@@ -178,6 +178,49 @@ foreach ($old in $legacySkills) {
         Remove-Item -Recurse -Force -LiteralPath $aOld -ErrorAction SilentlyContinue
     }
 }
+
+# ~/.claude/skills 는 ~/.agents/skills 로 가는 정션 하나로 둔다. 이미 정션이면 그대로 둔다.
+# 일반 폴더면 안에 든 것을 지우지 않고 ~/.agents/skills 로 옮긴 뒤 정션으로 바꾼다 — 사용자가 직접
+# 넣은 스킬도 들어 있을 수 있고, 지우면 되살릴 곳이 없다. 이름이 겹치는 것은 보관만 한다.
+function Convert-ClaudeSkillsToJunction {
+    New-Item -ItemType Directory -Force -Path (Split-Path $ClaudeSkillsRoot -Parent) | Out-Null
+
+    if (Test-Path -LiteralPath $ClaudeSkillsRoot) {
+        $cItem = Get-Item -LiteralPath $ClaudeSkillsRoot -Force
+        if ($cItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { return }
+
+        $backupDir = "$ClaudeSkillsRoot.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        foreach ($child in @(Get-ChildItem -LiteralPath $ClaudeSkillsRoot -Force)) {
+            if ($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                # 예전 설치가 스킬마다 만든 정션이다. 링크만 걷고 원본(~/.agents/skills)은 둔다
+                cmd /c "rmdir `"$($child.FullName)`"" 2>&1 | Out-Null
+                continue
+            }
+            $dest = Join-Path $AgentsSkillsRoot $child.Name
+            if (Test-Path -LiteralPath $dest) {
+                New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+                Move-Item -LiteralPath $child.FullName -Destination (Join-Path $backupDir $child.Name) -Force
+                Write-Host "[!] ~/.agents/skills 에 같은 이름이 있어 보관만 했습니다: $($child.Name) -> $backupDir" -ForegroundColor Yellow
+            } else {
+                Move-Item -LiteralPath $child.FullName -Destination $dest
+                Write-Host "[+] ~/.agents/skills 로 옮겼습니다: $($child.Name)" -ForegroundColor Green
+            }
+        }
+        if (@(Get-ChildItem -LiteralPath $ClaudeSkillsRoot -Force).Count -gt 0) {
+            throw "~/.claude/skills 를 비우지 못해 정션으로 바꾸지 않았습니다. 남은 항목을 확인해 주세요: $ClaudeSkillsRoot"
+        }
+        Remove-Item -LiteralPath $ClaudeSkillsRoot -Force
+    }
+
+    cmd /c mklink /J "$ClaudeSkillsRoot" "$AgentsSkillsRoot" 2>&1 | Out-Null
+    $made = Get-Item -LiteralPath $ClaudeSkillsRoot -Force -ErrorAction SilentlyContinue
+    if (-not $made -or -not ($made.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        throw "~/.claude/skills 정션을 만들지 못했습니다. 스킬은 ~/.agents/skills 에 그대로 있습니다."
+    }
+    Write-Host "[+] Claude Code 단일 정션(Junction) 연결 완료: ~/.claude/skills -> ~/.agents/skills" -ForegroundColor Green
+}
+
+Convert-ClaudeSkillsToJunction
 
 $targetSkills = @("samjil-handoff", "samjil-delegate-agy", "samjil-git-commit")
 
@@ -199,22 +242,47 @@ foreach ($sName in $targetSkills) {
     }
     Copy-Item -Force -LiteralPath $srcSkillMd -Destination (Join-Path $aDestDir "SKILL.md")
     Write-Host "[+] 공용 스킬 저장소 배치 완료: $sName (SKILL.md)" -ForegroundColor Green
+}
 
-    # (2) Claude Code 연동: ~/.claude/skills 전체를 ~/.agents/skills 로 단일 정션(Junction) 연결 보장
-    if (Test-Path -LiteralPath $ClaudeSkillsRoot) {
-        $cItem = Get-Item -LiteralPath $ClaudeSkillsRoot -Force
-        if (-not ($cItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
-            Get-ChildItem -LiteralPath $ClaudeSkillsRoot -Force | ForEach-Object {
-                if ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { cmd /c "rmdir `"$($_.FullName)`"" }
-                else { Remove-Item -Recurse -Force -LiteralPath $_.FullName }
+# 예전 설치가 남긴 Antigravity 플러그인을 걷는다. 지금은 ~/.agents/skills 를 skills.json 으로
+# 읽으므로, 남겨 두면 같은 스킬을 두 번 읽는다.
+$samjilPluginDir = Join-Path $GeminiConfigDir "plugins\samjil-skills"
+if (Test-Path -LiteralPath $samjilPluginDir) {
+    # 안의 스킬 정션은 링크만 걷는다. 폴더째 -Recurse 로 지우면 PowerShell 5.1 은 정션 너머
+    # 원본(~/.agents/skills)까지 지울 수 있다.
+    $pluginSkillsDir = Join-Path $samjilPluginDir "skills"
+    if (Test-Path -LiteralPath $pluginSkillsDir) {
+        foreach ($p in @(Get-ChildItem -LiteralPath $pluginSkillsDir -Force)) {
+            if ($p.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                cmd /c "rmdir `"$($p.FullName)`"" 2>&1 | Out-Null
             }
-            Remove-Item -Recurse -Force -LiteralPath $ClaudeSkillsRoot
-            cmd /c mklink /J "$ClaudeSkillsRoot" "$AgentsSkillsRoot" 2>&1 | Out-Null
-            Write-Host "[+] Claude Code 단일 정션(Junction) 연결 완료: ~/.claude/skills -> ~/.agents/skills" -ForegroundColor Green
         }
+    }
+    $leftLinks = @(Get-ChildItem -LiteralPath $samjilPluginDir -Recurse -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Attributes -band [System.IO.FileAttributes]::ReparsePoint })
+    if ($leftLinks.Count -gt 0) {
+        Write-Warning "예전 플러그인 폴더에 정션이 남아 있어 지우지 않았습니다: $samjilPluginDir"
     } else {
-        cmd /c mklink /J "$ClaudeSkillsRoot" "$AgentsSkillsRoot" 2>&1 | Out-Null
-        Write-Host "[+] Claude Code 단일 정션(Junction) 연결 완료: ~/.claude/skills -> ~/.agents/skills" -ForegroundColor Green
+        Remove-Item -Recurse -Force -LiteralPath $samjilPluginDir -ErrorAction SilentlyContinue
+        Write-Host "[+] 예전 Antigravity 플러그인 정리 완료: $samjilPluginDir" -ForegroundColor Green
+    }
+}
+
+$geminiConfigJson = Join-Path $GeminiConfigDir "config.json"
+if (Test-Path -LiteralPath $geminiConfigJson) {
+    try {
+        $rawConf = Get-Content -LiteralPath $geminiConfigJson -Raw -Encoding UTF8
+        if ($rawConf -and $rawConf.Trim()) {
+            $confObj = ConvertFrom-Json $rawConf
+            if ($confObj.plugins -and $confObj.plugins.PSObject.Properties['samjil-skills']) {
+                $confObj.plugins.PSObject.Properties.Remove('samjil-skills')
+                $updatedConf = ConvertTo-Json $confObj -Depth 10
+                [System.IO.File]::WriteAllText($geminiConfigJson, $updatedConf, (New-Object System.Text.UTF8Encoding($false)))
+                Write-Host "[+] Antigravity config.json 에서 예전 플러그인 등록 해제 완료: samjil-skills" -ForegroundColor Green
+            }
+        }
+    } catch {
+        Write-Warning "config.json 정리 중 오류: $_"
     }
 }
 
