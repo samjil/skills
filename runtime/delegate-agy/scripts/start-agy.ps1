@@ -181,13 +181,16 @@ function Test-WatcherAlive {
     # (2) 보조 수단: 잠금 파일이 비정상 유실된 경우를 대비해 프로세스 목록과 하트비트를 함께 확인합니다.
     #     주의: -NoExit 창은 스크립트가 이미 종료되었어도 CommandLine에 영구적으로 "watch-agy.ps1"이 남고,
     #     현재 콘솔 창($PID)에서 start-agy.ps1을 재실행했을 때도 CommandLine에 남아있습니다.
-    #     따라서 $PID는 제외하고, 하트비트가 최근(30초 이내)일 때만 실제 살아있는 것으로 판정합니다.
+    #     따라서 $PID는 제외하고, 하트비트가 최근(300초 이내)일 때만 실제 살아있는 것으로 판정합니다.
+#     300초는 워치독(ensure-agy-running.ps1)과 같은 기준입니다. 워처는 agy 작업을 기다리는
+#     동안(길면 몇 분) 하트비트를 쓰지 않아서, 더 짧게 잡으면 살아 있는 워처를 죽었다고 보고
+#     두 번째 워처를 띄웁니다 - 그러면 같은 질문을 둘이 처리합니다.
     try {
         $procs = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
             Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like "*watch-agy.ps1*" })
         if ($procs.Count -gt 0 -and (Test-Path $HeartbeatFile)) {
             $ageSec = [int]((Get-Date) - (Get-Item $HeartbeatFile).LastWriteTime).TotalSeconds
-            if ($ageSec -le 30) { return $true }
+            if ($ageSec -le 300) { return $true }
         }
     } catch {}
 
