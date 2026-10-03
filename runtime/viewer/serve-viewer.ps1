@@ -887,6 +887,47 @@ try {
                 $response.Headers.Add("Cache-Control", "no-store")
                 $response.OutputStream.Write($bytes, 0, $bytes.Length)
 
+            } elseif ($urlPath -eq "/api/status" -or $urlPath -eq "/api/system/status") {
+
+                $runtimeDir = Split-Path (Split-Path $DataDir -Parent) -Parent
+                $heartbeatDir = Join-Path $runtimeDir "logs\heartbeat"
+                $inboxDir = Join-Path $runtimeDir "inbox"
+
+                $watcherAlive = $false
+                $lastHeartbeat = ""
+                if (Test-Path -LiteralPath $heartbeatDir -PathType Container) {
+                    $latestHb = Get-ChildItem -LiteralPath $heartbeatDir -Filter "hb_*.txt" -File -ErrorAction SilentlyContinue |
+                        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                    if ($latestHb) {
+                        $diffSec = ((Get-Date) - $latestHb.LastWriteTime).TotalSeconds
+                        if ($diffSec -ge 0 -and $diffSec -le 300) {
+                            $watcherAlive = $true
+                        }
+                        $lastHeartbeat = $latestHb.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+                    }
+                }
+
+                $inboxCount = 0
+                if (Test-Path -LiteralPath $inboxDir -PathType Container) {
+                    $inboxFiles = @(Get-ChildItem -LiteralPath $inboxDir -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -match '^\.(md|txt)$' })
+                    $inboxCount = $inboxFiles.Count
+                }
+
+                $statusObj = [PSCustomObject]@{
+                    port          = $Port
+                    watcherAlive  = $watcherAlive
+                    lastHeartbeat = $lastHeartbeat
+                    inboxCount    = $inboxCount
+                    dataDir       = $DataDir
+                    handoffDir    = $HandoffDir
+                }
+                $json = $statusObj | ConvertTo-Json -Depth 5
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+                $response.ContentType = "application/json; charset=utf-8"
+                $response.ContentLength64 = $bytes.Length
+                $response.Headers.Add("Cache-Control", "no-store")
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
+
             } elseif ($urlPath -eq "/image") {
 
                 $params = Get-Utf8QueryParams $request.Url
