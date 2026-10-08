@@ -525,6 +525,12 @@ if (-not (Test-Path $commonFile)) {
     $commonFile = Join-Path (Split-Path $PSScriptRoot -Parent) "common.ps1"
 }
 . $commonFile
+# 호출 하나가 "일하는 중인지 멈췄는지" 판정하는 헬퍼(agy-progress.ps1). 테스트: tests\delegate-agy
+$progressFile = Join-Path $PSScriptRoot "agy-progress.ps1"
+if (-not (Test-Path $progressFile)) {
+    $progressFile = Join-Path (Split-Path $PSScriptRoot -Parent) "agy-progress.ps1"
+}
+. $progressFile
 
 
 
@@ -768,7 +774,18 @@ function Update-QAReport {
 
 #  기다리는 바람에 워처가 13분 넘게 그 자리에서 멈춘 적이 있습니다.)
 
-$AgyTimeoutSeconds = 600
+$AgyTimeoutSeconds = 1800
+
+# 위 절대 마감과 별개로, agy 대화 기록에 새 단계가 이 시간 동안 하나도 없으면 "멈춘 것"으로 보고
+# 중단합니다. 단계가 계속 기록되는 동안은(= 일하는 중) 절대 마감까지 기다립니다.
+# 이 값의 근거와 한계는 agy-progress.ps1 머리말을 보세요.
+$AgyStallSeconds = 300
+# 마감/멈춤을 점검하는 주기(초)
+$AgyPollSeconds = 30
+# 오래 걸리는 호출의 진행 상황(경과 시간, 마지막 활동)을 로그에 남기는 주기(초)
+$AgyProgressLogSeconds = 600
+# 시작 직후 이번 호출이 만든 대화를 찾는 데 쓰는 시간 창(초)
+$AgyConversationWindowSeconds = 120
 
 
 
@@ -785,10 +802,6 @@ $AgyTimeoutSeconds = 600
 # 반환: @{ TimedOut = $true/$false; Raw = <agy 표준출력> }
 
 function Invoke-AgyOnce($agyArgs, $errFile, $workDir) {
-
-    # 타임아웃 시 남을 수 있는 자식 프로세스를 가려내기 위해, 호출 전 agy 프로세스 목록을 기억합니다.
-
-    $before = @(Get-Process -Name "agy" -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
 
 
 
@@ -840,32 +853,82 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir) {
 
 
 
-    $finished = Wait-Job -Job $job -Timeout $AgyTimeoutSeconds
+    # 절대 마감(AgyTimeoutSeconds)까지 기다리되, AgyPollSeconds마다 깨어나 "아직 일하는가"를 봅니다.
+    # 대화 기록에 새 단계가 계속 쌓이면 일하는 중이므로 그대로 두고, AgyStallSeconds 동안
+    # 하나도 없으면 멈춘 것으로 보고 중단합니다.
+    $startedAt       = Get-Date
+    $agyHome         = Get-AgyHomeDir
+    $knownConv       = Get-AgyConversationIdFromArgs $agyArgs
+    $convId          = $null
+    $stallCheck      = $true     # 대화를 못 찾거나 모호하면 $false: 절대 마감만 적용
+    $stopReason      = $null     # 'cap'(절대 마감) | 'stall'(멈춤)
+    $lastActivity    = $null
+    $stopNow         = $null
+    $nextProgressLog = $AgyProgressLogSeconds
+    $finished        = $null
 
+    while ($true) {
+        $finished = Wait-Job -Job $job -Timeout $AgyPollSeconds
+        if ($null -ne $finished) { break }
 
+        $now     = Get-Date
+        $elapsed = ($now - $startedAt).TotalSeconds
+        if ($elapsed -ge $AgyTimeoutSeconds) { $stopReason = 'cap'; $stopNow = $now; break }
 
-    if ($null -eq $finished) {
-
-        Stop-Job   -Job $job -ErrorAction SilentlyContinue
-
-        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-
-
-
-        # 작업을 죽여도 자식 agy.exe가 남을 수 있으므로, 이번 호출로 새로 생긴 것만 정리합니다.
-
-        foreach ($proc in @(Get-Process -Name "agy" -ErrorAction SilentlyContinue)) {
-
-            if ($before -notcontains $proc.Id) {
-
-                try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
-
+        if ($stallCheck -and -not $convId) {
+            $found = Resolve-AgyConversation $agyHome $knownConv $startedAt $AgyConversationWindowSeconds
+            if ($found.State -eq 'found') {
+                $convId = $found.Id
+            } elseif ($found.State -eq 'unavailable') {
+                $stallCheck = $false
+                Log "  멈춤 점검 불가: agy 대화 폴더를 찾을 수 없습니다 ($agyHome). 절대 마감 $AgyTimeoutSeconds 초만 적용합니다."
+            } elseif ($found.State -eq 'ambiguous') {
+                $stallCheck = $false
+                Log "  멈춤 점검 불가: 시작 직후 새 대화가 둘 이상이라 이번 호출의 것을 가릴 수 없습니다. 절대 마감 $AgyTimeoutSeconds 초만 적용합니다."
+            } elseif ($elapsed -gt $AgyConversationWindowSeconds) {
+                $stallCheck = $false
+                Log "  멈춤 점검 불가: 시작 후 $AgyConversationWindowSeconds 초 안에 새 대화가 보이지 않습니다. 절대 마감 $AgyTimeoutSeconds 초만 적용합니다."
             }
-
         }
 
-        return @{ TimedOut = $true; Raw = $null }
+        if ($stallCheck -and $convId) {
+            $lastActivity = Get-AgyConversationActivity $agyHome $convId
+            if (Test-AgyStalled $lastActivity $startedAt $now $AgyStallSeconds) {
+                $stopReason = 'stall'; $stopNow = $now; break
+            }
+        }
 
+        if ($elapsed -ge $nextProgressLog) {
+            $nextProgressLog += $AgyProgressLogSeconds
+            if ($convId -and $lastActivity) {
+                $idleNow = [math]::Max(0, [int](($now - $lastActivity).TotalSeconds))
+                Log ("  진행 점검: 경과 {0}초, 마지막 활동 {1}초 전 - 작업 중으로 보고 계속 기다립니다 (대화 {2})" -f [int]$elapsed, $idleNow, $convId)
+            } else {
+                Log ("  진행 점검: 경과 {0}초 (마지막 활동은 확인할 수 없음)" -f [int]$elapsed)
+            }
+        }
+    }
+
+    if ($null -eq $finished) {
+        $idleSeconds = $null
+        $lastText    = "확인 불가"
+        if ($stopReason -eq 'stall') {
+            $ref = $startedAt
+            if (($null -ne $lastActivity) -and ($lastActivity -gt $ref)) { $ref = $lastActivity }
+            $idleSeconds = ($stopNow - $ref).TotalSeconds
+            $lastText    = $ref.ToString("HH:mm:ss")
+        }
+
+        # 순서가 중요합니다: agy를 먼저 죽이고 나서 작업을 정리합니다. Stop-Job 은 작업 안의 agy가
+        # 끝날 때까지 돌아오지 않으므로(실측: 60초짜리 가짜 agy에서 65초 뒤에야 반환), 먼저 부르면
+        # 멈춘 agy 앞에서 워처가 그대로 묶여 멈춤 판정이 소용없어집니다.
+        # 대상은 "이 워처의 자손인 agy"만입니다. 이름만으로 고르면 사용자가 직접 띄운 다른 agy까지 죽입니다.
+        foreach ($agyPid in @(Get-DescendantProcessIdsByName $PID "agy")) {
+            Stop-ProcessTree $agyPid
+        }
+        Stop-Job   -Job $job -ErrorAction SilentlyContinue
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        return @{ TimedOut = $true; Raw = $null; Reason = $stopReason; IdleSeconds = $idleSeconds; LastActivity = $lastText; ConversationId = $convId }
     }
 
 
@@ -964,9 +1027,14 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
 
         if ($call.TimedOut) {
 
-            $result.ErrorMessage = "agy 호출이 $AgyTimeoutSeconds 초를 넘겨 중단했습니다 (타임아웃)"
-
-            Log "  타임아웃: agy 호출이 $AgyTimeoutSeconds 초를 넘겨 강제로 중단했습니다. 이 작업은 실패로 기록합니다."
+            if ($call.Reason -eq 'stall') {
+                $idleMin = [math]::Round($call.IdleSeconds / 60, 1)
+                $result.ErrorMessage = "agy가 $idleMin 분 동안 진행하지 않아 중단했습니다 (멈춤 판정: 마지막 활동 $($call.LastActivity), 대화 ID $($call.ConversationId))"
+                Log "  멈춤: 대화 기록에 새 단계가 $idleMin 분 동안 없어 강제로 중단했습니다 (마지막 활동 $($call.LastActivity), 대화 $($call.ConversationId)). 이 작업은 실패로 기록합니다."
+            } else {
+                $result.ErrorMessage = "agy 호출이 $AgyTimeoutSeconds 초를 넘겨 중단했습니다 (타임아웃)"
+                Log "  타임아웃: agy 호출이 $AgyTimeoutSeconds 초를 넘겨 강제로 중단했습니다. 이 작업은 실패로 기록합니다."
+            }
 
             break
 
