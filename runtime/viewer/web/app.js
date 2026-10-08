@@ -201,6 +201,14 @@
     return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
   }
 
+  // 기록의 모델명. 실패 기록은 model 이 빈 문자열이라, 시도한 모델(tried_models)로 대신한다.
+  function recordModel(r) {
+    if (!r) return "";
+    var m = r.model ? String(r.model).trim() : "";
+    if (m && m !== "(session)") return m;
+    return r.tried_models ? String(r.tried_models).trim() : "";
+  }
+
   function isOkStatus(r) {
     if (!r || r.status == null) return false;
     return String(r.status).trim() === "OK";
@@ -503,8 +511,8 @@
       if (r.status && String(r.status).trim() !== "OK") {
         map[sKey].errors++;
       }
-      if (r.model && r.model !== "(session)") {
-        map[sKey].models[r.model] = true;
+      if (recordModel(r)) {
+        map[sKey].models[recordModel(r)] = true;
       }
       if (r.timestamp && (!map[sKey].latestTime || r.timestamp > map[sKey].latestTime)) {
         map[sKey].latestTime = r.timestamp;
@@ -746,7 +754,7 @@
         title = "마지막 위임: " + (extractQuestionKeyword(last.question) || "(질문 내용 없음)");
         meta.push('<span>' + formatRelativeTime(last.timestamp) + '</span>');
         meta.push('<span>' + (isOkStatus(last) ? "성공" : (last.status ? "실패 (" + escapeHtml(last.status) + ")" : "상태 미기록")) + '</span>');
-        if (last.model && last.model !== "(session)") { meta.push('<span><code>' + escapeHtml(last.model) + '</code></span>'); }
+        if (recordModel(last)) { meta.push('<span><code>' + escapeHtml(recordModel(last)) + '</code></span>'); }
         clickSession = last.session || "__none__";
       } else {
         title = "아직 위임 기록이 없습니다";
@@ -797,7 +805,7 @@
     var html = recent.map(function (r) {
       var ok = isOkStatus(r);
       if (!ok) { errs++; }
-      var tip = (r.timestamp || "") + "  " + (ok ? "성공" : "실패") + (r.model ? "  " + r.model : "");
+      var tip = (r.timestamp || "") + "  " + (ok ? "성공" : "실패") + (recordModel(r) ? "  " + recordModel(r) : "");
       return '<span class="tick ' + (ok ? "ok" : "err") + '" title="' + escapeHtml(tip) + '"></span>';
     }).join("");
     var label = "최근 " + recent.length + "건 " + (errs === 0 ? "모두 성공" : "중 실패 " + errs + "건");
@@ -907,7 +915,7 @@
             time: r.timestamp,
             titleHtml: escapeHtml(extractQuestionKeyword(r.question) || "(질문 내용 없음)"),
             subHtml: '<span>위임 실패</span>' +
-              (r.model && r.model !== "(session)" ? '<span>' + escapeHtml(r.model) + '</span>' : "") +
+              (recordModel(r) ? '<span>' + escapeHtml(recordModel(r)) + '</span>' : "") +
               '<span>' + escapeHtml(r.session || "단발성") + '</span>',
             sideHtml: qaStatusBadge(r),
             onClick: goQaSession(r.session)
@@ -965,7 +973,7 @@
             time: r.timestamp,
             titleHtml: escapeHtml(extractQuestionKeyword(r.question) || "(질문 내용 없음)"),
             subHtml: '<span>위임</span>' +
-              (r.model && r.model !== "(session)" ? '<span>' + escapeHtml(r.model) + '</span>' : "") +
+              (recordModel(r) ? '<span>' + escapeHtml(recordModel(r)) + '</span>' : "") +
               '<span>' + escapeHtml(r.session || "단발성") + '</span>',
             sideHtml: qaStatusBadge(r),
             onClick: goQaSession(r.session)
@@ -1010,7 +1018,7 @@
         totalElapsed += Number(r.elapsed_sec);
         elapsedItemCount++;
       }
-      var m = (r.model && r.model !== "(session)") ? r.model : "기타";
+      var m = recordModel(r) || "기타";
       modelUsage[m] = (modelUsage[m] || 0) + 1;
     });
 
@@ -1103,7 +1111,7 @@
 
   function uniqueModels() {
     var set = {};
-    allItems.forEach(function (r) { if (r.model && r.model !== "(session)") { set[r.model] = true; } });
+    allItems.forEach(function (r) { if (recordModel(r)) { set[recordModel(r)] = true; } });
     pendingItems.forEach(function (p) { if (p.model) { set[p.model] = true; } });
     return Object.keys(set).sort();
   }
@@ -1159,14 +1167,14 @@
     filteredQa = allItems.filter(function (r) {
       if (session === "__none__" && r.session) return false;
       if (session && session !== "__none__" && r.session !== session) return false;
-      if (model && r.model !== model) return false;
+      if (model && recordModel(r) !== model) return false;
       if (status) {
         var st = (r.status == null ? "" : String(r.status)).trim();
         if (status === "OK" && st !== "OK") return false;
         if (status === "ERROR" && st === "OK") return false;
       }
       if (q) {
-        var hay = [r.model, r.computer_name, r.task_id, r.source, r.session, r.session_id, r.question, r.answer]
+        var hay = [recordModel(r), r.computer_name, r.task_id, r.source, r.session, r.session_id, r.question, r.answer]
           .map(function (v) { return v == null ? "" : String(v); })
           .join(" ").toLowerCase();
         if (hay.indexOf(q) === -1) return false;
@@ -1627,10 +1635,10 @@
       meta.appendChild(badge("status-unknown", "상태 미기록"));
     }
 
-    var modelName = (r.model && r.model !== "(session)") ? r.model : null;
+    var modelName = recordModel(r) || null;
     var isSession = Boolean(r.session || r.session_id || r.model === "(session)");
     if (modelName) { meta.appendChild(metaItem(String(modelName), "model")); }
-    if (r.elapsed_sec) { meta.appendChild(metaItem(formatDuration(Number(r.elapsed_sec)), "", r.elapsed_sec + "초")); }
+    if (r.elapsed_sec) { meta.appendChild(metaItem(formatDuration(Number(r.elapsed_sec)), "elapsed", r.elapsed_sec + "초")); }
     if (r.total_tokens) { meta.appendChild(metaItem("토큰 " + Number(r.total_tokens).toLocaleString())); }
     if (r.attempts && Number(r.attempts) > 1) { meta.appendChild(metaItem("시도 " + r.attempts + "회")); }
     meta.appendChild(metaItem((r.source || "bridge") === "mcp" ? "MCP" : "bridge", "", "위임 경로"));
