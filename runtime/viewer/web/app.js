@@ -18,18 +18,13 @@
     navBtnDashboard:      document.getElementById("nav-btn-dashboard"),
     navBtnQa:             document.getElementById("nav-btn-qa"),
     navBtnHandoff:        document.getElementById("nav-btn-handoff"),
-    navBadgeQa:           document.getElementById("nav-badge-qa"),
-    navBadgeHandoff:      document.getElementById("nav-badge-handoff"),
 
     // 2차 서브 패널
     subDashboard:         document.getElementById("sidebar-sub-dashboard"),
     subQa:                document.getElementById("sidebar-sub-qa"),
     subHandoff:           document.getElementById("sidebar-sub-handoff"),
 
-    // 대시보드 미니 위젯
-    miniTodayCount:       document.getElementById("mini-today-count"),
-    miniPendingCount:     document.getElementById("mini-pending-count"),
-    miniProjectsCount:    document.getElementById("mini-projects-count"),
+    // 대시보드 서브 패널: 최근 세션 바로가기
     quickSessionsList:    document.getElementById("quick-sessions-list"),
 
     // QA 세션 사이드바
@@ -65,27 +60,21 @@
     mainScroll:           document.getElementById("main-content-scroll"),
 
     // 대시보드 내부 엘리먼트
-    bannerStatusTitle:    document.getElementById("banner-status-title"),
-    bannerStatusDesc:     document.getElementById("banner-status-desc"),
-    bannerPortTag:        document.getElementById("banner-port-tag"),
-    bannerWatcherTag:     document.getElementById("banner-watcher-tag"),
-    kpiValQaTotal:        document.getElementById("kpi-val-qa-total"),
-    kpiSubQaToday:        document.getElementById("kpi-sub-qa-today"),
-    kpiValQaRate:         document.getElementById("kpi-val-qa-rate"),
-    kpiSubQaCounts:       document.getElementById("kpi-sub-qa-counts"),
-    kpiValHandoffProjects: document.getElementById("kpi-val-handoff-projects"),
-    kpiSubHandoffMsgs:    document.getElementById("kpi-sub-handoff-msgs"),
-    kpiValPendingTickets: document.getElementById("kpi-val-pending-tickets"),
-    kpiSubPendingDetails: document.getElementById("kpi-sub-pending-details"),
-    dashboardRecentQa:    document.getElementById("dashboard-recent-qa"),
-    dashboardRecentHandoff: document.getElementById("dashboard-recent-handoff"),
+    dashNow:              document.getElementById("dash-now"),
+    nowStatusText:        document.getElementById("now-status-text"),
+    nowAside:             document.getElementById("now-aside"),
+    nowTitle:             document.getElementById("now-title"),
+    nowMeta:              document.getElementById("now-meta"),
+    outcomeStrip:         document.getElementById("outcome-strip"),
+    dashAttention:        document.getElementById("dash-attention"),
+    dashAttentionCount:   document.getElementById("dash-attention-count"),
+    dashTimeline:         document.getElementById("dash-timeline"),
+    dashStats:            document.getElementById("dash-stats"),
     btnViewAllQa:         document.getElementById("btn-view-all-qa"),
     btnViewAllHandoff:    document.getElementById("btn-view-all-handoff"),
-    modelStatsTotal:      document.getElementById("model-stats-total"),
     modelBarsContainer:   document.getElementById("model-bars-container"),
 
     // QA 메인 뷰 내부
-    qaSessionIcon:        document.getElementById("qa-session-icon"),
     qaCurrentSessionTitle: document.getElementById("qa-current-session-title"),
     qaCurrentSessionCount: document.getElementById("qa-current-session-count"),
     qaSearch:             document.getElementById("search"),
@@ -99,10 +88,7 @@
     handoffCurrentProjectTitle: document.getElementById("handoff-current-project-title"),
     handoffCurrentProjectCount: document.getElementById("handoff-current-project-count"),
     handoffSearch:        document.getElementById("handoff-search"),
-    chipHandoffUpdated:   document.getElementById("chip-handoff-updated"),
-    chipHandoffFilterDir: document.getElementById("chip-handoff-filter-dir"),
-    chipHandoffFilterStatus: document.getElementById("chip-handoff-filter-status"),
-    handoffBriefCard:     document.getElementById("handoff-brief-card"),
+    handoffBriefCard:    document.getElementById("handoff-brief-card"),
     briefProjectName:     document.getElementById("brief-project-name"),
     handoffBriefContent:  document.getElementById("handoff-brief-content"),
     handoffCards:         document.getElementById("handoff-cards"),
@@ -127,6 +113,8 @@
   var lastPendingKey = "";      // pending 변경 감지 키
   var refreshTimer = null;
   var isServerOnline = false;
+  var systemStatus = null;      // 마지막 /api/status 응답
+  var nowTicker = null;         // "지금" 패널 경과 시간 1초 갱신 타이머
 
   // ==========================================================================
   // HTTP Fetch & Utility
@@ -167,6 +155,55 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
+  }
+
+  // index.html 의 <symbol id="i-..."> 아이콘을 참조하는 SVG 마크업
+  function icon(name) {
+    return '<svg class="icon" aria-hidden="true"><use href="#i-' + name + '"/></svg>';
+  }
+
+  // 클릭으로만 동작하던 div 항목을 키보드(Tab, Enter, Space)로도 쓸 수 있게 한다.
+  function makeActivatable(el, label) {
+    el.tabIndex = 0;
+    el.setAttribute("role", "button");
+    if (label) el.setAttribute("aria-label", label);
+  }
+
+  function parseLocalTime(dateStr) {
+    if (!dateStr) return null;
+    var d = new Date(String(dateStr).replace(/-/g, "/"));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+  // 오늘이면 "14:05", 아니면 "09-22"
+  function formatClock(dateStr) {
+    var d = parseLocalTime(dateStr);
+    if (!d) return "";
+    var now = new Date();
+    if (d.toDateString() === now.toDateString()) {
+      return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+    }
+    return pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  function formatDuration(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    if (sec < 60) return sec + "초";
+    var m = Math.floor(sec / 60);
+    var s = sec % 60;
+    if (m < 60) return m + "분 " + pad2(s) + "초";
+    return Math.floor(m / 60) + "시간 " + pad2(m % 60) + "분";
+  }
+
+  function localDateKey(d) {
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  function isOkStatus(r) {
+    if (!r || r.status == null) return false;
+    return String(r.status).trim() === "OK";
   }
 
   function shardKeyOf(index) {
@@ -271,6 +308,7 @@
     }
 
     // 뷰 전환에 따른 렌더링 호출
+    if (nav !== "dashboard") { stopNowTicker(); }
     if (nav === "dashboard") {
       renderDashboard();
     } else if (nav === "qa") {
@@ -297,11 +335,11 @@
       } else if (currentQaSession === "__none__") {
         els.topbarCurrent.textContent = "단발성 작업 (세션 없음)";
       } else {
-        els.topbarCurrent.textContent = "🧵 " + currentQaSession;
+        els.topbarCurrent.textContent = currentQaSession;
       }
     } else if (currentNav === "handoff") {
       els.topbarCategory.textContent = "에이전트 인수인계";
-      els.topbarCurrent.textContent = currentHandoffProject ? "📁 " + currentHandoffProject : "프로젝트 선택";
+      els.topbarCurrent.textContent = currentHandoffProject || "프로젝트 선택";
     }
   }
 
@@ -318,7 +356,8 @@
       els.topbarCount.textContent = currentHandoffProject ? (msgs + "개 메시지") : (handoffProjects.length + "개 프로젝트");
     }
 
-    els.topbarUpdated.textContent = new Date().toLocaleTimeString();
+    var t = new Date();
+    els.topbarUpdated.textContent = pad2(t.getHours()) + ":" + pad2(t.getMinutes()) + ":" + pad2(t.getSeconds()) + " 갱신";
   }
 
   // ==========================================================================
@@ -330,27 +369,24 @@
     return fetchJson("/api/status")
       .then(function (status) {
         isServerOnline = true;
+        systemStatus = status;
         if (status) {
           var isWatcherAlive = Boolean(status.watcherAlive);
           if (els.watcherPulseDot) {
             els.watcherPulseDot.classList.toggle("offline", !isWatcherAlive);
           }
           if (els.watcherStatusText) {
-            els.watcherStatusText.textContent = isWatcherAlive ? "agy 워처 가동 중" : "agy 워처 미실행";
-          }
-          if (els.bannerWatcherTag) {
-            els.bannerWatcherTag.textContent = isWatcherAlive ? "워처 ONLINE" : "워처 OFFLINE";
-            els.bannerWatcherTag.style.color = isWatcherAlive ? "#4ade80" : "#f87171";
-          }
-          if (els.bannerPortTag && status.port) {
-            els.bannerPortTag.textContent = "PORT " + status.port;
+            els.watcherStatusText.textContent = isWatcherAlive ? "agy 워처 켜짐" : "agy 워처 꺼짐";
           }
         }
         return status;
       })
       .catch(function () {
+        isServerOnline = false;
+        systemStatus = null;
+        if (els.watcherPulseDot) els.watcherPulseDot.classList.add("offline");
         if (els.watcherStatusText) {
-          els.watcherStatusText.textContent = "서버 연결 대기 중...";
+          els.watcherStatusText.textContent = "뷰어 서버 연결 끊김";
         }
         return null;
       });
@@ -507,13 +543,14 @@
     allItem.className = "session-item" + (currentQaSession === "" ? " active" : "");
     allItem.dataset.session = "";
     allItem.innerHTML = [
-      '<span class="session-icon">⊙</span>',
+      '<span class="session-icon">' + icon("feed") + '</span>',
       '<div class="session-info">',
       '  <span class="session-name">전체 세션 피드</span>',
-      '  <span class="session-sub">모든 위임 작업 타임라인</span>',
+      '  <span class="session-sub">모든 위임을 시간순으로</span>',
       '</div>',
       '<span class="session-badge">' + (allItems.length + pendingItems.length) + '</span>'
     ].join("");
+    makeActivatable(allItem);
     allItem.onclick = function () { selectQaSession(""); };
     frag.appendChild(allItem);
 
@@ -537,14 +574,15 @@
       }
 
       item.innerHTML = [
-        '<span class="session-icon">🧵</span>',
+        '<span class="session-icon">' + icon("thread") + '</span>',
         '<div class="session-info">',
         '  <span class="session-name" title="' + escapeHtml(s.name) + '">' + escapeHtml(s.name) + '</span>',
-        '  <span class="session-sub">' + subText + (s.errors > 0 ? ' · ⚠️ 에러 ' + s.errors : '') + '</span>',
+        '  <span class="session-sub">' + subText + (s.errors > 0 ? '  <span class="err-count">실패 ' + s.errors + '</span>' : '') + '</span>',
         '</div>',
         badgeHtml
       ].join("");
 
+      makeActivatable(item);
       item.onclick = function () { selectQaSession(s.name); };
       frag.appendChild(item);
     });
@@ -555,13 +593,14 @@
       noneItem.className = "session-item" + (currentQaSession === "__none__" ? " active" : "");
       noneItem.dataset.session = "__none__";
       noneItem.innerHTML = [
-        '<span class="session-icon">📄</span>',
+        '<span class="session-icon">' + icon("single") + '</span>',
         '<div class="session-info">',
         '  <span class="session-name">단발성 작업 (세션 없음)</span>',
         '  <span class="session-sub">' + formatRelativeTime(noneSessionObj.latestTime) + '</span>',
         '</div>',
         '<span class="session-badge">' + (noneSessionObj.total + noneSessionObj.pending) + '</span>'
       ].join("");
+      makeActivatable(noneItem);
       noneItem.onclick = function () { selectQaSession("__none__"); };
       frag.appendChild(noneItem);
     }
@@ -609,7 +648,7 @@
 
       var subText = formatRelativeTime(p.updated);
       item.innerHTML = [
-        '<span class="project-icon">📁</span>',
+        '<span class="project-icon">' + icon("folder") + '</span>',
         '<div class="project-info">',
         '  <span class="project-name" title="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</span>',
         '  <span class="project-sub">' + subText + '</span>',
@@ -617,6 +656,7 @@
         '<span class="project-badge">' + (p.msgCount || 0) + '</span>'
       ].join("");
 
+      makeActivatable(item);
       item.onclick = function () { selectHandoffProject(p.name); };
       frag.appendChild(item);
     });
@@ -634,216 +674,395 @@
   }
 
   // ==========================================================================
-  // 1. 대시보드 뷰 렌더링 (Dashboard Rendering)
+  // 1. 대시보드 뷰 렌더링: 지금 / 확인 필요 / 최근 활동 / 누적
   // ==========================================================================
+
+  var STATUS_STEPS = { "보냄": 1, "읽음": 2, "처리됨": 3, "확인함": 4 };
 
   function renderDashboard() {
     if (currentNav !== "dashboard") return;
+    renderNow();
+    renderAttention();
+    renderTimeline();
+    renderStats();
+    renderQuickSessions();
+  }
 
-    // 1. 통계 지표 산출
+  // 아직 완료 기록이 없는 inbox 작업만 남기고, 그중 processing 상태인 한 건을 고른다.
+  function activePending() {
+    var finished = {};
+    allItems.forEach(function (r) { if (r && r.task_id) { finished[r.task_id] = true; } });
+    return pendingItems.filter(function (p) { return p && p.task_id && !finished[p.task_id]; });
+  }
+
+  function stopNowTicker() {
+    if (nowTicker) { clearInterval(nowTicker); nowTicker = null; }
+  }
+
+  function renderNow() {
+    if (!els.dashNow) return;
+    stopNowTicker();
+
+    var active = activePending();
+    var running = null;
+    for (var i = 0; i < active.length; i++) {
+      if (active[i].state === "processing") { running = active[i]; break; }
+    }
+    var queued = active.length - (running ? 1 : 0);
+
+    var state, statusText, title;
+    var aside = "";
+    var meta = [];
+    var clickSession = null;
+
+    if (!isServerOnline) {
+      state = "offline";
+      statusText = "뷰어 서버에 연결할 수 없습니다";
+      title = "serve-viewer.ps1이 실행 중인지 확인하세요";
+      meta.push('<span><code>~/.samjil/viewer/serve-viewer.ps1</code>을 다시 실행하면 이 화면이 이어서 갱신됩니다.</span>');
+    } else if (running) {
+      state = "running";
+      statusText = "agy가 작업 중";
+      if (queued > 0) { aside = "뒤에 " + queued + "건 대기"; }
+      title = extractQuestionKeyword(running.question) || "(질문 내용 없음)";
+      if (running.model) { meta.push('<span>모델 <code>' + escapeHtml(running.model) + '</code></span>'); }
+      meta.push('<span>' + (running.session ? "세션 " + escapeHtml(running.session) : "단발성 작업") + '</span>');
+      var created = parseLocalTime(running.created);
+      if (created) {
+        meta.push('<span>접수 후 <span class="elapsed" id="now-elapsed">' +
+          formatDuration((Date.now() - created.getTime()) / 1000) + '</span></span>');
+        nowTicker = setInterval(function () {
+          var el = document.getElementById("now-elapsed");
+          if (!el) { stopNowTicker(); return; }
+          el.textContent = formatDuration((Date.now() - created.getTime()) / 1000);
+        }, 1000);
+      }
+      clickSession = running.session || "__none__";
+    } else if (systemStatus && systemStatus.watcherAlive) {
+      state = "idle";
+      statusText = "agy 워처 대기 중";
+      var last = allItems[0];
+      if (last) {
+        title = "마지막 위임: " + (extractQuestionKeyword(last.question) || "(질문 내용 없음)");
+        meta.push('<span>' + formatRelativeTime(last.timestamp) + '</span>');
+        meta.push('<span>' + (isOkStatus(last) ? "성공" : (last.status ? "실패 (" + escapeHtml(last.status) + ")" : "상태 미기록")) + '</span>');
+        if (last.model && last.model !== "(session)") { meta.push('<span><code>' + escapeHtml(last.model) + '</code></span>'); }
+        clickSession = last.session || "__none__";
+      } else {
+        title = "아직 위임 기록이 없습니다";
+      }
+    } else {
+      state = "stopped";
+      statusText = "agy 워처가 꺼져 있습니다";
+      title = "위임하려면 워처를 먼저 켜세요";
+      meta.push('<span><code>~/.samjil/delegate-agy/scripts/start-agy.ps1</code>로 켤 수 있습니다.</span>');
+      if (queued > 0) { meta.push('<span>inbox에서 ' + queued + '건이 처리를 기다리고 있습니다.</span>'); }
+    }
+
+    if (state !== "offline" && state !== "running" && systemStatus && systemStatus.lastHeartbeat) {
+      aside = "마지막 하트비트 " + formatRelativeTime(systemStatus.lastHeartbeat);
+    }
+
+    els.dashNow.setAttribute("data-state", state);
+    els.nowStatusText.textContent = statusText;
+    els.nowAside.textContent = aside;
+    els.nowTitle.textContent = title;
+    els.nowMeta.innerHTML = meta.join("");
+
+    els.nowTitle.classList.toggle("is-link", clickSession !== null);
+    if (clickSession !== null) {
+      makeActivatable(els.nowTitle);
+      els.nowTitle.onclick = function () {
+        selectQaSession(clickSession);
+        switchNav("qa");
+      };
+    } else {
+      els.nowTitle.removeAttribute("tabindex");
+      els.nowTitle.removeAttribute("role");
+      els.nowTitle.onclick = null;
+    }
+
+    renderOutcomeStrip();
+  }
+
+  // 최근 위임 결과를 한 칸에 한 건씩, 오래된 것부터 왼쪽에 놓는다.
+  function renderOutcomeStrip() {
+    if (!els.outcomeStrip) return;
+    var recent = allItems.filter(function (r) { return r && r.status; }).slice(0, 30).reverse();
+    if (recent.length === 0) {
+      els.outcomeStrip.innerHTML = "";
+      return;
+    }
+    var errs = 0;
+    var html = recent.map(function (r) {
+      var ok = isOkStatus(r);
+      if (!ok) { errs++; }
+      var tip = (r.timestamp || "") + "  " + (ok ? "성공" : "실패") + (r.model ? "  " + r.model : "");
+      return '<span class="tick ' + (ok ? "ok" : "err") + '" title="' + escapeHtml(tip) + '"></span>';
+    }).join("");
+    var label = "최근 " + recent.length + "건 " + (errs === 0 ? "모두 성공" : "중 실패 " + errs + "건");
+    els.outcomeStrip.innerHTML = html + '<span class="strip-label">' + label + '</span>';
+    els.outcomeStrip.setAttribute("aria-label", label);
+  }
+
+  function stepsHtml(status) {
+    var step = STATUS_STEPS[status] || 0;
+    var hold = (status === "보류");
+    return '<span class="steps' + (hold ? " on-hold" : "") + '" data-step="' + step + '" title="보냄 → 읽음 → 처리됨 → 확인함">' +
+      '<span class="steps-track" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' +
+      '<span class="steps-label">' + escapeHtml(status || "상태 없음") + '</span></span>';
+  }
+
+  function dirParty(dir) {
+    return dir === "c2a" ? "claude" : (dir === "a2c" ? "agy" : null);
+  }
+
+  function dirLabelHtml(dir) {
+    if (dir === "c2a") return '<span class="who-claude">Claude</span> → agy';
+    if (dir === "a2c") return '<span class="who-agy">agy</span> → Claude';
+    return escapeHtml(dir || "");
+  }
+
+  function qaStatusBadge(r) {
+    if (!r.status) return '<span class="badge status-unknown">상태 미기록</span>';
+    return isOkStatus(r)
+      ? '<span class="badge status-ok">OK</span>'
+      : '<span class="badge status-err">' + escapeHtml(String(r.status)) + '</span>';
+  }
+
+  // 대시보드 한 줄 항목: [색 막대][시각][제목/부제][상태]
+  function buildRow(o) {
+    var li = document.createElement("li");
+    var row = document.createElement("div");
+    row.className = "row" + (o.party ? " from-" + o.party : "") + (o.isErr ? " is-err" : "");
+    row.innerHTML = [
+      '<span class="row-bar" aria-hidden="true"></span>',
+      '<span class="row-when">' + escapeHtml(formatClock(o.time)) + '</span>',
+      '<div class="row-main">',
+      '  <div class="row-title">' + o.titleHtml + '</div>',
+      '  <div class="row-sub">' + o.subHtml + '</div>',
+      '</div>',
+      '<div class="row-side">' + (o.sideHtml || "") + '</div>'
+    ].join("");
+    if (o.time) { row.title = o.time; }
+    makeActivatable(row);
+    row.onclick = o.onClick;
+    li.appendChild(row);
+    return li;
+  }
+
+  function goQaSession(session) {
+    return function () {
+      selectQaSession(session || "__none__");
+      switchNav("qa");
+    };
+  }
+
+  function goHandoffProject(name) {
+    return function () {
+      selectHandoffProject(name);
+      switchNav("handoff");
+    };
+  }
+
+  function handoffRow(projectName, m, subPrefix) {
+    var waitText = "";
+    if (m.status === "보냄" || m.status === "읽음") {
+      waitText = m.dir === "c2a" ? '<span class="who-agy">agy 처리 대기</span>' :
+                 (m.dir === "a2c" ? '<span class="who-claude">Claude 처리 대기</span>' : "");
+    }
+    return buildRow({
+      party: dirParty(m.dir),
+      time: m.time,
+      titleHtml: '<span class="num">#' + escapeHtml(m.num) + '</span>' + escapeHtml(m.title || "(제목 없음)"),
+      subHtml: (subPrefix ? '<span>' + subPrefix + '</span>' : "") +
+        '<span>' + escapeHtml(projectName) + '</span>' +
+        (waitText || '<span>' + dirLabelHtml(m.dir) + '</span>'),
+      sideHtml: stepsHtml(m.status),
+      onClick: goHandoffProject(projectName)
+    });
+  }
+
+  function renderAttention() {
+    if (!els.dashAttention) return;
+    var items = [];
+
+    handoffProjects.forEach(function (p) {
+      var m = p.latestMsg;
+      if (m && (m.status === "보냄" || m.status === "읽음")) {
+        items.push({ time: m.time || p.updated || "", node: function () { return handoffRow(p.name, m); } });
+      }
+    });
+
+    var dayAgo = Date.now() - 86400000;
+    allItems.forEach(function (r) {
+      if (!r || !r.status || isOkStatus(r)) return;
+      var d = parseLocalTime(r.timestamp);
+      if (!d || d.getTime() < dayAgo) return;
+      items.push({
+        time: r.timestamp,
+        node: function () {
+          return buildRow({
+            isErr: true,
+            time: r.timestamp,
+            titleHtml: escapeHtml(extractQuestionKeyword(r.question) || "(질문 내용 없음)"),
+            subHtml: '<span>위임 실패</span>' +
+              (r.model && r.model !== "(session)" ? '<span>' + escapeHtml(r.model) + '</span>' : "") +
+              '<span>' + escapeHtml(r.session || "단발성") + '</span>',
+            sideHtml: qaStatusBadge(r),
+            onClick: goQaSession(r.session)
+          });
+        }
+      });
+    });
+
+    items.sort(function (a, b) { return String(b.time).localeCompare(String(a.time)); });
+
+    if (els.dashAttentionCount) {
+      els.dashAttentionCount.textContent = items.length > 0 ? items.length + "건" : "";
+    }
+
+    els.dashAttention.innerHTML = "";
+    if (items.length === 0) {
+      els.dashAttention.innerHTML = '<li class="row-empty">확인할 항목이 없습니다. 처리를 기다리는 인수인계 메시지나 최근 24시간 안에 실패한 위임이 생기면 여기에 나옵니다.</li>';
+      return;
+    }
+    var frag = document.createDocumentFragment();
+    items.forEach(function (it) { frag.appendChild(it.node()); });
+    els.dashAttention.appendChild(frag);
+  }
+
+  function renderTimeline() {
+    if (!els.dashTimeline) return;
+    var entries = [];
+
+    activePending().forEach(function (p) {
+      entries.push({
+        time: p.created || "",
+        node: function () {
+          var processing = (p.state === "processing");
+          return buildRow({
+            party: "agy",
+            time: p.created,
+            titleHtml: escapeHtml(extractQuestionKeyword(p.question) || "(질문 내용 없음)"),
+            subHtml: '<span>위임</span>' + (p.model ? '<span>' + escapeHtml(p.model) + '</span>' : "") +
+              '<span>' + escapeHtml(p.session || "단발성") + '</span>',
+            sideHtml: processing ? '<span class="badge status-pending-processing">진행 중</span>'
+                                 : '<span class="badge status-pending-queued">대기 중</span>',
+            onClick: goQaSession(p.session)
+          });
+        }
+      });
+    });
+
+    allItems.slice(0, 10).forEach(function (r) {
+      entries.push({
+        time: r.timestamp || "",
+        node: function () {
+          return buildRow({
+            party: "agy",
+            isErr: Boolean(r.status) && !isOkStatus(r),
+            time: r.timestamp,
+            titleHtml: escapeHtml(extractQuestionKeyword(r.question) || "(질문 내용 없음)"),
+            subHtml: '<span>위임</span>' +
+              (r.model && r.model !== "(session)" ? '<span>' + escapeHtml(r.model) + '</span>' : "") +
+              '<span>' + escapeHtml(r.session || "단발성") + '</span>',
+            sideHtml: qaStatusBadge(r),
+            onClick: goQaSession(r.session)
+          });
+        }
+      });
+    });
+
+    handoffProjects.forEach(function (p) {
+      var m = p.latestMsg;
+      if (!m) return;
+      entries.push({ time: m.time || p.updated || "", node: function () { return handoffRow(p.name, m, "인수인계"); } });
+    });
+
+    entries.sort(function (a, b) { return String(b.time).localeCompare(String(a.time)); });
+    entries = entries.slice(0, 10);
+
+    els.dashTimeline.innerHTML = "";
+    if (entries.length === 0) {
+      els.dashTimeline.innerHTML = '<li class="row-empty">아직 기록이 없습니다. Claude가 agy에 작업을 위임하거나 인수인계 메시지를 보내면 여기에 쌓입니다.</li>';
+      return;
+    }
+    var frag = document.createDocumentFragment();
+    entries.forEach(function (e) { frag.appendChild(e.node()); });
+    els.dashTimeline.appendChild(frag);
+  }
+
+  function renderStats() {
     var totalQa = allItems.length;
     var okCount = 0;
     var errCount = 0;
     var todayCount = 0;
     var totalElapsed = 0;
     var elapsedItemCount = 0;
-    var todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    var todayKey = localDateKey(new Date());
     var modelUsage = {};
 
     allItems.forEach(function (r) {
-      if (r.status === "OK") { okCount++; } else if (r.status) { errCount++; }
-      if (r.timestamp && r.timestamp.slice(0, 10) === todayStr) { todayCount++; }
+      if (isOkStatus(r)) { okCount++; } else if (r.status) { errCount++; }
+      if (r.timestamp && String(r.timestamp).slice(0, 10) === todayKey) { todayCount++; }
       if (r.elapsed_sec && !isNaN(Number(r.elapsed_sec))) {
         totalElapsed += Number(r.elapsed_sec);
         elapsedItemCount++;
       }
-      var m = (r.model && r.model !== "(session)") ? r.model : "기타 모델";
+      var m = (r.model && r.model !== "(session)") ? r.model : "기타";
       modelUsage[m] = (modelUsage[m] || 0) + 1;
     });
 
-    var successRate = totalQa > 0 ? Math.round((okCount / (okCount + errCount || 1)) * 100) : 0;
-    var avgSec = elapsedItemCount > 0 ? (totalElapsed / elapsedItemCount).toFixed(1) : "-";
+    var decided = okCount + errCount;
+    var successRate = decided > 0 ? Math.round((okCount / decided) * 100) + "%" : "-";
+    var avgSec = elapsedItemCount > 0 ? formatDuration(totalElapsed / elapsedItemCount) : "-";
 
-    var totalHandoffProjects = handoffProjects.length;
     var totalHandoffMsgs = 0;
-    var pendingHandoffCount = 0;
+    handoffProjects.forEach(function (p) { totalHandoffMsgs += (p.msgCount || 0); });
 
-    handoffProjects.forEach(function (p) {
-      totalHandoffMsgs += (p.msgCount || 0);
-      if (p.latestMsg && (p.latestMsg.status === "보냄" || p.latestMsg.status === "읽음")) {
-        pendingHandoffCount++;
-      }
-    });
+    if (els.dashStats) {
+      var stats = [
+        ["누적 위임", totalQa.toLocaleString() + "건"],
+        ["오늘", todayCount + "건"],
+        ["성공률", successRate],
+        ["평균 소요", avgSec],
+        ["인수인계 프로젝트", handoffProjects.length + "개"],
+        ["메시지", totalHandoffMsgs.toLocaleString() + "개"]
+      ];
+      els.dashStats.innerHTML = stats.map(function (s) {
+        return '<div><dt>' + s[0] + '</dt><dd>' + escapeHtml(s[1]) + '</dd></div>';
+      }).join("");
+    }
 
-    // 2. 미니 위젯 (사이드바 대시보드 서브패널)
-    if (els.miniTodayCount) els.miniTodayCount.textContent = todayCount + "건";
-    if (els.miniPendingCount) els.miniPendingCount.textContent = (pendingItems.length + pendingHandoffCount) + "건";
-    if (els.miniProjectsCount) els.miniProjectsCount.textContent = totalHandoffProjects + "개";
-
-    // 3. KPI 카드 갱신
-    if (els.kpiValQaTotal) els.kpiValQaTotal.textContent = totalQa.toLocaleString() + "건";
-    if (els.kpiSubQaToday) els.kpiSubQaToday.textContent = "오늘 " + todayCount + "건 실행";
-    if (els.kpiValQaRate) els.kpiValQaRate.textContent = successRate + "%";
-    if (els.kpiSubQaCounts) els.kpiSubQaCounts.textContent = "OK " + okCount + " / ERROR " + errCount + (avgSec !== "-" ? " · 평균 " + avgSec + "초" : "");
-    if (els.kpiValHandoffProjects) els.kpiValHandoffProjects.textContent = totalHandoffProjects + "개";
-    if (els.kpiSubHandoffMsgs) els.kpiSubHandoffMsgs.textContent = "총 " + totalHandoffMsgs + "개 메시지";
-    if (els.kpiValPendingTickets) els.kpiValPendingTickets.textContent = (pendingItems.length + pendingHandoffCount) + "건";
-    if (els.kpiSubPendingDetails) els.kpiSubPendingDetails.textContent = "inbox " + pendingItems.length + "건 / 미착수 " + pendingHandoffCount + "건";
-
-    // 4. 최근 위임 실행 활동 리스트 (Top 5)
-    renderDashboardRecentQa();
-
-    // 5. 최근 인수인계 활동 리스트 (Top 5)
-    renderDashboardRecentHandoff();
-
-    // 6. 모델 사용 분포 렌더링
     renderDashboardModelStats(modelUsage, totalQa);
-
-    // 7. 사이드바 빠른 활성 세션 링크 렌더링
-    renderQuickSessions();
   }
 
   function renderQuickSessions() {
     if (!els.quickSessionsList) return;
     var sessions = groupQaSessions();
     if (sessions.length === 0) {
-      els.quickSessionsList.innerHTML = '<span class="empty-hint">세션 기록 없음</span>';
+      els.quickSessionsList.innerHTML = '<span class="empty-hint">세션 기록이 없습니다.</span>';
       return;
     }
-    var topSessions = sessions.slice(0, 4);
     var frag = document.createDocumentFragment();
-    topSessions.forEach(function (s) {
+    sessions.slice(0, 6).forEach(function (s) {
       var item = document.createElement("div");
       item.className = "quick-link-item";
-      var sDisplayName = s.name === "__none__" ? "단발성 작업" : ("🧵 " + s.name);
+      var isNone = (s.name === "__none__");
+      var displayName = isNone ? "단발성 작업" : s.name;
       item.innerHTML = [
-        '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(sDisplayName) + '</span>',
-        '<span style="font-weight:600;font-size:11px;opacity:0.8;">' + (s.total + s.pending) + '건</span>'
+        '<span class="session-icon">' + icon(isNone ? "single" : "thread") + '</span>',
+        '<span class="quick-link-name" title="' + escapeHtml(displayName) + '">' + escapeHtml(displayName) + '</span>',
+        (s.pending > 0 ? '<span class="pending-pulse-dot" title="진행/대기 중 ' + s.pending + '건"></span>' : ''),
+        '<span class="quick-link-count">' + (s.total + s.pending) + '</span>'
       ].join("");
-      item.onclick = function () {
-        selectQaSession(s.name);
-        switchNav("qa");
-      };
+      makeActivatable(item);
+      item.onclick = goQaSession(s.name);
       frag.appendChild(item);
     });
     els.quickSessionsList.innerHTML = "";
     els.quickSessionsList.appendChild(frag);
-  }
-
-  function renderDashboardRecentQa() {
-    if (!els.dashboardRecentQa) return;
-    var list = [];
-    if (pendingItems.length > 0) {
-      pendingItems.forEach(function (p) { list.push({ isPending: true, item: p }); });
-    }
-    allItems.slice(0, 5).forEach(function (r) {
-      list.push({ isPending: false, item: r });
-    });
-    list = list.slice(0, 5);
-
-    if (list.length === 0) {
-      els.dashboardRecentQa.innerHTML = '<p class="empty-hint">위임 실행 기록이 없습니다.</p>';
-      return;
-    }
-
-    var frag = document.createDocumentFragment();
-    list.forEach(function (entry) {
-      var it = entry.item;
-      var el = document.createElement("div");
-      el.className = "activity-item";
-
-      var qTitle = extractQuestionKeyword(it.question) || "(질문 내용 없음)";
-      var timeStr = formatRelativeTime(entry.isPending ? it.created : it.timestamp);
-      var badgeCls = entry.isPending ? "status-pending-processing" : (it.status === "OK" ? "status-ok" : "status-err");
-      var badgeText = entry.isPending ? "진행 중" : (it.status || "미기록");
-      var sessionText = it.session ? ("🧵 " + it.session) : "단발성";
-
-      el.innerHTML = [
-        '<div class="activity-main">',
-        '  <div class="activity-title" title="' + escapeHtml(qTitle) + '">' + escapeHtml(qTitle) + '</div>',
-        '  <div class="activity-sub">',
-        '    <span>' + escapeHtml(sessionText) + '</span>',
-        '    <span>•</span>',
-        '    <span>' + escapeHtml(it.model || "agy") + '</span>',
-        '  </div>',
-        '</div>',
-        '<div class="activity-side">',
-        '  <span class="badge ' + badgeCls + '">' + badgeText + '</span>',
-        '  <span class="activity-time">' + timeStr + '</span>',
-        '</div>'
-      ].join("");
-
-      el.onclick = function () {
-        selectQaSession(it.session || "__none__");
-        switchNav("qa");
-      };
-      frag.appendChild(el);
-    });
-
-    els.dashboardRecentQa.innerHTML = "";
-    els.dashboardRecentQa.appendChild(frag);
-  }
-
-  function renderDashboardRecentHandoff() {
-    if (!els.dashboardRecentHandoff) return;
-
-    var recentMsgs = [];
-    handoffProjects.forEach(function (p) {
-      if (p.latestMsg) {
-        recentMsgs.push({
-          projectName: p.name,
-          num: p.latestMsg.num,
-          title: p.latestMsg.title,
-          dir: p.latestMsg.dir,
-          status: p.latestMsg.status,
-          time: p.latestMsg.time || p.updated
-        });
-      }
-    });
-
-    recentMsgs.sort(function (a, b) {
-      return String(b.time || "").localeCompare(String(a.time || ""));
-    });
-    recentMsgs = recentMsgs.slice(0, 5);
-
-    if (recentMsgs.length === 0) {
-      els.dashboardRecentHandoff.innerHTML = '<p class="empty-hint">인수인계 메시지가 없습니다.</p>';
-      return;
-    }
-
-    var frag = document.createDocumentFragment();
-    recentMsgs.forEach(function (m) {
-      var el = document.createElement("div");
-      el.className = "activity-item";
-
-      var dirBadgeCls = m.dir === "c2a" ? "dir-c2a" : (m.dir === "a2c" ? "dir-a2c" : "");
-      var dirText = m.dir === "c2a" ? "Claude → agy" : (m.dir === "a2c" ? "agy → Claude" : m.dir);
-      var statusBadgeCls = "status-" + (m.status || "처리됨");
-
-      el.innerHTML = [
-        '<div class="activity-main">',
-        '  <div class="activity-title" title="' + escapeHtml(m.title) + '">#' + m.num + ' ' + escapeHtml(m.title) + '</div>',
-        '  <div class="activity-sub">',
-        '    <span>📁 ' + escapeHtml(m.projectName) + '</span>',
-        '    <span>•</span>',
-        '    <span class="badge ' + dirBadgeCls + '" style="font-size:10.5px;padding:1px 5px;">' + dirText + '</span>',
-        '  </div>',
-        '</div>',
-        '<div class="activity-side">',
-        '  <span class="badge ' + statusBadgeCls + '">' + (m.status || "완료") + '</span>',
-        '  <span class="activity-time">' + formatRelativeTime(m.time) + '</span>',
-        '</div>'
-      ].join("");
-
-      el.onclick = function () {
-        selectHandoffProject(m.projectName);
-        switchNav("handoff");
-      };
-      frag.appendChild(el);
-    });
-
-    els.dashboardRecentHandoff.innerHTML = "";
-    els.dashboardRecentHandoff.appendChild(frag);
   }
 
   function renderDashboardModelStats(modelUsage, totalCount) {
@@ -852,12 +1071,8 @@
       return modelUsage[b] - modelUsage[a];
     });
 
-    if (els.modelStatsTotal) {
-      els.modelStatsTotal.textContent = "총 " + totalCount + "건 호출";
-    }
-
     if (models.length === 0) {
-      els.modelBarsContainer.innerHTML = '<p class="empty-hint">모델 사용 기록이 없습니다.</p>';
+      els.modelBarsContainer.innerHTML = "";
       return;
     }
 
@@ -870,10 +1085,10 @@
       row.className = "model-bar-row";
       row.innerHTML = [
         '<span class="model-bar-name" title="' + escapeHtml(m) + '">' + escapeHtml(m) + '</span>',
-        '<div class="model-bar-track">',
+        '<div class="model-bar-track" aria-hidden="true">',
         '  <div class="model-bar-fill" style="width: ' + pct + '%;"></div>',
         '</div>',
-        '<span class="model-bar-val">' + count + '회 (' + pct + '%)</span>'
+        '<span class="model-bar-val">' + count + '건 ' + pct + '%</span>'
       ].join("");
       frag.appendChild(row);
     });
@@ -911,9 +1126,6 @@
     var model = els.modelFilter ? els.modelFilter.value : "";
     var status = els.statusFilter ? els.statusFilter.value : "";
     var session = currentQaSession;
-
-    // 세션 상세 헤더 갱신
-    updateQaHeader(session);
 
     // 1. 이미 완료된 task_id 집합
     var finishedTaskIds = {};
@@ -961,6 +1173,10 @@
       }
       return true;
     });
+
+    // 헤더 건수는 filteredQa/filteredPending 을 읽으므로 반드시 필터 계산 뒤에 갱신한다.
+    // (앞에서 부르면 직전 값이 표시되어, 대시보드에서 막 넘어왔을 때 "0건"으로 보였다.)
+    updateQaHeader(session);
 
     var openState = snapshotQaOpenState();
     shownQaCount = 0;
@@ -1010,13 +1226,10 @@
     if (!els.qaCurrentSessionTitle) return;
 
     if (!session) {
-      els.qaSessionIcon.textContent = "⊙";
       els.qaCurrentSessionTitle.textContent = "전체 세션 피드";
     } else if (session === "__none__") {
-      els.qaSessionIcon.textContent = "📄";
       els.qaCurrentSessionTitle.textContent = "단발성 작업 (세션 없음)";
     } else {
-      els.qaSessionIcon.textContent = "🧵";
       els.qaCurrentSessionTitle.textContent = session;
     }
 
@@ -1077,8 +1290,8 @@
         '<div class="lightbox-header">',
         '  <span class="lightbox-title"></span>',
         '  <div class="lightbox-actions">',
-        '    <a class="lightbox-btn lightbox-open-newtab" href="#" target="_blank" title="새 탭에서 원본 열기">새 탭 ↗</a>',
-        '    <button class="lightbox-btn lightbox-close" type="button" title="닫기 (Esc)">✕ 닫기</button>',
+        '    <a class="lightbox-btn lightbox-open-newtab" href="#" target="_blank" rel="noopener" title="새 탭에서 원본 열기">새 탭에서 열기</a>',
+        '    <button class="lightbox-btn lightbox-close" type="button" title="닫기 (Esc)">닫기</button>',
         '  </div>',
         '</div>',
         '<div class="lightbox-img-wrap">',
@@ -1192,7 +1405,7 @@
     if (!images || images.length === 0) return null;
     var gallery = document.createElement("div");
     gallery.className = "qa-image-gallery";
-    gallery.innerHTML = '<div class="qa-image-gallery-title">🖼️ 참조 이미지 (' + images.length + '개) <span style="font-weight:normal;opacity:.7;font-size:11px;">(마우스 오버: 확대 / 클릭: 크게 보기)</span></div>';
+    gallery.innerHTML = '<div class="qa-image-gallery-title">참조 이미지 ' + images.length + '개 (올려 두면 미리보기, 클릭하면 크게 보기)</div>';
 
     var grid = document.createElement("div");
     grid.className = "qa-image-gallery-grid";
@@ -1225,7 +1438,7 @@
         } else {
           var titleEl = gallery.querySelector(".qa-image-gallery-title");
           if (titleEl) {
-            titleEl.innerHTML = '🖼️ 참조 이미지 (' + validCount + '개) <span style="font-weight:normal;opacity:.7;font-size:11px;">(마우스 오버: 확대 / 클릭: 크게 보기)</span>';
+            titleEl.textContent = '참조 이미지 ' + validCount + '개 (올려 두면 미리보기, 클릭하면 크게 보기)';
           }
         }
       };
@@ -1263,13 +1476,7 @@
         if (/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(str)) {
           var imgUrl = makeImageUrl(str, cwd);
           code.classList.add("inline-image-ref");
-          code.title = str + " (클릭: 원본 보기 / 마우스 오버: 확대)";
-          if (!code.querySelector(".img-icon")) {
-            var icon = document.createElement("span");
-            icon.className = "img-icon";
-            icon.textContent = "🖼️ ";
-            code.insertBefore(icon, code.firstChild);
-          }
+          code.title = str + " (올려 두면 미리보기, 클릭하면 원본 보기)";
           code.addEventListener("mouseenter", function (e) { showHoverPopup(e, imgUrl, str); });
           code.addEventListener("mouseleave", hideHoverPopup);
           code.addEventListener("click", function (e) {
@@ -1287,6 +1494,38 @@
     s.className = "badge " + cls;
     s.textContent = text;
     return s;
+  }
+
+  // 색 없는 메타 항목. 색은 상태 배지에만 쓴다.
+  function metaItem(text, cls, title) {
+    var s = document.createElement("span");
+    s.className = "meta-item" + (cls ? " " + cls : "");
+    s.textContent = text;
+    if (title) s.title = title;
+    return s;
+  }
+
+  // 세션 이름과, 클릭하면 전체 세션 ID를 복사하는 짧은 ID
+  function buildSessionMeta(sessionName, sessionId) {
+    var sMeta = document.createElement("div");
+    sMeta.className = "meta session-meta";
+    sMeta.appendChild(metaItem(sessionName ? "세션 " + sessionName : "세션 작업"));
+    if (sessionId) {
+      var sid = String(sessionId);
+      var label = "id " + (sid.length > 8 ? sid.substring(0, 8) : sid);
+      var sidEl = metaItem(label, "mono copyable", "세션 ID " + sid + " (클릭하면 복사)");
+      makeActivatable(sidEl, "세션 ID 복사");
+      sidEl.onclick = function () {
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(sid).then(function () {
+            sidEl.textContent = "복사했습니다";
+            setTimeout(function () { sidEl.textContent = label; }, 1200);
+          });
+        }
+      };
+      sMeta.appendChild(sidEl);
+    }
+    return sMeta;
   }
 
   function cleanTextForPreview(str) {
@@ -1388,41 +1627,18 @@
       meta.appendChild(badge("status-unknown", "상태 미기록"));
     }
 
-    var src = r.source || "bridge";
-    meta.appendChild(badge("source-" + src, src === "mcp" ? "🔗 MCP" : "📁 bridge"));
-
     var modelName = (r.model && r.model !== "(session)") ? r.model : null;
     var isSession = Boolean(r.session || r.session_id || r.model === "(session)");
-    if (modelName) { meta.appendChild(badge("model", String(modelName))); }
-
-    if (r.attempts && Number(r.attempts) > 1) { meta.appendChild(badge("attempts", "시도 " + r.attempts + "회")); }
-    if (r.total_tokens) { meta.appendChild(badge("tok", "토큰 " + r.total_tokens)); }
-    if (r.elapsed_sec) { meta.appendChild(badge("time", r.elapsed_sec + "초")); }
-    if (r.task_id) { meta.appendChild(badge("taskid", r.task_id)); }
+    if (modelName) { meta.appendChild(metaItem(String(modelName), "model")); }
+    if (r.elapsed_sec) { meta.appendChild(metaItem(formatDuration(Number(r.elapsed_sec)), "", r.elapsed_sec + "초")); }
+    if (r.total_tokens) { meta.appendChild(metaItem("토큰 " + Number(r.total_tokens).toLocaleString())); }
+    if (r.attempts && Number(r.attempts) > 1) { meta.appendChild(metaItem("시도 " + r.attempts + "회")); }
+    meta.appendChild(metaItem((r.source || "bridge") === "mcp" ? "MCP" : "bridge", "", "위임 경로"));
+    if (r.task_id) { meta.appendChild(metaItem(r.task_id, "mono", "작업 ID")); }
     card.appendChild(meta);
 
     if (isSession) {
-      var sMeta = document.createElement("div");
-      sMeta.className = "meta session-meta";
-      sMeta.appendChild(badge("session-flag", "(session)"));
-      if (r.session) { sMeta.appendChild(badge("session", "🧵 " + r.session)); }
-      if (r.session_id) {
-        var sid = String(r.session_id);
-        var shortSid = sid.length > 8 ? sid.substring(0, 8) : sid;
-        var sidBadge = badge("session-id", "id:" + shortSid);
-        sidBadge.title = "세션 ID: " + sid + " (클릭하면 복사)";
-        sidBadge.style.cursor = "pointer";
-        sidBadge.onclick = function () {
-          if (navigator.clipboard) {
-            navigator.clipboard.writeText(sid).then(function () {
-              sidBadge.textContent = "복사됨!";
-              setTimeout(function () { sidBadge.textContent = "id:" + shortSid; }, 1200);
-            });
-          }
-        };
-        sMeta.appendChild(sidBadge);
-      }
-      card.appendChild(sMeta);
+      card.appendChild(buildSessionMeta(r.session, r.session_id));
     }
 
     var dq = document.createElement("details");
@@ -1503,42 +1719,18 @@
     meta.appendChild(ts);
 
     if (isProcessing) {
-      meta.appendChild(badge("status-pending-processing", "⚡ 진행 중"));
+      meta.appendChild(badge("status-pending-processing", "진행 중"));
     } else {
-      meta.appendChild(badge("status-pending-queued", "⏳ 대기 중"));
+      meta.appendChild(badge("status-pending-queued", "대기 중"));
     }
 
-    meta.appendChild(badge("source-bridge", "📁 bridge"));
-    if (p.model) {
-      meta.appendChild(badge("model", String(p.model)));
-    }
-    if (p.task_id) meta.appendChild(badge("taskid", p.task_id));
+    if (p.model) { meta.appendChild(metaItem(String(p.model), "model")); }
+    meta.appendChild(metaItem("bridge", "", "위임 경로"));
+    if (p.task_id) { meta.appendChild(metaItem(p.task_id, "mono", "작업 ID")); }
     card.appendChild(meta);
 
     if (p.session) {
-      var sMeta = document.createElement("div");
-      sMeta.className = "meta session-meta";
-      sMeta.appendChild(badge("session-flag", "(session)"));
-      sMeta.appendChild(badge("session", "🧵 " + p.session));
-      if (p.session_id) {
-        var sid = String(p.session_id);
-        var shortSid = sid.length > 8 ? sid.substring(0, 8) : sid;
-        var sidBadge = badge("session-id", "id:" + shortSid);
-        sidBadge.title = "세션 ID: " + sid + " (클릭하면 복사)";
-        sidBadge.style.cursor = "pointer";
-        (function (fullId, el, label) {
-          el.onclick = function () {
-            if (navigator.clipboard) {
-              navigator.clipboard.writeText(fullId).then(function () {
-                el.textContent = "복사됨!";
-                setTimeout(function () { el.textContent = label; }, 1200);
-              });
-            }
-          };
-        })(sid, sidBadge, "id:" + shortSid);
-        sMeta.appendChild(sidBadge);
-      }
-      card.appendChild(sMeta);
+      card.appendChild(buildSessionMeta(p.session, p.session_id));
     }
 
     var dq = document.createElement("details");
@@ -1583,23 +1775,20 @@
     var aKwSpan = document.createElement("span");
     aKwSpan.className = "qa-preview-keyword";
     if (isProcessing) {
-      var modelLabel = p.model ? " (" + p.model + ")" : "";
-      aKwSpan.textContent = "생각 중" + modelLabel + "…";
+      aKwSpan.textContent = "응답을 만드는 중";
     } else {
-      var qModelLabel = p.model ? " · " + p.model : "";
-      aKwSpan.textContent = "대기 중 (앞에 " + queueIndex + "건)" + qModelLabel;
+      aKwSpan.textContent = "앞에 " + queueIndex + "건이 끝나면 시작";
     }
     sa.appendChild(aKwSpan);
     da.appendChild(sa);
 
     var ab = document.createElement("div");
     ab.className = "body pending-body";
-    var modelSuffix = p.model ? " (" + p.model + ")" : "";
-    var qModelSuffix = p.model ? " " + p.model + " 모델로" : "";
+    var modelText = p.model ? " " + escapeHtml(p.model) + " 모델로" : "";
     ab.innerHTML = [
-      '<div class="pending-status-wrap ' + p.state + '">',
-      (isProcessing ? '  <span class="pending-spinner"></span><span>agy agent' + modelSuffix + ' 가 질문을 분석하고 응답을 생성하고 있습니다...</span>' :
-                      '  <span>앞 순서의 작업이 완료되면' + qModelSuffix + ' 자동으로 실행됩니다.</span>'),
+      '<div class="pending-status-wrap ' + escapeHtml(p.state) + '">',
+      (isProcessing ? '  <span class="pending-spinner" aria-hidden="true"></span><span>agy가' + modelText + ' 응답을 만들고 있습니다. 끝나면 이 자리에 답변이 나옵니다.</span>' :
+                      '  <span>앞 작업이 끝나면' + modelText + ' 자동으로 실행됩니다.</span>'),
       '</div>'
     ].join("");
     da.appendChild(ab);
@@ -1623,7 +1812,7 @@
     }
     var msgCount = Array.isArray(currentHandoffData.messages) ? currentHandoffData.messages.length : 0;
     if (els.handoffCurrentProjectCount) {
-      els.handoffCurrentProjectCount.textContent = msgCount + " msgs";
+      els.handoffCurrentProjectCount.textContent = "메시지 " + msgCount + "개";
     }
 
     // BRIEF.md 요약 아코디언 카드
@@ -1654,15 +1843,18 @@
   function toggleHandoffMessage(cardEl, num) {
     var bodyEl = cardEl.querySelector(".handoff-card-body");
     if (!bodyEl) return;
+    var headerEl = cardEl.querySelector(".handoff-card-header");
     var isOpen = (bodyEl.style.display !== "none");
     if (isOpen) {
       bodyEl.style.display = "none";
       cardEl.classList.remove("is-open");
+      if (headerEl) headerEl.setAttribute("aria-expanded", "false");
       delete openHandoffNums[num];
       return;
     }
     bodyEl.style.display = "block";
     cardEl.classList.add("is-open");
+    if (headerEl) headerEl.setAttribute("aria-expanded", "true");
     openHandoffNums[num] = true;
 
     if (bodyEl.dataset.loaded === "true") return;
@@ -1695,7 +1887,10 @@
 
   function renderMarkdownBody(targetEl, markdown) {
     try {
-      var cleanHtml = DOMPurify.sanitize(marked.parse(markdown));
+      // 메시지 머리말(--- 번호/방향/시각/제목 ---)은 카드 머리에 이미 표시하므로 본문에서 뺀다.
+      // 그대로 두면 marked 가 구분선과 큰 제목으로 그려 버린다.
+      var body = String(markdown || "").replace(/^﻿?---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
+      var cleanHtml = DOMPurify.sanitize(marked.parse(body));
       targetEl.innerHTML = cleanHtml;
     } catch (e) {
       targetEl.innerHTML = "<pre>" + escapeHtml(markdown) + "</pre>";
@@ -1737,47 +1932,29 @@
     var frag = document.createDocumentFragment();
     sortedMsgs.forEach(function (m) {
       var card = document.createElement("div");
-      card.className = "handoff-card";
+      var party = dirParty(m.dir);
+      card.className = "handoff-card" + (party ? " from-" + party : "");
       card.dataset.num = m.num;
 
+      // [#번호][제목 / 보낸 쪽 → 받는 쪽][시각, 상태 진행 표시]
       var header = document.createElement("div");
       header.className = "handoff-card-header";
-
-      var left = document.createElement("div");
-      left.className = "handoff-card-header-left";
-      var numSpan = document.createElement("span");
-      numSpan.className = "handoff-num";
-      numSpan.textContent = "#" + m.num;
-
-      var dirBadge = document.createElement("span");
-      dirBadge.className = "badge dir-" + (m.dir || "unknown");
-      dirBadge.textContent = m.dir === "c2a" ? "Claude → agy" : (m.dir === "a2c" ? "agy → Claude" : (m.dir || ""));
-
-      var titleSpan = document.createElement("span");
-      titleSpan.className = "handoff-title";
-      titleSpan.textContent = m.title || "(제목 없음)";
-
-      left.appendChild(numSpan);
-      left.appendChild(dirBadge);
-      left.appendChild(titleSpan);
-
-      var right = document.createElement("div");
-      right.className = "handoff-card-header-right";
-      var timeSpan = document.createElement("span");
-      timeSpan.className = "handoff-time";
-      timeSpan.textContent = m.time || "";
-
-      var statusBadge = document.createElement("span");
-      statusBadge.className = "badge status-" + (m.status || "unknown");
-      statusBadge.textContent = m.status || "";
-
-      right.appendChild(timeSpan);
-      right.appendChild(statusBadge);
-      header.appendChild(left);
-      header.appendChild(right);
+      header.innerHTML = [
+        '<span class="handoff-num">#' + escapeHtml(m.num) + '</span>',
+        '<div class="handoff-card-header-left">',
+        '  <span class="handoff-title" title="' + escapeHtml(m.title || "") + '">' + escapeHtml(m.title || "(제목 없음)") + '</span>',
+        '  <span class="handoff-dir">' + dirLabelHtml(m.dir) + '</span>',
+        '</div>',
+        '<div class="handoff-card-header-right">',
+        '  <span class="handoff-time">' + escapeHtml(m.time || "") + '</span>',
+        '  ' + stepsHtml(m.status),
+        '</div>'
+      ].join("");
+      makeActivatable(header);
+      header.setAttribute("aria-expanded", openHandoffNums[m.num] ? "true" : "false");
 
       var body = document.createElement("div");
-      body.className = "handoff-card-body markdown-body";
+      body.className = "handoff-card-body md";
 
       if (openHandoffNums[m.num]) {
         body.style.display = "block";
@@ -1856,6 +2033,8 @@
       if (els.topbarCount) {
         els.topbarCount.textContent = "갱신 실패: " + err.message;
       }
+      // 서버가 내려가 있으면 "지금" 패널이 연결 끊김 상태를 보여 주게 한다.
+      if (currentNav === "dashboard") { renderNow(); }
     });
   }
 
@@ -1921,6 +2100,17 @@
     // 푸터 새로고침 & 자동 갱신
     if (els.refreshBtn) els.refreshBtn.addEventListener("click", function () { refresh(true); });
     if (els.autoRefresh) els.autoRefresh.addEventListener("change", scheduleAutoRefresh);
+
+    // role="button" 으로 표시한 div 항목은 Enter/Space 로도 누를 수 있게 한다.
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      var t = e.target;
+      if (!t || t.tagName === "BUTTON" || t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA") return;
+      if (t.getAttribute && t.getAttribute("role") === "button") {
+        e.preventDefault();
+        t.click();
+      }
+    });
 
     // 브라우저 해시 변경 감지 (뒤로가기/앞으로가기)
     window.addEventListener("hashchange", function () {
