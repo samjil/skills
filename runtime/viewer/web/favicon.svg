@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="삼짇날 33">
+  <title>삼짇날 (3월 3일)</title>
+  <rect width="64" height="64" rx="14" fill="#141a1f"/>
+  <g fill="none" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round">
+    <path stroke="#d9a441" d="M7 21C8.5 14.5 13 12 17 12C22 12 25.5 15.2 25.5 19.5C25.5 24.5 21.5 27 16.5 27C21.5 27 26 29.5 26 35.5C26 41.5 21.5 45 16.5 45C11.5 45 8 42.5 6.5 37.5" transform="translate(-0.5 3.5) scale(0.92 1)"/>
+    <path stroke="#5cc8c2" d="M7 21C8.5 14.5 13 12 17 12C22 12 25.5 15.2 25.5 19.5C25.5 24.5 21.5 27 16.5 27C21.5 27 26 29.5 26 35.5C26 41.5 21.5 45 16.5 45C11.5 45 8 42.5 6.5 37.5" transform="translate(31 3.5) scale(0.92 1)"/>
+  </g>
+</svg>
