@@ -1513,9 +1513,10 @@
     return s;
   }
 
-  // 위임 한 건의 토큰 내역(입력/출력/사고). 기록에 값이 있는 항목만 보여 주고, 하나도 없으면 줄 자체를 만들지 않는다.
+  // 위임 한 건의 토큰 줄(총 토큰 + 입력/출력/사고). 기록에 값이 있는 항목만 보여 주고, 하나도 없으면 줄 자체를 만들지 않는다.
   function buildTokenMeta(r) {
     var parts = [
+      ["총 토큰", r.total_tokens, "총 토큰"],
       ["입력", r.input_tokens, "입력 토큰"],
       ["출력", r.output_tokens, "출력 토큰"],
       ["사고", r.thinking_tokens, "사고(thinking) 토큰"]
@@ -1656,7 +1657,6 @@
     var isSession = Boolean(r.session || r.session_id || r.model === "(session)");
     if (modelName) { meta.appendChild(metaItem(String(modelName), "model")); }
     if (r.elapsed_sec) { meta.appendChild(metaItem(formatDuration(Number(r.elapsed_sec)), "elapsed", r.elapsed_sec + "초")); }
-    if (r.total_tokens) { meta.appendChild(metaItem("토큰 " + Number(r.total_tokens).toLocaleString())); }
     if (r.attempts && Number(r.attempts) > 1) { meta.appendChild(metaItem("시도 " + r.attempts + "회")); }
     meta.appendChild(metaItem((r.source || "bridge") === "mcp" ? "MCP" : "bridge", "", "위임 경로"));
     if (r.task_id) { meta.appendChild(metaItem(r.task_id, "mono", "작업 ID")); }
