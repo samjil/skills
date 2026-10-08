@@ -889,6 +889,7 @@
   function uniqueModels() {
     var set = {};
     allItems.forEach(function (r) { if (r.model && r.model !== "(session)") { set[r.model] = true; } });
+    pendingItems.forEach(function (p) { if (p.model) { set[p.model] = true; } });
     return Object.keys(set).sort();
   }
 
@@ -921,17 +922,22 @@
     });
 
     // 2. pending 목록 필터링
-    if (model || status) {
+    if (status) {
       filteredPending = [];
     } else {
       filteredPending = pendingItems.filter(function (p) {
         if (!p || !p.task_id) return false;
         if (finishedTaskIds[p.task_id]) return false;
+        // 모델 필터
+        if (model && p.model !== model) return false;
+        // 세션 필터
         if (session === "__none__" && p.session) return false;
         if (session && session !== "__none__" && p.session !== session) return false;
         if (q) {
           var qText = (p.question || "").toLowerCase();
-          if (qText.indexOf(q) === -1) return false;
+          var mText = (p.model || "").toLowerCase();
+          var tText = (p.task_id || "").toLowerCase();
+          if (qText.indexOf(q) === -1 && mText.indexOf(q) === -1 && tText.indexOf(q) === -1) return false;
         }
         return true;
       });
@@ -1503,6 +1509,9 @@
     }
 
     meta.appendChild(badge("source-bridge", "📁 bridge"));
+    if (p.model) {
+      meta.appendChild(badge("model", String(p.model)));
+    }
     if (p.task_id) meta.appendChild(badge("taskid", p.task_id));
     card.appendChild(meta);
 
@@ -1511,6 +1520,24 @@
       sMeta.className = "meta session-meta";
       sMeta.appendChild(badge("session-flag", "(session)"));
       sMeta.appendChild(badge("session", "🧵 " + p.session));
+      if (p.session_id) {
+        var sid = String(p.session_id);
+        var shortSid = sid.length > 8 ? sid.substring(0, 8) : sid;
+        var sidBadge = badge("session-id", "id:" + shortSid);
+        sidBadge.title = "세션 ID: " + sid + " (클릭하면 복사)";
+        sidBadge.style.cursor = "pointer";
+        (function (fullId, el, label) {
+          el.onclick = function () {
+            if (navigator.clipboard) {
+              navigator.clipboard.writeText(fullId).then(function () {
+                el.textContent = "복사됨!";
+                setTimeout(function () { el.textContent = label; }, 1200);
+              });
+            }
+          };
+        })(sid, sidBadge, "id:" + shortSid);
+        sMeta.appendChild(sidBadge);
+      }
       card.appendChild(sMeta);
     }
 
@@ -1555,16 +1582,24 @@
 
     var aKwSpan = document.createElement("span");
     aKwSpan.className = "qa-preview-keyword";
-    aKwSpan.textContent = isProcessing ? "생각 중…" : ("대기 중 (앞에 " + queueIndex + "건)");
+    if (isProcessing) {
+      var modelLabel = p.model ? " (" + p.model + ")" : "";
+      aKwSpan.textContent = "생각 중" + modelLabel + "…";
+    } else {
+      var qModelLabel = p.model ? " · " + p.model : "";
+      aKwSpan.textContent = "대기 중 (앞에 " + queueIndex + "건)" + qModelLabel;
+    }
     sa.appendChild(aKwSpan);
     da.appendChild(sa);
 
     var ab = document.createElement("div");
     ab.className = "body pending-body";
+    var modelSuffix = p.model ? " (" + p.model + ")" : "";
+    var qModelSuffix = p.model ? " " + p.model + " 모델로" : "";
     ab.innerHTML = [
       '<div class="pending-status-wrap ' + p.state + '">',
-      (isProcessing ? '  <span class="pending-spinner"></span><span>agy agent 가 질문을 분석하고 응답을 생성하고 있습니다...</span>' :
-                      '  <span>앞 순서의 작업이 완료되면 자동으로 실행됩니다.</span>'),
+      (isProcessing ? '  <span class="pending-spinner"></span><span>agy agent' + modelSuffix + ' 가 질문을 분석하고 응답을 생성하고 있습니다...</span>' :
+                      '  <span>앞 순서의 작업이 완료되면' + qModelSuffix + ' 자동으로 실행됩니다.</span>'),
       '</div>'
     ].join("");
     da.appendChild(ab);
