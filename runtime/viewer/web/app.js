@@ -1513,6 +1513,23 @@
     return s;
   }
 
+  // 위임 한 건의 토큰 내역(입력/출력/사고). 기록에 값이 있는 항목만 보여 주고, 하나도 없으면 줄 자체를 만들지 않는다.
+  function buildTokenMeta(r) {
+    var parts = [
+      ["입력", r.input_tokens, "입력 토큰"],
+      ["출력", r.output_tokens, "출력 토큰"],
+      ["사고", r.thinking_tokens, "사고(thinking) 토큰"]
+    ];
+    var row = document.createElement("div");
+    row.className = "meta token-meta";
+    parts.forEach(function (p) {
+      var n = Number(p[1]);
+      if (!p[1] || isNaN(n)) return;
+      row.appendChild(metaItem(p[0] + " " + n.toLocaleString(), "mono", p[2]));
+    });
+    return row.childNodes.length ? row : null;
+  }
+
   // 세션 이름과, 클릭하면 전체 세션 ID를 복사하는 짧은 ID
   function buildSessionMeta(sessionName, sessionId) {
     var sMeta = document.createElement("div");
@@ -1644,6 +1661,9 @@
     meta.appendChild(metaItem((r.source || "bridge") === "mcp" ? "MCP" : "bridge", "", "위임 경로"));
     if (r.task_id) { meta.appendChild(metaItem(r.task_id, "mono", "작업 ID")); }
     card.appendChild(meta);
+
+    var tokenMeta = buildTokenMeta(r);
+    if (tokenMeta) card.appendChild(tokenMeta);
 
     if (isSession) {
       card.appendChild(buildSessionMeta(r.session, r.session_id));
