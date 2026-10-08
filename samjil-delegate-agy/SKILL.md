@@ -68,7 +68,7 @@ Claude가 스스로 서브에이전트를 열려는 경우도 같다 — 서브�
 - `mcp__remote-devices__*` 도구가 이 세션에 있어야 한다. 없으면 위임 없이 바로 직접 처리.
 - **위임 런타임 환경 확인:**
   이 스킬의 실행 스크립트와 런타임은 사용자 홈 디렉터리의 `~/.samjil/delegate-agy/`에 위치합니다.
-  작업을 수행하기 전, `~/.samjil/delegate-agy/scripts/watch-agy.ps1` 또는 `start-agy.ps1`이 존재하는지 확인합니다.
+  작업을 수행하기 전, `~/.samjil/delegate-agy/scripts/sub/watch-agy.ps1` 또는 `start-agy.ps1`이 존재하는지 확인합니다.
   만약 존재하지 않는다면(스킬 규약만 단독 설치된 경우), 에이전트가 임의로 외부 스크립트를 내려받거나 실행하지 않고, 사용자에게 런타임 환경 구성이 필요함을 안내합니다:
   > "Antigravity 위임 워처 런타임(~/.samjil/delegate-agy/)이 감지되지 않았습니다. 저장소의 install.ps1을 실행하여 런타임을 구성해 주세요."
 - **위임 런타임 폴더(`~/.samjil/delegate-agy/runtime`)를 찾는다.**
