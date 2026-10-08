@@ -12,7 +12,7 @@ Antigravity(agy) 및 Claude Code 등 AI 코딩 에이전트를 위한 공용 스
 | 스킬 | 설명 |
 |---|---|
 | [`samjil-handoff/`](samjil-handoff/) | Claude ↔ Antigravity(agy) 간 파일 기반 비동기 대화 채널 규약 및 자율 개설 프로토콜 |
-| [`samjil-delegate-agy/`](samjil-delegate-agy/) | 복잡도/비용 판단에 따른 Antigravity CLI(agy) 작업 위임 기준 및 inbox/outbox 전달 규약 |
+| [`samjil-delegate-agy/`](samjil-delegate-agy/) | 난이도별 분담(설계·가장 어려운 수준은 Claude 직접, 나머지는 Antigravity CLI(agy) 위임 + 결과 필수 검토·반복) 기준 및 inbox/outbox 전달 규약 |
 
 ---
 
