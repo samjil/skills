@@ -871,8 +871,16 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir) {
 
 
     $out = Receive-Job -Job $job -ErrorAction SilentlyContinue
-
+    $jobErrors = @($job.ChildJobs[0].Error)
     Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+
+    if (-not $out -and $jobErrors.Count -gt 0) {
+        $errText = ($jobErrors | ForEach-Object { $_.ToString() }) -join "`n"
+        if ($errFile) {
+            Add-Content -Path $errFile -Value "PowerShell 프로세스 실행 오류: $errText" -Encoding UTF8 -ErrorAction SilentlyContinue
+        }
+        return @{ TimedOut = $false; Raw = $null; ExecutionError = $errText }
+    }
 
     return @{ TimedOut = $false; Raw = $out }
 
@@ -894,75 +902,63 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir) {
 
 # 쿼터 초과 등 폴백 대상 오류면(새 세션 시도일 때만) 다음 모델로, 그 외 오류면 즉시 중단합니다.
 
-function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFile, [string]$conversationId = "", [string]$knownModel = "") {
-
+function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFile, [string]$conversationId = "", [string]$knownModel = "", [string]$taskId = "", [string]$promptFile = "") {
     $result = [ordered]@{
-
         Success        = $false
-
         Response       = $null
-
         RawJson        = $null
-
         ModelUsed      = $null
-
         Attempts       = 0
-
         TriedModels    = @()
-
         InTok          = $null
-
         OutTok         = $null
-
         ThinkTok       = $null
-
         TotTok         = $null
-
         AgyDuration    = $null
-
         ElapsedSec     = 0
-
         ErrorMessage   = $null
-
         ConversationId = $null
-
         SessionRenewed = $false
-
     }
 
-
-
     $overallStart = Get-Date
-
     # 주의: 여기서 @($null)을 쓰면 안 됩니다 - PowerShell은 "원소가 $null 하나뿐인 배열"을
-
     # if/스크립트 출력 캡처 과정에서 그냥 $null로 뭉개버려서(직접 겪음: $candidates.Count가
-
     # 0이 되고 foreach가 한 번도 안 돎), 세션을 이어가려던 호출이 조용히 아무것도 안 하고
-
     # "실패(시도한 모델: )"로 끝나버립니다. 그래서 $null이 아닌 문자열 자리표시자를 씁니다.
-
     $candidates = if ($conversationId) { @("(continue)") } else { $ModelPriority }
 
-
-
     foreach ($candidate in $candidates) {
-
         $result.Attempts++
-
         $result.TriedModels += $candidate
 
+        # 웹 뷰어 실시간 표시용: 현재 실행 중인 작업과 모델 정보를 current_task.json에 기록
+        $modelForReport = if ($conversationId) {
+            if ($knownModel) { $knownModel } else { $ModelPriority[0] }
+        } else {
+            $candidate
+        }
+        $currentTaskFile = Join-Path $LogsDir "current_task.json"
+        if ($taskId) {
+            try {
+                [ordered]@{
+                    task_id    = $taskId
+                    model      = $modelForReport
+                    attempt    = $result.Attempts
+                    started_at = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+                } | ConvertTo-Json -Compress | Set-Content -Path $currentTaskFile -Encoding UTF8 -ErrorAction SilentlyContinue
+            } catch {}
+        }
 
-
-        $agyArgs = @('-p', $safePrompt, '--output-format', 'json')
+        # 프롬프트 인자: 임시 프롬프트 파일(@경로)이 제공되면 파일 참조 문법 사용
+        $promptArg = if ($promptFile -and (Test-Path -LiteralPath $promptFile)) { "@$promptFile" } else { $safePrompt }
+        $agyArgs = @('-p', $promptArg, '--output-format', 'json')
 
         if ($conversationId) { $agyArgs += @('--conversation', $conversationId) } else { $agyArgs += @('--model', $candidate) }
 
         if ($targetCwd) { $agyArgs += @('--add-dir', $targetCwd) }
 
         if ($skipPerm)  { $agyArgs += '--dangerously-skip-permissions' }
-
-
 
         $call = Invoke-AgyOnce $agyArgs $errFile $RuntimeDir
 
@@ -978,23 +974,21 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
 
         $raw = $call.Raw
 
-
-
         $json = $null
 
         try { $json = $raw | ConvertFrom-Json -ErrorAction Stop } catch { $json = $null }
 
-
-
         if ($null -eq $json) {
 
             # JSON 파싱 자체가 실패 - agy 실행이 비정상 종료된 경우. 모델 문제가 아닐 가능성이
-
             # 높으므로 다음 모델로 넘어가지 않고 여기서 중단합니다.
-
             $result.RawJson = $raw
-
-            $result.ErrorMessage = "agy 응답을 JSON으로 해석할 수 없음"
+            if ($call.ExecutionError) {
+                $result.ErrorMessage = "agy 실행 오류: $($call.ExecutionError)"
+                Log "  오류: $($call.ExecutionError)"
+            } else {
+                $result.ErrorMessage = "agy 응답을 JSON으로 해석할 수 없음"
+            }
 
             break
 
@@ -1088,6 +1082,11 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
 
 
     $result.ElapsedSec = [math]::Round(((Get-Date) - $overallStart).TotalSeconds, 1)
+
+    $currentTaskFile = Join-Path $LogsDir "current_task.json"
+    if (Test-Path $currentTaskFile) {
+        Remove-Item -Path $currentTaskFile -Force -ErrorAction SilentlyContinue
+    }
 
     return $result
 
@@ -1413,21 +1412,27 @@ try {
 
                 # 참고 (시행착오 기록):
 
-                #   - -p는 반드시 자기 값을 직접 받아야 한다 (stdin 단독 사용 불가).
-
-                #   - 프롬프트에 큰따옴표(")가 섞이면 PowerShell -> 네이티브 exe 커맨드라인
-
-                #     변환 과정에서 인자 경계가 깨지므로, 미리 \" 로 이스케이프해서 넘긴다.
-
+                # 참고 (시행착오 기록):
+                #   - -p는 직접 문자열을 넘길 수도 있고, @파일경로로 넘길 수도 있습니다.
+                #   - Windows CreateProcess 명령줄 길이 제한은 32,767자입니다.
+                #   - 프롬프트가 길거나(예: 8,000자 초과) 내용이 방대한 경우,
+                #     명령줄 대신 임시 프롬프트 파일(@$tempPromptFile)을 사용하여
+                #     명령줄 길이 초과(ERROR_FILENAME_EXCED_RANGE)와 따옴표 이스케이프 깨짐을 방지합니다.
                 #   - --cwd 플래그는 존재하지 않는다. 대상 폴더는 --add-dir로 추가한다.
+                $tempPromptFile = $null
+                $safePrompt = ""
+                if ($promptText.Length -gt 8000) {
+                    $promptsDir = Join-Path $LogsDir "prompts"
+                    if (-not (Test-Path $promptsDir)) {
+                        New-Item -ItemType Directory -Force -Path $promptsDir | Out-Null
+                    }
+                    $tempPromptFile = Join-Path $promptsDir "prompt_$baseName.txt"
+                    [System.IO.File]::WriteAllText($tempPromptFile, $promptText, [System.Text.Encoding]::UTF8)
+                } else {
+                    $safePrompt = $promptText -replace '"', '\"'
+                }
 
-                $safePrompt = $promptText -replace '"', '\"'
-
-
-
-                $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwd -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel
-
-
+                $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwd -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel -taskId $baseName -promptFile $tempPromptFile
 
                 if ($agyResult.RawJson) {
 
@@ -1512,6 +1517,14 @@ try {
                 Write-UsageRow $baseName $null $null $null $null $null $null $null $null "ERROR" $sessionName $conversationId
 
                 Update-UsageSummary
+
+            } finally {
+
+                if ($tempPromptFile -and (Test-Path -LiteralPath $tempPromptFile)) {
+
+                    Remove-Item -LiteralPath $tempPromptFile -Force -ErrorAction SilentlyContinue
+
+                }
 
             }
 

@@ -821,6 +821,15 @@ try {
                     }
                 }
 
+                $currentTaskFile = Join-Path $runtimeDir "logs\current_task.json"
+                $sessionsDir = Join-Path $runtimeDir "logs\sessions"
+                $currentTask = $null
+                if (Test-Path -LiteralPath $currentTaskFile) {
+                    try {
+                        $currentTask = Get-Content -LiteralPath $currentTaskFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                    } catch {}
+                }
+
                 $pendingList = @()
                 if (Test-Path -LiteralPath $inboxDir -PathType Container) {
                     $inboxFiles = @(Get-ChildItem -LiteralPath $inboxDir -File -ErrorAction SilentlyContinue |
@@ -836,6 +845,7 @@ try {
                             $lines = $rawText -split "\r?\n"
                             $cwdVal = ""
                             $sessionVal = ""
+                            $modelVal = ""
                             $bodyStartIdx = $lines.Length
                             for ($i = 0; $i -lt $lines.Length; $i++) {
                                 $trimmed = $lines[$i].Trim()
@@ -850,6 +860,10 @@ try {
                                     $sessionVal = $Matches[1].Trim()
                                     continue
                                 }
+                                if ($trimmed -match '^@model:\s*(.*)$') {
+                                    $modelVal = $Matches[1].Trim()
+                                    continue
+                                }
                                 $bodyStartIdx = $i
                                 break
                             }
@@ -859,13 +873,40 @@ try {
                                 ""
                             }
                             $state = if ($watcherAlive -and $pendingList.Count -eq 0) { "processing" } else { "queued" }
+
+                            # 모델 및 세션 ID 해석
+                            $resolvedModel = ""
+                            $sessionId = ""
+                            if ($currentTask -and $currentTask.task_id -eq $f.BaseName -and $currentTask.model) {
+                                $resolvedModel = [string]$currentTask.model
+                            }
+                            if (-not $resolvedModel -and $sessionVal) {
+                                $safeSessionName = ($sessionVal -replace '[\\/:*?"<>|]', '_').Trim()
+                                $sFile = Join-Path $sessionsDir ("{0}.json" -f $safeSessionName)
+                                if (Test-Path -LiteralPath $sFile) {
+                                    try {
+                                        $sObj = Get-Content -LiteralPath $sFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                                        if ($sObj.model) { $resolvedModel = [string]$sObj.model }
+                                        if ($sObj.conversation_id) { $sessionId = [string]$sObj.conversation_id }
+                                    } catch {}
+                                }
+                            }
+                            if (-not $resolvedModel -and $modelVal) {
+                                $resolvedModel = $modelVal
+                            }
+                            if (-not $resolvedModel) {
+                                $resolvedModel = "gemini-3.8-flash-high"
+                            }
+
                             $pendingList += [PSCustomObject]@{
-                                task_id  = $f.BaseName
-                                created  = $f.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")
-                                question = $question
-                                cwd      = $cwdVal
-                                session  = $sessionVal
-                                state    = $state
+                                task_id    = $f.BaseName
+                                created    = $f.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")
+                                question   = $question
+                                cwd        = $cwdVal
+                                session    = $sessionVal
+                                session_id = $sessionId
+                                model      = $resolvedModel
+                                state      = $state
                             }
                         } catch {
                             continue
