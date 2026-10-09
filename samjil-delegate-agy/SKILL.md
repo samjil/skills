@@ -93,7 +93,7 @@ Claude가 스스로 서브에이전트를 열려는 경우도 같다 — 서브�
 1. **기준은 "Claude가 직접 처리했다면 냈을 수준"이다.** 그보다 미달이면 그대로 쓰지 않는다. 다음을 확인한다.
    - 요구사항과 설계 명세를 모두 충족했는가, 빠뜨리거나 임의로 바꾼 부분은 없는가
    - 정확성: 코드는 실제로 읽어서 논리·엣지 케이스·기존 코드와의 일관성을 보고, 실행할 수 있으면 빌드·테스트를 돌린다
-   - `@cwd` 폴더에서 직접 수정한 작업은 바뀐 파일 목록과 diff를 확인해 범위 밖의 변경이나 삭제가 없는지 본다
+   - `@cwd` 폴더에서 직접 수정한 작업은 바뀐 파일 목록과 diff를 확인해 범위 밖의 변경이나 삭제가 없는지 본다. 커밋은 검토를 마친 뒤 Claude 가 한다(아래 "코딩 위임 운영 규칙")
    - 품질: 문서·글은 어색한 표현과 오류, 디자인은 위 "디자인 작업의 분담"의 검토 항목
    - **사실 주장(수치, 최신 정보, 인용)은 그대로 옮기지 않는다.** 사용자 원칙상 확실한 근거가 있는 것만 전달해야 하므로, 검증할 수 없으면 그 부분은 빼거나 Claude가 직접 확인한다.
 2. **미달이면 구체적인 피드백을 붙여 다시 위임한다.** 무엇이 왜 부족한지, 기대하는 결과가 무엇인지를 적는다.
@@ -161,6 +161,44 @@ H=$(ls -t "$BASE/logs/heartbeat"/hb_*.txt 2>/dev/null | head -1)
 - 한 번 확인된 폴더는 **같은 대화 안에서는 계속 유효**하다. 새 대화가 시작되면 다시 확인받는다.
 - **첫 확인 시에만 위험 고지**: 워처는 `--dangerously-skip-permissions`로 동작해서 agy가 승인 없이 그 폴더의 파일을 읽고/쓰고/삭제하고 임의 명령을 실행할 수 있다. git 등으로 되돌릴 수 있는 상태인지 한 줄로 확인한다.
 - 확인 후에는 그 폴더에 대한 적합한 코딩 하위작업을 **매번 묻지 않고 자동 위임**한다.
+
+## 코딩 위임 운영 규칙 (커밋 · 크기 · 끝남 확인 · 보고)
+
+실제 프로젝트에서 여러 번 위임해 보고 정한 규칙이다(2026-10 이벤트 로그 작업). 코드 결과물은 명세가 완전하면
+쓸 만하지만, 작업 운영(끝났는지, 무엇을 했는지)은 믿기 어렵다. 그래서 아래를 지킨다.
+
+1. **agy 는 커밋하지 않는다.** 지시문에 반드시 넣는다: "DO NOT COMMIT — git add · commit · stash · reset 등 git 상태를
+   바꾸는 명령을 쓰지 말고, 바꾼 내용은 작업 트리에 그대로 둔다." 브리프에 커밋 단계가 있어도 무시하게 한다.
+   - agy 가 이미 커밋했으면 `git reset --mixed <커밋 전>` 으로 풀어(변경은 작업 트리에 남는다) 검토한다.
+   - **Claude 가 diff 를 직접 읽어 리뷰**하고, 테스트 · 빌드를 직접 다시 돌린 뒤 **커밋할지 말지 Claude 가 정해 직접 커밋**한다.
+     서브에이전트 리뷰로 갈음하지 않는다(사용자 지시). 사소한 보완은 이때 Claude 가 바로 고친다.
+2. **작게 나눈다.** 한 위임은 파일 몇 개 · 10분 안팎으로 끝날 크기로. 마감(30분) 전이라도 큰 작업은 늦고, 검토도 어렵다.
+   점검 · 분석처럼 넓은 일은 **결과 파일을 먼저 만들고 확인한 것을 그때그때 덧붙이게** 해서 중단돼도 부분 결과가 남게 한다.
+3. **명령은 전경에서 끝까지 기다리게 한다.** 지시문에 "모든 명령을 FOREGROUND 로 실행하고 끝날 때까지 기다린다. 백그라운드
+   작업 · 터미널을 남기지 않는다"를 넣는다. 그래도 agy 가 긴 명령(npm install · gradle · 빌드)을 스스로 백그라운드로 돌릴 수 있다.
+4. **"오류"로 보고돼도 agy 가 아직 돌고 있을 수 있다.** 응답에 `root agent idle; waiting ... for background task(s)` 같은 문구가
+   오면 워처는 오류로 기록하지만 agy 는 계속 일해 나중에 파일을 바꾸거나 커밋까지 한다. 그 저장소를 만지기 전에 확인한다:
+   - `logs/watcher.log` 에 그 작업의 `완료` 줄이 있는지, `logs/current_task.json` 이 다른 작업으로 넘어갔는지
+   - 대상 저장소의 `git status` · `git log` 가 더 바뀌지 않는지(잠시 두고 두 번 본다)
+   - 끝난 게 확인되면 그때 결과를 검토한다. 아직이면 같은 작업을 다시 보내지 않는다.
+5. **같은 저장소에 동시에 쓰지 않는다.** agy 가 작업 중인 저장소(작업 트리 · git 인덱스)에 Claude 나 서브에이전트가 같은 때에
+   파일을 고치거나 git 명령을 쓰지 않는다. 동시에 해야 하면 다른 저장소나 `git worktree` 로 나눈다.
+6. **보고는 증거와 함께 받는다.** 지시문에 보고서 파일 경로를 주고, 실행한 명령과 원래 출력(시험 개수 · 실패 수 · 빌드 결과)을
+   붙이게 한다. agy 의 자기 보고("통과", "concerns 없음")는 낙관적인 경우가 많고 증거 파일이 다음 실행에 덮어써질 수도 있으니,
+   핵심 명령(시험 · 린트 · 빌드)은 Claude 가 다시 돌려 확인한다.
+7. **대기열은 다른 세션과 같이 쓴다.** 앞 작업이 있으면 그만큼 늦어진다. 급하거나 위임 왕복보다 직접이 확실히 빠른 작은 일(코드 몇 줄)은
+   Claude 가 직접 한다.
+
+지시문 맨 아래에 붙이는 기본 문단(필요에 맞게 고쳐 쓴다):
+
+```
+Rules:
+- DO NOT COMMIT. Do not run git add / commit / stash / reset or any command that changes git state. Leave all changes in the working tree.
+- Run every command in the FOREGROUND and wait for it to finish. Do not leave background tasks or terminals running.
+- Touch only the files this task needs. Do not touch untracked files you did not create.
+- Write a report to <report path>: what you changed per file, every command you ran with its raw output (test counts, failures, build result), and concerns.
+Final reply, short: status, files changed, one-line test summary, concerns.
+```
 
 ## 여러 작업을 이어서 위임 (`@session`)
 
