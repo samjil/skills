@@ -95,6 +95,10 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
   - **위임 실행 기록**: 세션별 목록, 모델·상태 필터와 검색. 카드 맨 윗줄에서 모델명과 소요 시간을 강조하고, 실패한 작업도 시도한 모델을 표시
   - **에이전트 인수인계**: 프로젝트별 메시지 타임라인, 방향·상태 필터, `BRIEF.md` 열람. 상태는 보냄 → 읽음 → 처리됨 → 확인함 진행 표시로 보여 줍니다
   - 색은 보낸 쪽을 뜻합니다: Claude는 황토, agy는 청록. 초록/빨강은 성공/실패에만 씁니다. 탭 아이콘 33은 삼짇날(음력 3월 3일)입니다.
+  - **워처 자동 점검**: 뷰어가 60초마다(`-WatcherCheckSeconds`, 기본 60, 0이면 끔) 워처가 살아 있는지 보고, 꺼져 있으면 `ensure-agy-running.ps1`로 **창 없이** 다시 켭니다(20초 뒤 한 번 더 확인한 뒤 실행하고 `runtime/logs/watchdog.log`에 기록). `stop-agy.ps1`로 일부러 끈 상태(`manual_stop.flag`)면 켜지 않고, 화면에도 "수동 정지"로 보입니다. 브라우저 탭이 닫혀 있어도 뷰어 서버만 떠 있으면 동작하며, `-NoAgent`로 뷰어를 띄우면 이 기능도 꺼집니다.
+  - **켜기 버튼**: 사이드바 하단 상태 줄에서 워처가 꺼져 있을 때만 `켜기`가 보입니다. 누르면 기다리지 않고(재확인 0초) 창 없이 바로 켜고, 켜질 때까지 "켜는 중…"으로 보여 줍니다. `stop-agy`로 끈 상태여도 직접 누른 것이므로 켭니다. 30초 안에 켜지지 않으면 `watcher.log`를 보라는 안내가 나옵니다. 서버는 전용 헤더가 있는 POST만 받습니다(다른 웹 페이지가 몰래 호출하지 못하게).
+  - 켜짐/꺼짐은 하트비트가 아니라 워처가 시작할 때 적는 PID 잠금 파일로 판단합니다. 워처는 `agy` 호출을 기다리는 동안(최대 30분) 하트비트를 쓰지 않으므로, 하트비트만 보면 일하는 중인 워처를 꺼진 것으로 잘못 보기 때문입니다. 뷰어는 시작할 때 한 번 워처를 켜고(보이는 콘솔 창), 이후 자동 점검이나 켜기 버튼으로 켜는 워처는 창이 없습니다.
+  - 뷰어는 `ensure-agy-running.ps1`을 `-StaleThresholdSeconds 0`으로 부릅니다. 그 스크립트는 기본적으로 "하트비트가 300초 안이면 살아 있음"으로 보는데, 워처 창을 닫아도 하트비트 파일은 남아서 죽은 직후 최대 5분은 아무것도 하지 않았기 때문입니다(뷰어가 PID로 이미 죽었다고 확인한 뒤에 부르므로 그 유예를 끕니다).
 
 - **⚡ Antigravity CLI 위임 워처 시작/재시작**:
   ```powershell
@@ -123,6 +127,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\delegate-agy\invoke-ag
 
 - `agy-progress.tests.ps1`: 대화 찾기, 마지막 활동 시각, 멈춤 판정 경계값 등 단위 테스트 (몇 초)
 - `invoke-agy-once.tests.ps1`: 가짜 `agy`로 기다리는 루프를 끝까지 돌리는 통합 테스트 (약 1~2분). 임시 폴더에 `agy.exe`로 복사한 `powershell.exe`를 쓰므로 실제 `agy`는 건드리지 않습니다.
+
+뷰어의 워처 자동 점검:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\viewer\watcher-health.tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\viewer\serve-viewer-autostart.tests.ps1
+```
+
+- `watcher-health.tests.ps1`: 켜짐/꺼짐 판정(잠금 PID, PID 재사용, 하트비트와의 관계), 재시작 결정, 점검 주기, 켜기 요청 처리, `ensure`에 넘기는 인자 단위 테스트 (몇 초)
+- `serve-viewer-autostart.tests.ps1`: `serve-viewer.ps1`을 실제로 띄우고 점검 주기를 3초로 줄여, 꺼져 있을 때 `ensure`를 띄우는지·살아 있거나 수동 정지면 안 띄우는지·그동안 다른 요청에 응답하는지·켜기 API(GET 405, 헤더 없는 POST 403, 켜져 있으면 already-running, 꺼져 있으면 started)를 확인합니다 (약 1분). 임시 폴더와 가짜 스크립트만 쓰며 실제 워처/뷰어는 건드리지 않습니다.
 
 ---
 
