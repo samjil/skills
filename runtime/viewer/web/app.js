@@ -44,6 +44,8 @@
     // 사이드바 푸터 & 컨트롤
     watcherPulseDot:      document.getElementById("watcher-pulse-dot"),
     watcherStatusText:    document.getElementById("watcher-status-text"),
+    watcherStartBtn:      document.getElementById("watcher-start"),
+    watcherStartMsg:      document.getElementById("watcher-start-msg"),
     autoRefresh:          document.getElementById("autorefresh"),
     refreshBtn:           document.getElementById("refresh"),
 
@@ -112,6 +114,7 @@
   var knownShardKey = "";       // QA 데이터 변경 감지 키
   var lastPendingKey = "";      // pending 변경 감지 키
   var refreshTimer = null;
+  var watcherStarting = false;   // 켜기 요청 후 켜질 때까지 true
   var isServerOnline = false;
   var systemStatus = null;      // 마지막 /api/status 응답
   var nowTicker = null;         // "지금" 패널 경과 시간 1초 갱신 타이머
@@ -384,9 +387,12 @@
             els.watcherPulseDot.classList.toggle("offline", !isWatcherAlive);
           }
           if (els.watcherStatusText) {
-            els.watcherStatusText.textContent = isWatcherAlive ? "agy 워처 켜짐" : "agy 워처 꺼짐";
+            els.watcherStatusText.textContent = isWatcherAlive
+              ? "agy 워처 켜짐"
+              : (status.manualStop ? "agy 워처 꺼짐 (수동 정지)" : "agy 워처 꺼짐");
           }
         }
+        updateWatcherStartButton(status);
         return status;
       })
       .catch(function () {
@@ -396,7 +402,82 @@
         if (els.watcherStatusText) {
           els.watcherStatusText.textContent = "뷰어 서버 연결 끊김";
         }
+        updateWatcherStartButton(null);
         return null;
+      });
+  }
+
+  // 켜기 버튼: 워처가 꺼져 있고 서버가 켜 줄 수 있을 때만 보인다. 켜는 중에는 켜질 때까지 남겨 둔다.
+  function updateWatcherStartButton(status) {
+    if (!els.watcherStartBtn) return;
+    var canShow = Boolean(status) && !status.watcherAlive && status.canStart === true;
+    els.watcherStartBtn.hidden = !(canShow || watcherStarting);
+  }
+
+  function showWatcherStartMsg(text, isError) {
+    if (!els.watcherStartMsg) return;
+    els.watcherStartMsg.textContent = text || "";
+    els.watcherStartMsg.classList.toggle("is-error", Boolean(isError));
+    els.watcherStartMsg.hidden = !text;
+  }
+
+  function finishWatcherStart() {
+    watcherStarting = false;
+    if (els.watcherStartBtn) {
+      els.watcherStartBtn.disabled = false;
+      els.watcherStartBtn.textContent = "켜기";
+      els.watcherStartBtn.removeAttribute("aria-busy");
+    }
+    updateWatcherStartButton(systemStatus);
+  }
+
+  // 켜졌는지 2초마다 확인한다. 워처가 PID 잠금 파일을 쓰기까지 몇 초 걸린다.
+  function waitForWatcherAlive() {
+    var deadline = Date.now() + 30000;
+    return new Promise(function (resolve) {
+      (function poll() {
+        loadSystemStatus().then(function (st) {
+          if (st && st.watcherAlive) { finishWatcherStart(); refresh(false); resolve(); return; }
+          if (Date.now() > deadline) {
+            showWatcherStartMsg("30초 안에 켜지지 않았습니다. runtime/logs/watcher.log를 확인하세요.", true);
+            finishWatcherStart();
+            resolve();
+            return;
+          }
+          setTimeout(poll, 2000);
+        });
+      })();
+    });
+  }
+
+  function startWatcher() {
+    if (watcherStarting) return;
+    watcherStarting = true;
+    showWatcherStartMsg("", false);
+    if (els.watcherStartBtn) {
+      els.watcherStartBtn.disabled = true;
+      els.watcherStartBtn.textContent = "켜는 중…";
+      els.watcherStartBtn.setAttribute("aria-busy", "true");
+    }
+    // 전용 헤더가 있어야 서버가 받는다(다른 웹 페이지의 몰래 요청 차단)
+    fetch("/api/watcher/start", { method: "POST", headers: { "X-Samjil-Viewer": "1" } })
+      .then(function (r) {
+        return r.json().then(function (body) { return { ok: r.ok, body: body }; });
+      })
+      .then(function (res) {
+        if (!res.ok || !res.body) { throw new Error("서버가 요청을 받지 않았습니다"); }
+        var result = res.body.result;
+        if (result === "no-script" || result === "failed") {
+          showWatcherStartMsg(res.body.message, true);
+          finishWatcherStart();
+          return null;
+        }
+        if (result === "already-running") { finishWatcherStart(); refresh(false); return null; }
+        return waitForWatcherAlive();   // started, busy
+      })
+      .catch(function (err) {
+        showWatcherStartMsg("켜지 못했습니다: " + err.message, true);
+        finishWatcherStart();
       });
   }
 
@@ -762,8 +843,19 @@
     } else {
       state = "stopped";
       statusText = "agy 워처가 꺼져 있습니다";
-      title = "위임하려면 워처를 먼저 켜세요";
-      meta.push('<span><code>~/.samjil/delegate-agy/scripts/start-agy.ps1</code>로 켤 수 있습니다.</span>');
+      var autoRestart = systemStatus && systemStatus.autoRestart;
+      if (systemStatus && systemStatus.manualStop) {
+        title = "stop-agy로 끈 상태라 자동으로 켜지 않습니다";
+        meta.push('<span><code>~/.samjil/delegate-agy/scripts/start-agy.ps1</code>로 켤 수 있습니다.</span>');
+      } else if (autoRestart && autoRestart.enabled) {
+        title = "다음 점검 때 뷰어가 자동으로 다시 켭니다";
+        meta.push('<span>뷰어가 ' + (autoRestart.intervalSeconds >= 60 ? Math.round(autoRestart.intervalSeconds / 60) + '분' : autoRestart.intervalSeconds + '초') + '마다 점검합니다.</span>');
+        meta.push('<span>지금 바로 켜려면 <code>~/.samjil/delegate-agy/scripts/start-agy.ps1</code></span>');
+        if (autoRestart.lastLaunch) { meta.push('<span>마지막 자동 재시작 ' + formatRelativeTime(autoRestart.lastLaunch) + '</span>'); }
+      } else {
+        title = "위임하려면 워처를 먼저 켜세요";
+        meta.push('<span><code>~/.samjil/delegate-agy/scripts/start-agy.ps1</code>로 켤 수 있습니다.</span>');
+      }
       if (queued > 0) { meta.push('<span>inbox에서 ' + queued + '건이 처리를 기다리고 있습니다.</span>'); }
     }
 
@@ -2127,6 +2219,7 @@
 
     // 푸터 새로고침 & 자동 갱신
     if (els.refreshBtn) els.refreshBtn.addEventListener("click", function () { refresh(true); });
+    if (els.watcherStartBtn) els.watcherStartBtn.addEventListener("click", startWatcher);
     if (els.autoRefresh) els.autoRefresh.addEventListener("change", scheduleAutoRefresh);
 
     // role="button" 으로 표시한 div 항목은 Enter/Space 로도 누를 수 있게 한다.

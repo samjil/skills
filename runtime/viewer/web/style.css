@@ -375,6 +375,37 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 
 .status-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* 워처가 꺼져 있을 때만 보이는 켜기 버튼. agy 색 외곽선으로 "agy를 켠다"를 나타낸다 */
+.watcher-start-btn {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 11px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--agy);
+  background: transparent;
+  border: 1px solid var(--agy);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.watcher-start-btn:hover:not(:disabled) { background: var(--agy-soft); }
+.watcher-start-btn:disabled {
+  color: var(--ink-3);
+  border-color: var(--line-strong);
+  cursor: progress;
+}
+.watcher-start-btn[hidden] { display: none; }
+
+.watcher-start-msg {
+  margin: 0;
+  padding: 0 4px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.watcher-start-msg.is-error { color: var(--err); }
+.watcher-start-msg[hidden] { display: none; }
+
 .sidebar-controls {
   display: flex;
   align-items: center;
@@ -420,7 +451,9 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .app-sidebar.collapsed .sidebar-sub-section,
 .app-sidebar.collapsed .status-text,
 .app-sidebar.collapsed .auto-refresh-label,
-.app-sidebar.collapsed .sidebar-note { display: none; }
+.app-sidebar.collapsed .sidebar-note,
+.app-sidebar.collapsed .watcher-start-btn,
+.app-sidebar.collapsed .watcher-start-msg { display: none; }
 .app-sidebar.collapsed .sidebar-footer { padding: 12px 0; align-items: center; }
 .app-sidebar.collapsed .watcher-status-card { justify-content: center; padding: 0; }
 .app-sidebar.collapsed .sidebar-controls { justify-content: center; padding: 0; }
