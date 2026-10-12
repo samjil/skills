@@ -136,7 +136,9 @@
         <div class="watcher-status-card" id="watcher-status-card" title="agy 워처 상태">
           <span class="status-pulse-dot" id="watcher-pulse-dot"></span>
           <span class="status-text" id="watcher-status-text">워처 확인 중</span>
+          <button type="button" id="watcher-start" class="watcher-start-btn" title="워처를 지금 켭니다 (창 없이 실행)" hidden>켜기</button>
         </div>
+        <p class="watcher-start-msg" id="watcher-start-msg" role="status" aria-live="polite" hidden></p>
         <div class="sidebar-controls">
           <label class="auto-refresh-label" title="5초마다 자동 갱신">
             <input type="checkbox" id="autorefresh" checked> 5초마다 갱신

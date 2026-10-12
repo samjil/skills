@@ -4,7 +4,11 @@
 # 사용법:
 #   .\serve-viewer.ps1                   # 브라우저 실행 및 http://127.0.0.1:8787 서빙
 #   .\serve-viewer.ps1 -Port 9000        # 포트 지정
+#   .\serve-viewer.ps1 -WatcherCheckSeconds 120   # 워처 자동 점검 주기(초). 0이면 점검 안 함
 #   종료: 이 창에서 Ctrl+C
+#
+# agy 워처(watch-agy.ps1)가 꺼져 있으면 뷰어가 주기적으로(기본 60초) 점검해서 창 없이 다시 켭니다.
+# stop-agy 로 일부러 끈 상태(manual_stop.flag)면 켜지 않습니다. 끄려면 -NoAgent 를 쓰세요.
 
 param(
     [string]$HandoffDir = "",
@@ -12,7 +16,8 @@ param(
     [string]$WebDir     = "",
     [int]$Port          = 8787,
     [switch]$NoBrowser  = $false,
-    [switch]$NoAgent    = $false
+    [switch]$NoAgent    = $false,
+    [int]$WatcherCheckSeconds = 60
 )
 
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -91,6 +96,10 @@ if (-not (Test-Path $WebDir)) {
 }
 
 
+
+# 워처 상태 판정/자동 재시작 헬퍼
+. (Join-Path $PSScriptRoot "watcher-health.ps1")
+$WatcherRuntimeDir = Get-WatcherRuntimeDir $DataDir
 
 $RouteMap = [ordered]@{
 
@@ -316,6 +325,19 @@ function Find-HandoffProjectDir([string]$projectName) {
 
 
 
+# delegate-agy 스크립트를 찾습니다. $RelPath 는 scripts 폴더 기준(예: "start-agy.ps1", "sub\ensure-agy-running.ps1").
+function Find-DelegateScript([string]$RelPath) {
+    $cands = @()
+    if ($env:AGY_DELEGATE_SCRIPTS) { $cands += (Join-Path $env:AGY_DELEGATE_SCRIPTS $RelPath) }
+    $cands += (Join-Path $env:USERPROFILE (Join-Path ".samjil\delegate-agy\scripts" $RelPath))
+    $cands += (Join-Path (Split-Path $PSScriptRoot -Parent) (Join-Path "delegate-agy\scripts" $RelPath))
+    $cands += (Join-Path $PSScriptRoot (Join-Path "runtime\delegate-agy\scripts" $RelPath))
+    foreach ($c in $cands) {
+        if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+    }
+    return $null
+}
+
 # HTTP 리스너 기동 (충돌 시 기존 뷰어 자동 정리 및 대체 포트 탐색)
 $listener = $null
 $prefix = $null
@@ -393,30 +415,14 @@ Write-Host "  위임 기록(/data): $DataDir" -ForegroundColor White
 Write-Host "  대화 저장소     : $HandoffDir" -ForegroundColor White
 
 # --- agy agent (워처) 자동 연동 ---
+$watcherHealth = $null
 if (-not $NoAgent) {
-    $watcherRunning = $false
-    try {
-        $wProcs = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
-            Where-Object { $_.CommandLine -like "*watch-agy.ps1*" -and $_.ProcessId -ne $PID })
-        if ($wProcs.Count -gt 0) { $watcherRunning = $true }
-    } catch {}
+    # 하트비트만 보지 않고 PID 잠금 파일로 판단합니다(watcher-health.ps1). 명령줄에 watch-agy.ps1 이
+    # 남아 있는 빈 -NoExit 창을 "실행 중"으로 오판하지 않습니다.
+    $watcherRunning = [bool](Test-WatcherAlive -RuntimeDir $WatcherRuntimeDir).Alive
 
-    $startCandidates = @(
-        (Join-Path $env:USERPROFILE ".samjil\delegate-agy\scripts\start-agy.ps1"),
-        (Join-Path (Split-Path $PSScriptRoot -Parent) "delegate-agy\scripts\start-agy.ps1"),
-        (Join-Path $PSScriptRoot "runtime\delegate-agy\scripts\start-agy.ps1")
-    )
-    if ($env:AGY_DELEGATE_SCRIPTS) {
-        $startCandidates = @((Join-Path $env:AGY_DELEGATE_SCRIPTS "start-agy.ps1")) + $startCandidates
-    }
-
-    $startScript = $null
-    foreach ($cand in $startCandidates) {
-        if ($cand -and (Test-Path $cand)) {
-            $startScript = $cand
-            break
-        }
-    }
+    $startScript  = Find-DelegateScript "start-agy.ps1"
+    $ensureScript = Find-DelegateScript "sub\ensure-agy-running.ps1"
 
     if ($watcherRunning) {
         Write-Host "  agy agent (워처): 이미 실행 중 (정상)" -ForegroundColor Green
@@ -430,6 +436,17 @@ if (-not $NoAgent) {
         }
     } else {
         Write-Host "  agy agent (워처): start-agy.ps1 스크립트를 찾을 수 없음" -ForegroundColor Gray
+    }
+
+    if ($ensureScript) {
+        $watcherHealth = New-WatcherHealthState -RuntimeDir $WatcherRuntimeDir -EnsureScript $ensureScript -IntervalSeconds $WatcherCheckSeconds
+        if ($WatcherCheckSeconds -gt 0) {
+            Write-Host "  워처 자동 점검  : ${WatcherCheckSeconds}초마다 (꺼져 있으면 창 없이 다시 켬, stop-agy 로 끈 상태는 존중)" -ForegroundColor Green
+        } else {
+            Write-Host "  워처 자동 점검  : 끔 (화면의 켜기 버튼만 사용)" -ForegroundColor Gray
+        }
+    } else {
+        Write-Host "  워처 자동 점검  : ensure-agy-running.ps1 을 찾을 수 없어 끔 (켜기 버튼도 쓸 수 없음)" -ForegroundColor Gray
     }
 }
 
@@ -450,15 +467,36 @@ if (-not $NoBrowser) {
 
 try {
 
+    $pendingContext = $null
+
     while ($listener.IsListening) {
+
+        # 워처 주기 점검. 점검 시각이 아니면 바로 돌아옵니다(점검 자체가 예외를 내도 서버는 계속 돕니다).
+        if ($watcherHealth) {
+            try {
+                $tickResult = Invoke-WatcherHealthTick $watcherHealth
+                if ($tickResult -eq 'restart') {
+                    Write-Host ("[{0}] agy 워처가 꺼져 있어 자동으로 다시 켭니다 (창 없이 실행, 20초 뒤 재확인)." -f (Get-Date -Format 'HH:mm:ss')) -ForegroundColor Yellow
+                } elseif ($tickResult -like 'launch-failed*') {
+                    Write-Host ("[{0}] agy 워처 자동 재시작 실패: {1}" -f (Get-Date -Format 'HH:mm:ss'), $tickResult) -ForegroundColor Red
+                }
+            } catch {}
+        }
 
         $context = $null
 
         try {
 
-            $context = $listener.GetContext()
+            # 요청이 없어도 1초마다 깨어나 위 점검을 챙깁니다(GetContext 는 요청이 올 때까지 막혀서 쓸 수 없음).
+            if ($null -eq $pendingContext) { $pendingContext = $listener.GetContextAsync() }
 
-        } catch [System.Net.HttpListenerException] {
+            if (-not $pendingContext.Wait(1000)) { continue }
+
+            $context = $pendingContext.GetAwaiter().GetResult()
+
+            $pendingContext = $null
+
+        } catch {
 
             break
 
@@ -807,19 +845,8 @@ try {
 
                 $runtimeDir = Split-Path (Split-Path $DataDir -Parent) -Parent
                 $inboxDir = Join-Path $runtimeDir "inbox"
-                $heartbeatDir = Join-Path $runtimeDir "logs\heartbeat"
 
-                $watcherAlive = $false
-                if (Test-Path -LiteralPath $heartbeatDir -PathType Container) {
-                    $latestHb = Get-ChildItem -LiteralPath $heartbeatDir -Filter "hb_*.txt" -File -ErrorAction SilentlyContinue |
-                        Sort-Object LastWriteTime -Descending | Select-Object -First 1
-                    if ($latestHb) {
-                        $diffSec = ((Get-Date) - $latestHb.LastWriteTime).TotalSeconds
-                        if ($diffSec -ge 0 -and $diffSec -le 300) {
-                            $watcherAlive = $true
-                        }
-                    }
-                }
+                $watcherAlive = [bool](Test-WatcherAlive -RuntimeDir $WatcherRuntimeDir).Alive
 
                 $currentTaskFile = Join-Path $runtimeDir "logs\current_task.json"
                 $sessionsDir = Join-Path $runtimeDir "logs\sessions"
@@ -934,16 +961,14 @@ try {
                 $heartbeatDir = Join-Path $runtimeDir "logs\heartbeat"
                 $inboxDir = Join-Path $runtimeDir "inbox"
 
-                $watcherAlive = $false
+                # 켜짐/꺼짐은 하트비트가 아니라 PID 잠금 파일로 판단합니다(agy 를 기다리는 동안은 하트비트가 낡음).
+                $aliveInfo = Test-WatcherAlive -RuntimeDir $WatcherRuntimeDir
+                $watcherAlive = [bool]$aliveInfo.Alive
                 $lastHeartbeat = ""
                 if (Test-Path -LiteralPath $heartbeatDir -PathType Container) {
                     $latestHb = Get-ChildItem -LiteralPath $heartbeatDir -Filter "hb_*.txt" -File -ErrorAction SilentlyContinue |
                         Sort-Object LastWriteTime -Descending | Select-Object -First 1
                     if ($latestHb) {
-                        $diffSec = ((Get-Date) - $latestHb.LastWriteTime).TotalSeconds
-                        if ($diffSec -ge 0 -and $diffSec -le 300) {
-                            $watcherAlive = $true
-                        }
                         $lastHeartbeat = $latestHb.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
                     }
                 }
@@ -954,9 +979,21 @@ try {
                     $inboxCount = $inboxFiles.Count
                 }
 
+                $autoRestart = [PSCustomObject]@{
+                    enabled         = [bool]($watcherHealth -and $watcherHealth.IntervalSeconds -gt 0)
+                    intervalSeconds = if ($watcherHealth) { [int]$watcherHealth.IntervalSeconds } else { 0 }
+                    lastLaunch      = if ($watcherHealth -and $watcherHealth.LastLaunchAt) { $watcherHealth.LastLaunchAt.ToString("yyyy-MM-dd HH:mm:ss") } else { "" }
+                    launchCount     = if ($watcherHealth) { [int]$watcherHealth.LaunchCount } else { 0 }
+                    lastResult      = if ($watcherHealth) { [string]$watcherHealth.LastResult } else { "" }
+                }
+
                 $statusObj = [PSCustomObject]@{
                     port          = $Port
                     watcherAlive  = $watcherAlive
+                    watcherSource = [string]$aliveInfo.Source
+                    manualStop    = (Test-WatcherManualStop $WatcherRuntimeDir)
+                    canStart      = [bool]$watcherHealth
+                    autoRestart   = $autoRestart
                     lastHeartbeat = $lastHeartbeat
                     inboxCount    = $inboxCount
                     dataDir       = $DataDir
@@ -967,6 +1004,28 @@ try {
                 $response.ContentType = "application/json; charset=utf-8"
                 $response.ContentLength64 = $bytes.Length
                 $response.Headers.Add("Cache-Control", "no-store")
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
+
+            } elseif ($urlPath -eq "/api/watcher/start") {
+
+                # 워처를 켜는 동작이라 POST + 전용 헤더만 받습니다. 다른 웹 페이지가 이 주소로 보내는
+                # 단순 요청(전용 헤더를 붙일 수 없음)은 거절됩니다.
+                if ($request.HttpMethod -ne "POST") {
+                    $response.StatusCode = 405
+                    $response.Headers.Add("Allow", "POST")
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes("Method Not Allowed")
+                } elseif ($request.Headers["X-Samjil-Viewer"] -ne "1") {
+                    $response.StatusCode = 403
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes("Forbidden")
+                } else {
+                    $startRes = Invoke-WatcherStartRequest $watcherHealth
+                    Write-Host ("[{0}] 화면에서 워처 켜기 요청: {1}" -f (Get-Date -Format 'HH:mm:ss'), $startRes.Result) -ForegroundColor Yellow
+                    $json = ([PSCustomObject]@{ result = $startRes.Result; message = $startRes.Message }) | ConvertTo-Json -Depth 3
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+                    $response.ContentType = "application/json; charset=utf-8"
+                    $response.Headers.Add("Cache-Control", "no-store")
+                }
+                $response.ContentLength64 = $bytes.Length
                 $response.OutputStream.Write($bytes, 0, $bytes.Length)
 
             } elseif ($urlPath -eq "/image") {
