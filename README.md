@@ -107,6 +107,7 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
   실행 시 `~/.samjil/delegate-agy/runtime/inbox`를 감시하며 Claude로부터 위임받은 작업을 `agy` CLI로 자동 처리하고 응답을 반환합니다.
   - 이미 워처가 떠 있으면 정상 종료를 요청하고 **처리 중인 작업이 끝나기를 기다린 뒤** 새 워처로 교체합니다. 기본 대기는 30초이고, 그 안에 끝나지 않으면 새 워처를 띄우지 않고 중단합니다. 긴 작업이 돌고 있으면 `-WaitSeconds 900`처럼 늘리세요.
   - **마감 규칙**: `agy` 호출 하나는 최대 1800초(30분)까지 기다립니다. 그 전이라도 `agy`의 대화 기록에 새 단계가 300초 동안 없으면 멈춘 것으로 보고 중단하며, 이유를 실패 메시지에 남깁니다. 단계가 계속 쌓이는 동안은 끊지 않습니다. 10분을 넘기는 호출은 600초마다 `runtime/logs/watcher.log`에 `진행 점검` 줄을 남깁니다.
+  - **모델 선택**: 지시파일 맨 위에 `@model: <ID>`를 쓰면 이번 호출에 그 모델 하나만 씁니다(`gemini-3.8-flash-high|medium|low` 등 Gemini 계열). 쓰지 않으면 기본 우선순위(`gemini-3.8-flash-high`부터, 쿼터 초과 시 다음 모델)입니다. 고른 모델이 쿼터 초과·사용 불가면 다른 모델로 자동 전환하지 않고 실패로 기록하며, 허용 목록에 없는 값은 `agy`를 부르지 않고 바로 실패합니다. 이어가는 세션(`@session:`)은 시작할 때의 모델을 유지하므로 다른 모델을 지정하면 오류입니다. `samjil-delegate-agy` 스킬은 난이도에 따라 Claude가 모델을 고르고, 지정한 모델이 실패하면 사용자에게 묻습니다.
   - **상태 확인**: `ensure-agy-running.ps1 -CheckOnly -StaleThresholdSeconds 0`은 켜지 않고 `ALIVE`(종료 코드 0) / `DEAD`(1) / `MANUAL_STOP`(2)만 알려 줍니다. `samjil-delegate-agy` 스킬이 위임 직전에 이것으로 확인하고, 꺼져 있으면 사용자에게 켜도 되는지 먼저 묻습니다.
 
 - **🛑 Antigravity CLI 위임 워처 안전 중지**:
@@ -128,6 +129,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\delegate-agy\invoke-ag
 
 - `agy-progress.tests.ps1`: 대화 찾기, 마지막 활동 시각, 멈춤 판정 경계값 등 단위 테스트 (몇 초)
 - `invoke-agy-once.tests.ps1`: 가짜 `agy`로 기다리는 루프를 끝까지 돌리는 통합 테스트 (약 1~2분). 임시 폴더에 `agy.exe`로 복사한 `powershell.exe`를 쓰므로 실제 `agy`는 건드리지 않습니다.
+- `model-select.tests.ps1`: `@model:` 지시어 해석, 모델 검증(허용 목록·이어가는 세션), 가짜 `agy`로 후보 선택과 폴백 없음 확인 (약 20초)
+- `watch-agy-model.e2e.tests.ps1`: 임시 런타임으로 `watch-agy.ps1`을 실제로 띄워 `@model:`이 메인 루프 끝까지 이어지는지(처리 결과·`usage.csv`·`agy` 호출 기록) 확인합니다 (약 1분). 실제 워처는 건드리지 않습니다.
 - `ensure-check-only.tests.ps1`: `ensure-agy-running.ps1 -CheckOnly`의 `ALIVE`/`DEAD`/`MANUAL_STOP` 판정
 
 뷰어의 워처 자동 점검:

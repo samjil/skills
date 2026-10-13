@@ -115,6 +115,58 @@ $ModelPriority = @(
 
 $FallbackErrorPattern = '(?i)(quota|rate.?limit|429|resource.?exhausted|overloaded|unavailable|capacity|too many requests|exceeded|throttle)'
 
+# --- 요청에서 고르는 모델 (@model:) ---
+# 지시파일 맨 위에 "@model: <ID>" 줄을 쓰면 위의 우선순위 목록 대신 그 모델 하나만 씁니다.
+# 지정한 모델이 쿼터 초과/사용 불가여도 다른 모델로 자동 전환하지 않고 실패로 기록합니다
+# (원하지 않은 모델의 결과를 조용히 받지 않게 하려는 것이고, 어떻게 할지는 Claude 가 사용자에게 묻습니다).
+# Gemini 계열만 허용합니다(위 정책과 같음). `agy models` 로 확인한 2026-10 기준 flash 3단계와
+# 우선순위 목록의 ID 입니다. 이 목록에 없는 값은 agy 를 부르지 않고 바로 실패 처리합니다.
+$SelectableModels = @(@("gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low") + $ModelPriority | Select-Object -Unique)
+
+# 지시파일 맨 위의 "@키: 값" 줄(순서 무관, 여러 줄 가능)을 읽고, 그 형식이 아닌 첫 줄부터를 프롬프트 본문으로 돌려줍니다.
+#   @cwd:     agy 의 워크스페이스에 추가할 폴더 (--add-dir)
+#   @session: 대화를 이어갈 세션 이름
+#   @model:   이번 호출에 쓸 모델 하나 (위 $SelectableModels)
+# 반환: @{ Cwd; Session; Model; Prompt }  (없는 키는 $null)
+function ConvertFrom-TaskDirectives([string]$rawText) {
+    $cwd = $null; $session = $null; $model = $null
+    $prompt = $rawText
+    while ($prompt.Length -gt 0) {
+        $firstLine = ($prompt -split "`r?`n", 2)[0]
+        if ($firstLine -match '^\s*$') {
+            # 빈 줄은 건너뛰고 계속 파싱합니다
+        } elseif ($firstLine -match '^\ufeff?@cwd:\s*(.+)$') {
+            $cwd = $Matches[1].Trim()
+        } elseif ($firstLine -match '^\ufeff?@session:\s*(.+)$') {
+            $session = $Matches[1].Trim()
+        } elseif ($firstLine -match '^\ufeff?@model:\s*(.+)$') {
+            $model = $Matches[1].Trim()
+        } else {
+            break
+        }
+        $rest = ($prompt -split "`r?`n", 2)
+        $prompt = if ($rest.Length -gt 1) { $rest[1] } else { "" }
+    }
+    return @{ Cwd = $cwd; Session = $session; Model = $model; Prompt = $prompt }
+}
+
+# 요청한 @model 을 확인합니다. 반환: @{ Model = <정식 ID 또는 $null>; Error = <사용자에게 보일 사유 또는 $null> }
+#   - 목록에 없으면 오류(대소문자는 구분하지 않고 정식 ID 로 바꿔 줍니다).
+#   - 이어가는 세션(@session 으로 기존 대화를 잇는 경우)은 agy 가 시작할 때의 모델을 유지하므로,
+#     다른 모델을 요청하면 조용히 무시하지 않고 오류로 알립니다.
+function Resolve-RequestedModel([string]$requested, [string]$conversationId, [string]$knownModel, [string]$sessionName) {
+    if (-not $requested) { return @{ Model = $null; Error = $null } }
+    $canonical = @($SelectableModels | Where-Object { $_ -ieq $requested }) | Select-Object -First 1
+    if (-not $canonical) {
+        return @{ Model = $null; Error = "지정한 @model 을 쓸 수 없습니다: $requested (쓸 수 있는 모델: $($SelectableModels -join ', '))" }
+    }
+    if ($conversationId -and ($canonical -ne $knownModel)) {
+        $was = if ($knownModel) { $knownModel } else { "기록 없음" }
+        return @{ Model = $canonical; Error = "이어가는 세션 '$sessionName' 은 시작할 때의 모델($was)로 계속됩니다. 다른 모델($canonical)을 쓰려면 @session 없이 보내거나 새 세션 이름으로 보내세요." }
+    }
+    return @{ Model = $canonical; Error = $null }
+}
+
 
 
 $ComputerName = $env:COMPUTERNAME
@@ -965,7 +1017,7 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir) {
 
 # 쿼터 초과 등 폴백 대상 오류면(새 세션 시도일 때만) 다음 모델로, 그 외 오류면 즉시 중단합니다.
 
-function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFile, [string]$conversationId = "", [string]$knownModel = "", [string]$taskId = "", [string]$promptFile = "") {
+function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFile, [string]$conversationId = "", [string]$knownModel = "", [string]$taskId = "", [string]$promptFile = "", [string]$requestedModel = "") {
     $result = [ordered]@{
         Success        = $false
         Response       = $null
@@ -989,7 +1041,9 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
     # if/스크립트 출력 캡처 과정에서 그냥 $null로 뭉개버려서(직접 겪음: $candidates.Count가
     # 0이 되고 foreach가 한 번도 안 돎), 세션을 이어가려던 호출이 조용히 아무것도 안 하고
     # "실패(시도한 모델: )"로 끝나버립니다. 그래서 $null이 아닌 문자열 자리표시자를 씁니다.
-    $candidates = if ($conversationId) { @("(continue)") } else { $ModelPriority }
+    # 이어가는 세션: 호출 한 번. @model 로 지정했으면 그 모델 하나만(폴백 없음). 아니면 우선순위 목록.
+    # @() 로 감싸는 이유: if 식은 원소 하나짜리 배열을 문자열로 풀어서 $candidates[-1] 이 마지막 "글자"가 된다.
+    $candidates = @(if ($conversationId) { "(continue)" } elseif ($requestedModel) { $requestedModel } else { $ModelPriority })
 
     foreach ($candidate in $candidates) {
         $result.Attempts++
@@ -1215,6 +1269,7 @@ Log "  처리완료 폴더          : $ProcessedDir"
 Log "  로그 폴더              : $LogsDir"
 
 Log "  모델 우선순위          : $($ModelPriority -join ' -> ')"
+Log "  지정 가능 모델(@model:): $($SelectableModels -join ', ')"
 
 Log "  컴퓨터 이름            : $ComputerName"
 
@@ -1376,39 +1431,12 @@ try {
 
             #             빈 상태로 새로 시작하는 기존 동작 그대로입니다.
 
-            $targetCwd   = $null
-
-            $sessionName = $null
-
-            $promptText  = $rawText
-
-            while ($true) {
-
-                $firstLine = ($promptText -split "`r?`n", 2)[0]
-
-                if ($firstLine -match '^\s*$') {
-
-                    # 빈 줄은 건너뛰고 계속 파싱합니다
-
-                } elseif ($firstLine -match '^\ufeff?@cwd:\s*(.+)$') {
-
-                    $targetCwd = $Matches[1].Trim()
-
-                } elseif ($firstLine -match '^\ufeff?@session:\s*(.+)$') {
-
-                    $sessionName = $Matches[1].Trim()
-
-                } else {
-
-                    break
-
-                }
-
-                $rest = ($promptText -split "`r?`n", 2)
-
-                $promptText = if ($rest.Length -gt 1) { $rest[1] } else { "" }
-
-            }
+            # (@model: <ID> 는 이번 호출에 쓸 모델 하나를 지정합니다 - ConvertFrom-TaskDirectives 참고)
+            $directives     = ConvertFrom-TaskDirectives $rawText
+            $targetCwd      = $directives.Cwd
+            $sessionName    = $directives.Session
+            $requestedModel = $directives.Model
+            $promptText     = $directives.Prompt
 
 
 
@@ -1437,6 +1465,19 @@ try {
             }
 
 
+
+            # @model 검사: 쓸 수 없는 모델이면 agy 를 부르지 않고 바로 실패 처리합니다(@cwd 오류와 같은 방식).
+            $modelCheck = Resolve-RequestedModel $requestedModel $conversationId $knownModel $sessionName
+            if ($modelCheck.Error) {
+                Set-Content -Path $outFile -Value $modelCheck.Error -Encoding UTF8
+                Log "실패: $($modelCheck.Error)"
+                Write-UsageRow $baseName $null $null $requestedModel $null $null $null $null $null "ERROR" $sessionName $conversationId
+                Move-Item -Path $file.FullName -Destination $doneFile -Force
+                Update-QAReport
+                continue
+            }
+            $requestedModel = $modelCheck.Model
+            if ($requestedModel) { Log "  -> 지정 모델(@model): $requestedModel (다른 모델로 자동 전환하지 않음)" }
 
             if ($targetCwd -and -not (Test-Path $targetCwd)) {
 
@@ -1500,7 +1541,7 @@ try {
                     $safePrompt = $promptText -replace '"', '\"'
                 }
 
-                $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwd -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel -taskId $baseName -promptFile $tempPromptFile
+                $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwd -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel -taskId $baseName -promptFile $tempPromptFile -requestedModel $requestedModel
 
                 if ($agyResult.RawJson) {
 
@@ -1561,6 +1602,7 @@ try {
                 } else {
 
                     $failMsg = "agy 실행 실패 (시도한 모델: $triedStr) - $($agyResult.ErrorMessage)"
+                    if ($requestedModel -and -not $conversationId) { $failMsg += " [@model 로 지정한 모델이라 다른 모델로 자동 전환하지 않았습니다]" }
 
                     Set-Content -Path $outFile -Value $failMsg -Encoding UTF8
 
