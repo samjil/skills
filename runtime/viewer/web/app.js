@@ -1309,18 +1309,19 @@
     }
 
     renderMoreQa();
+    renderProcessDialog();
     updateTopbarMeta();
   }
 
-  // 질문/과정/답변 구역의 펼침 상태.
+  // 질문/답변 구역의 펼침 상태(과정은 카드 맨 윗줄의 버튼으로 창을 연다).
   //   기본: 맨 위(가장 최근) 카드의 답변만 펼치고, 나머지는 질문·과정·답변 모두 접은 채로 시작한다.
   //   사용자가 직접 열거나 닫은 구역만 qaOpenOverrides 에 기억해서, 5초마다 카드를 다시 그려도 그대로 유지한다.
   //   (예전에는 그리기 직전의 "현재 상태"를 통째로 저장했는데, 그러면 기본으로 펼쳐졌던 카드도 사용자가 연 것으로
   //   기억돼 새 카드가 생겨도 이전 카드가 계속 펼쳐 있었다.)
-  var qaOpenOverrides = {};   // "<카드 키>|q" / "|p" / "|a" -> true(열었음) / false(닫았음)
+  var qaOpenOverrides = {};   // "<카드 키>|q" / "|a" -> true(열었음) / false(닫았음)
 
   function qaSectionKey(d) {
-    var type = d.classList.contains("q") ? "q" : (d.classList.contains("p") ? "p" : "a");
+    var type = d.classList.contains("q") ? "q" : "a";
     return d.parentNode.getAttribute("data-key") + "|" + type;
   }
 
@@ -1836,57 +1837,172 @@
       .then(function () { applyQaFilters(); });
   }
 
+  // 카드의 "과정" 줄과 그것을 눌러 여는 창이 함께 쓰는 상태 계산. 단계 목록 자체는 여기서 그리지 않는다.
   // opts: { steps: 배열|null, convId: 대화 id, live: 진행 중, waiting: 아직 시작 안 함, cwd: 작업 폴더(경로를 줄여 보이는 기준) }
-  function buildProcessDetails(opts) {
-    var d = document.createElement("details");
-    d.className = "qa p";
-    var sum = document.createElement("summary");
-    var badgeEl = document.createElement("span");
-    badgeEl.className = "qa-type-badge p-type";
-    badgeEl.textContent = "과정";
-    sum.appendChild(badgeEl);
-    var kw = document.createElement("span");
-    kw.className = "qa-preview-keyword";
-    sum.appendChild(kw);
-    d.appendChild(sum);
-    var body = document.createElement("div");
-    body.className = "body";
-    d.appendChild(body);
-
+  // 반환: { steps: 배열|null, message, fetchId(창을 열 때 읽어 와야 하는 대화 id), error, summary(한 줄 요약),
+  //         count(단계 수, 아직 모르면 null), openable(버튼을 눌러 볼 내용이 있거나 곧 생길 수 있는지) }
+  function resolveProcessState(opts) {
     var steps = Array.isArray(opts.steps) ? opts.steps : null;
-    var message = "";
-    var fetchId = "";
+    var out = { steps: null, message: "", fetchId: "", error: false, summary: "", count: null, openable: true };
     if (!steps) {
       if (opts.waiting) {
-        message = "아직 시작하지 않았습니다";
+        out.message = "아직 시작하지 않았습니다";
+        out.openable = false;
       } else if (opts.convId) {
         var c = processFetchCache[opts.convId];
         if (c && c.state === "done" && c.found) { steps = c.steps; }
-        else if (c && c.state === "done") { message = "agy 대화 기록이 남아 있지 않아 과정을 볼 수 없습니다"; }
-        else if (c && c.state === "loading") { message = "agy 대화 기록에서 읽어 오는 중입니다"; }
-        else if (c && c.state === "error") { message = "과정을 불러오지 못했습니다. 다시 펼치면 한 번 더 시도합니다"; fetchId = opts.convId; }
-        else { message = "기록에 저장되지 않은 위임입니다. 펼치면 agy 대화 기록에서 읽어 옵니다"; fetchId = opts.convId; }
+        else if (c && c.state === "done") { out.message = "agy 대화 기록이 남아 있지 않아 과정을 볼 수 없습니다"; out.openable = false; }
+        else if (c && c.state === "loading") { out.message = "agy 대화 기록에서 읽어 오는 중입니다"; }
+        else if (c && c.state === "error") { out.message = "과정을 불러오지 못했습니다"; out.fetchId = opts.convId; out.error = true; }
+        else { out.message = "기록에 저장되지 않은 위임입니다. 누르면 agy 대화 기록에서 읽어 옵니다"; out.fetchId = opts.convId; }
       } else {
-        message = "과정이 기록되지 않았습니다";
+        out.message = "과정이 기록되지 않았습니다";
+        out.openable = false;
       }
     }
-
     if (steps) {
-      kw.textContent = summarizeProcess(steps, opts.live);
-      kw.title = kw.textContent;
-      if (steps.length) body.innerHTML = buildProcessRowsHtml(steps, opts.cwd);
-      else body.innerHTML = '<p class="proc-empty">' + escapeHtml(kw.textContent) + '.</p>';
+      out.steps = steps;
+      out.count = steps.length;
+      out.summary = summarizeProcess(steps, opts.live);
+      out.openable = steps.length > 0 || Boolean(opts.live);   // 도구를 안 쓴 완료 작업은 볼 것이 없다
+    }
+    else { out.summary = out.message; }
+    return out;
+  }
+
+  // 완료 기록 / 대기·진행 작업에서 과정 창에 넘길 옵션을 만든다. 창이 열려 있는 동안 최신 데이터로 다시 만들 때도 쓴다.
+  function recordProcessOpts(r, cwd) {
+    return { steps: Array.isArray(r.process) ? r.process : null, convId: r.session_id || "", cwd: cwd != null ? cwd : extractImagesFromText(r.question).cwd };
+  }
+  function pendingProcessOpts(p, cwd) {
+    var isProcessing = (p.state === "processing");
+    return {
+      steps: (isProcessing && p.progress && Array.isArray(p.progress.steps)) ? p.progress.steps : null,
+      live: isProcessing,
+      waiting: !isProcessing,
+      cwd: cwd != null ? cwd : (p.cwd || extractImagesFromText(p.question).cwd)
+    };
+  }
+
+  // 카드 키(data-key)로 지금 가진 데이터에서 원본을 찾는다. 진행 중이던 작업이 끝나 기록으로 옮겨 갔으면 그쪽을 찾아 준다.
+  function findProcessSource(key) {
+    var i, id;
+    if (key.indexOf("p:") === 0) {
+      id = key.slice(2);
+      for (i = 0; i < pendingItems.length; i++) {
+        if (pendingItems[i] && pendingItems[i].task_id === id) return { key: key, taskId: id, opts: pendingProcessOpts(pendingItems[i]) };
+      }
+      key = "r:" + id;   // 끝났으면 완료 기록에서
+    }
+    for (i = 0; i < allItems.length; i++) {
+      var r = allItems[i];
+      if (r && ("r:" + (r.task_id || r.timestamp || "")) === key) return { key: key, taskId: r.task_id || "", opts: recordProcessOpts(r) };
+    }
+    return null;
+  }
+
+  // 카드 맨 윗줄 오른쪽의 "과정" 버튼. 질문/답변 줄과 달리 카드 안에 내용을 펼치지 않고, 누르면 창에서 단계 목록을 그린다.
+  // 단계 수를 옆에 작게 보이고, 요약과 이유(볼 내용이 없을 때)는 마우스를 올리면 나온다.
+  function buildProcessButton(key, opts) {
+    var st = resolveProcessState(opts);
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "proc-open";
+    b.setAttribute("data-proc-key", key);
+    b.setAttribute("aria-haspopup", "dialog");
+    b.title = st.summary;
+    b.setAttribute("aria-label", "과정 보기: " + st.summary);
+    b.disabled = !st.openable;
+    var label = document.createElement("span");
+    label.textContent = "과정";
+    b.appendChild(label);
+    if (st.count != null) {
+      var cnt = document.createElement("span");
+      cnt.className = "proc-open-count";
+      cnt.textContent = String(st.count);
+      b.appendChild(cnt);
+    }
+    return b;
+  }
+
+  var procDialogKey = "";   // 지금 열려 있는 과정 창의 카드 키("" 이면 닫힘)
+  var procDialogLast = "";  // 마지막으로 그린 내용(같으면 다시 그리지 않아 스크롤과 선택이 유지된다)
+
+  function ensureProcessDialog() {
+    var dlg = document.getElementById("process-dialog");
+    if (dlg) return dlg;
+    dlg = document.createElement("dialog");
+    dlg.id = "process-dialog";
+    dlg.setAttribute("aria-labelledby", "process-dialog-title");
+    dlg.innerHTML = [
+      '<div class="proc-dlg">',
+      '  <header class="proc-dlg-head">',
+      '    <div class="proc-dlg-heading">',
+      '      <h2 id="process-dialog-title" class="proc-dlg-title">과정</h2>',
+      '      <span class="proc-dlg-task"></span>',
+      '    </div>',
+      '    <button type="button" class="proc-dlg-close" title="닫기 (Esc)">닫기</button>',
+      '  </header>',
+      '  <p class="proc-dlg-sum"></p>',
+      '  <p class="proc-dlg-cwd"></p>',
+      '  <div class="proc-dlg-body"></div>',
+      '</div>'
+    ].join("");
+    dlg.addEventListener("click", function (e) {
+      if (e.target === dlg || (e.target.classList && e.target.classList.contains("proc-dlg-close"))) { dlg.close(); return; }
+      var retry = e.target.closest ? e.target.closest(".proc-retry") : null;
+      if (retry) { loadProcessFor(retry.getAttribute("data-conv")); }
+    });
+    dlg.addEventListener("close", function () { procDialogKey = ""; procDialogLast = ""; });
+    document.body.appendChild(dlg);
+    return dlg;
+  }
+
+  // 창 내용을 지금 데이터로 그린다. 진행 중인 작업은 5초마다 새로 고칠 때 새 단계가 이어서 붙는다.
+  function renderProcessDialog() {
+    if (!procDialogKey) return;
+    var dlg = document.getElementById("process-dialog");
+    if (!dlg || !dlg.open) return;
+    var src = findProcessSource(procDialogKey);
+    if (!src) { dlg.close(); return; }
+    procDialogKey = src.key;
+    var st = resolveProcessState(src.opts);
+
+    var html;
+    if (st.steps && st.steps.length) {
+      html = buildProcessRowsHtml(st.steps, src.opts.cwd);
+    } else if (st.steps) {
+      html = '<p class="proc-empty">' + escapeHtml(st.summary) + '.</p>';
     } else {
-      kw.textContent = message;
-      kw.title = message;
-      body.innerHTML = '<p class="proc-empty">' + escapeHtml(message) + '.</p>';
+      html = '<p class="proc-empty">' + escapeHtml(st.message) + '.</p>' +
+        (st.error ? '<button type="button" class="proc-retry" data-conv="' + escapeHtml(st.fetchId) + '">다시 시도</button>' : "");
     }
-    if (fetchId) {
-      // 사용자가 요약을 눌러 펼칠 때만 불러온다(클릭은 열림 상태가 바뀌기 전에 오므로 !d.open 이 "지금 펼치는 중").
-      // toggle 이벤트로 하면 펼친 채로 다시 그려질 때마다 재시도해서, 실패가 계속되면 요청이 연쇄한다.
-      sum.addEventListener("click", function () { if (!d.open) loadProcessFor(fetchId); });
-    }
-    return d;
+    var head = [src.taskId, st.summary, src.opts.live ? "live" : "", src.opts.cwd || ""].join("\u0001");
+    if (procDialogLast === head + "\u0002" + html) return;
+    procDialogLast = head + "\u0002" + html;
+
+    dlg.querySelector(".proc-dlg-task").textContent = src.taskId;
+    dlg.querySelector(".proc-dlg-sum").textContent = st.summary + (src.opts.live && st.steps ? " · 진행 중이라 새 단계가 생기면 자동으로 이어 붙습니다" : "");
+    var cwdEl = dlg.querySelector(".proc-dlg-cwd");
+    cwdEl.textContent = (src.opts.cwd && st.steps && st.steps.length) ? "작업 폴더 " + src.opts.cwd + " 아래 경로는 폴더 이름을 빼고 보입니다." : "";
+    cwdEl.hidden = !cwdEl.textContent;
+    var body = dlg.querySelector(".proc-dlg-body");
+    var top = body.scrollTop;
+    body.innerHTML = html;
+    body.scrollTop = top;
+  }
+
+  function openProcessDialog(key) {
+    var src = findProcessSource(key);
+    if (!src) return;
+    var dlg = ensureProcessDialog();
+    procDialogKey = src.key;
+    procDialogLast = "";
+    // 기록에 과정이 없는 옛 위임만, 창을 여는 지금 한 번 읽어 온다(카드를 그릴 때는 읽지 않는다)
+    var st = resolveProcessState(src.opts);
+    if (st.fetchId) loadProcessFor(st.fetchId);
+    if (!dlg.open) dlg.showModal();
+    renderProcessDialog();
   }
 
   function buildCard(r) {
@@ -1957,7 +2073,7 @@
     dq.appendChild(qb);
     card.appendChild(dq);
 
-    card.appendChild(buildProcessDetails({ steps: Array.isArray(r.process) ? r.process : null, convId: r.session_id || "", cwd: qImgInfo.cwd }));
+    meta.appendChild(buildProcessButton(card.getAttribute("data-key"), recordProcessOpts(r, qImgInfo.cwd)));
 
     var da = document.createElement("details");
     da.className = "qa a";
@@ -2118,12 +2234,7 @@
     dq.appendChild(qb);
     card.appendChild(dq);
 
-    card.appendChild(buildProcessDetails({
-      steps: (isProcessing && p.progress && Array.isArray(p.progress.steps)) ? p.progress.steps : null,
-      live: isProcessing,
-      waiting: !isProcessing,
-      cwd: effectiveCwd
-    }));
+    meta.appendChild(buildProcessButton(card.getAttribute("data-key"), pendingProcessOpts(p, effectiveCwd)));
 
     var da = document.createElement("details");
     da.className = "qa a qa-pending-a";
@@ -2463,6 +2574,8 @@
     if (els.refreshBtn) els.refreshBtn.addEventListener("click", function () { refresh(true); });
     if (els.cards) {
       els.cards.addEventListener("click", function (e) {
+        var procBtn = e.target && e.target.closest ? e.target.closest(".proc-open") : null;
+        if (procBtn) { openProcessDialog(procBtn.getAttribute("data-proc-key")); return; }
         var sumEl = e.target && e.target.closest ? e.target.closest("summary") : null;
         var d = sumEl ? sumEl.parentNode : null;
         if (!d || !d.classList || !d.classList.contains("qa") || !d.parentNode || !d.parentNode.getAttribute("data-key")) return;
