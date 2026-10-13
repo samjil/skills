@@ -1041,7 +1041,10 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   font-size: var(--fs-md);
   line-height: 1.65;
   color: var(--ink);
-  max-width: 76ch;
+  /* ch 는 영문 "0" 한 글자 폭(14px 글꼴에서 약 8.4px)이다. 한글 글자는 그보다 훨씬 넓어서(이 PC 의 글꼴로
+     약 12.6px) 76ch(638px)는 한 줄에 한글 약 51자, 영문 약 84자였다. 100ch(840px)로 한글 약 67자,
+     영문 약 111자가 된다. 코드블록과 표도 이 폭을 따라가고, 카드 폭(960px)이나 화면이 좁으면 그 폭에 맞춘다. */
+  max-width: 100ch;
   overflow-wrap: anywhere;
 }
 .md > *:first-child { margin-top: 0; }
