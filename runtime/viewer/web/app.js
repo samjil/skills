@@ -784,6 +784,14 @@
     return pendingItems.filter(function (p) { return p && p.task_id && !finished[p.task_id]; });
   }
 
+  // 진행 중인 위임 카드의 경과 시간을 1초마다 갱신한다. 카드는 새로고침 때 다시 그려지므로 DOM을 매번 훑는다.
+  setInterval(function () {
+    var els2 = document.querySelectorAll(".live-elapsed[data-start]");
+    for (var i = 0; i < els2.length; i++) {
+      els2[i].textContent = formatDuration((Date.now() - Number(els2[i].getAttribute("data-start"))) / 1000);
+    }
+  }, 1000);
+
   function stopNowTicker() {
     if (nowTicker) { clearInterval(nowTicker); nowTicker = null; }
   }
@@ -1845,6 +1853,12 @@
     }
 
     if (p.model) { meta.appendChild(metaItem(String(p.model), "model")); }
+    var startedAt = isProcessing ? parseLocalTime(p.created) : null;
+    if (startedAt) {
+      var live = metaItem(formatDuration((Date.now() - startedAt.getTime()) / 1000), "elapsed live-elapsed", "접수 후 경과 시간");
+      live.setAttribute("data-start", String(startedAt.getTime()));
+      meta.appendChild(live);
+    }
     meta.appendChild(metaItem("bridge", "", "위임 경로"));
     if (p.task_id) { meta.appendChild(metaItem(p.task_id, "mono", "작업 ID")); }
     card.appendChild(meta);
