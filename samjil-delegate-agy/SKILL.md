@@ -209,6 +209,14 @@ done
 
 **5. 승인은 그 한 번의 기동에만 쓴다.** 켠 뒤 같은 대화에서 다시 `DEAD`가 되면 다시 묻는다. 반복해서 꺼지면 이유 확인이 필요하다고 알린다.
 
+## 지시문과 답변은 한글로 (모든 위임 공통)
+
+웹 뷰어는 위임 지시문(질문)과 agy 답변을 **있는 그대로** 보여 준다. 영어로 쓰면 화면 전체가 영어로 나와 사용자가 읽기 어렵다(2026-10 사용자 요청).
+
+- **지시문 본문은 한글로 쓴다.** 코드 · 파일 경로 · 명령어 · 식별자 · 에러 메시지 원문은 번역하지 않고 그대로 둔다.
+- **지시문 맨 끝에 "최종 답변과 보고서는 한글로 작성한다(코드·경로·명령어·원문 에러는 그대로)" 문장을 반드시 넣는다.** 이 문장이 없으면 agy는 지시문이 영어일 때 영어로 답한다.
+- 한 줄 지시문(`Find real defects` 같은 영어 관용 표현)만 영어로 남기지 않는다. 아래 "기본 문단"의 Rules 도 한글로 옮겨 써도 되고, 영어로 두더라도 위 문장은 따로 한글 답변을 요구해야 한다.
+
 ## 프로젝트 폴더 코딩 위임 (`@cwd`)
 
 실제 소스 파일을 agy가 읽고/쓰게 하려면 지시문 맨 위에 `@cwd: <대상 폴더 절대경로>`를 쓴다. (`@cwd`는 agy의 공식 옵션이 아니라 이 브리지의 자체 규칙 — 워처가 이 줄을 파싱해 `--add-dir`로 실행한다.)
@@ -257,6 +265,7 @@ Rules:
 - Touch only the files this task needs. Do not touch untracked files you did not create.
 - Write a report to <report path>: what you changed per file, every command you ran with its raw output (test counts, failures, build result), and concerns.
 Final reply, short: status, files changed, one-line test summary, concerns.
+Write the final reply and the report in Korean (keep code, paths, commands and raw error text as is).
 ```
 
 ## 여러 작업을 이어서 위임 (`@session`)
