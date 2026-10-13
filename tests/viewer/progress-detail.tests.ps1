@@ -50,6 +50,35 @@ Assert-Equal "실행 폴더" "C:\work\agy-high-test" $p.cwd
 Assert-Equal "백그라운드 아님" $false $p.background
 Assert-Equal "생각 내용" "생각 내용" $p.thinking
 
+Write-Host "지금 줄 아래의 agy 말(thinking, say)"
+# 생각은 응답 3개 중 1개꼴로만 있어서, 마지막 응답에 없으면 더 앞 응답에서 찾는다
+function New-ProgressLines([string[]]$lines) {
+    $id = "conv-" + [Guid]::NewGuid().ToString("N")
+    $dir = Join-Path $work "brain\$id\.system_generated\logs"
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $dir "transcript_full.jsonl"), (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+    return (Get-AgyProgress $id $null)
+}
+function J($o) { return ($o | ConvertTo-Json -Compress -Depth 8) }
+$pa = @{ name = "view_file"; args = @{ AbsolutePath = "C:\a.md"; toolAction = "Reading a.md" } }
+$pb = @{ name = "run_command"; args = @{ CommandLine = "npm test"; toolAction = "Testing" } }
+$pt = New-ProgressLines @(
+    (J ([ordered]@{ step_index = 1; type = "PLANNER_RESPONSE"; thinking = "Read the spec before anything else."; tool_calls = @($pa) })),
+    (J ([ordered]@{ step_index = 2; type = "GENERIC"; content = "결과" })),
+    (J ([ordered]@{ step_index = 3; type = "PLANNER_RESPONSE"; tool_calls = @($pb) })),
+    (J ([ordered]@{ step_index = 4; type = "GENERIC"; content = "결과" })))
+Assert-Equal "마지막 응답에 생각이 없으면 앞 응답의 생각을 보인다" "Read the spec before anything else." $pt.thinking
+Assert-Equal "  도구와 대상은 그래도 마지막 호출" "run_command|npm test" ("{0}|{1}" -f $pt.tool, $pt.detail)
+$pq = New-ProgressLines @(
+    (J ([ordered]@{ step_index = 1; type = "PLANNER_RESPONSE"; thinking = "Old thought."; tool_calls = @($pa) })),
+    (J ([ordered]@{ step_index = 3; type = "PLANNER_RESPONSE"; thinking = "Newest   thought."; content = "I have started   the tests and will wait."; tool_calls = @($pb) })))
+Assert-Equal "마지막 응답에 생각이 있으면 그것을 보인다(공백은 줄인다)" "Newest thought." $pq.thinking
+Assert-Equal "도구를 부르면서 적은 content 는 say" "I have started the tests and will wait." $pq.say
+$pr = New-ProgressLines @((J ([ordered]@{ step_index = 1; type = "PLANNER_RESPONSE"; tool_calls = @($pa) })))
+Assert-Equal "생각도 설명도 없으면 빈 글" "|" ("{0}|{1}" -f $pr.thinking, $pr.say)
+$pl = New-ProgressLines @((J ([ordered]@{ step_index = 1; type = "PLANNER_RESPONSE"; thinking = ("가" * 700); tool_calls = @($pa) })))
+Assert-Equal "생각은 500자에서 자르고 … 를 붙인다" 501 $pl.thinking.Length
+
 Write-Host "도구별 대상(detail)"
 $lbl = @{ toolAction = "x"; toolSummary = "y" }
 function With-Label($h) { $o = @{}; foreach ($k in $h.Keys) { $o[$k] = $h[$k] }; $o.toolAction = "라벨"; $o.toolSummary = "요약"; return $o }

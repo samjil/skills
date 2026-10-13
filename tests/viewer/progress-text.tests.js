@@ -20,7 +20,7 @@ function extractFunction(name) {
   throw new Error(name + " 의 끝을 찾지 못했습니다.");
 }
 
-const names = ["escapeHtml", "formatDuration", "progressToolLabel", "buildProgressActionHtml", "buildProgressHtml"];
+const names = ["escapeHtml", "formatDuration", "progressToolLabel", "shortenPathsForCwd", "buildNarrationHtml", "buildProgressActionHtml", "buildProgressHtml"];
 const api = new Function(names.map(extractFunction).join("\n") + "\nreturn { progressToolLabel, buildProgressActionHtml, buildProgressHtml };")();
 
 let passed = 0, failed = 0;
@@ -42,13 +42,14 @@ eq("undefined 는 빈 값", "", api.progressToolLabel(undefined));
 console.log("buildProgressActionHtml: 실제 사례 17단계 'Checking target directory'");
 const real = { step: 17, tool: "run_command", detail: "Get-Location", cwd: "C:\\work\\agy-high-test", background: false, action: "Checking target directory", thinking: "폴더를 확인한다" };
 const h = api.buildProgressActionHtml(real);
-eq("화면에 보이는 글: 한글 설명 + 명령 + 영어 라벨", "지금: 명령 실행 Get-Location · Checking target directory", text(h));
+eq("화면에 보이는 글: 한글 설명 + 명령 + 영어 라벨(그 아래 줄에 agy 의 생각)", "지금: 명령 실행 Get-Location · Checking target directory생각 폴더를 확인한다", text(h));
+ok("'지금:' 줄 자체에는 생각이 섞이지 않는다", text(h.slice(0, h.indexOf("</div>") + 6)) === "지금: 명령 실행 Get-Location · Checking target directory");
 ok("도구 설명을 굵게(pg-tool)", h.indexOf('<span class="pg-tool">명령 실행</span>') >= 0);
 ok("대상을 별도 요소(pg-detail)로", h.indexOf('<span class="pg-detail">Get-Location</span>') >= 0);
 ok("영어 라벨은 흐리게(pg-label)", h.indexOf('<span class="pg-label">· Checking target directory</span>') >= 0);
-ok("마우스를 올리면 도구 이름·대상·실행 폴더·라벨·생각을 전부 보여 준다",
+ok("마우스를 올리면 도구 이름·대상·실행 폴더·라벨을 전부 보여 준다",
   h.indexOf("도구: run_command") >= 0 && h.indexOf("대상: Get-Location") >= 0 && h.indexOf("실행 폴더: C:\\work\\agy-high-test") >= 0 &&
-  h.indexOf("agy 가 붙인 설명: Checking target directory") >= 0 && h.indexOf("생각: 폴더를 확인한다") >= 0);
+  h.indexOf("agy 가 붙인 설명: Checking target directory") >= 0);
 
 console.log("buildProgressActionHtml: 변형");
 eq("백그라운드 명령은 표시한다", "지금: 명령 실행 (백그라운드) npm run build · Building",
@@ -58,6 +59,15 @@ eq("파일 읽기", "지금: 파일 읽기 C:\\a\\b.md (1~100행) · Reading b.m
 eq("대상이 없는 도구는 설명과 라벨만", "지금: 폴더 목록 보기 · Listing", text(api.buildProgressActionHtml({ tool: "list_dir", detail: "", action: "Listing" })));
 eq("옛 서버(tool/detail 없음)는 영어 라벨만 — 기존 동작", "지금: Checking target directory", text(api.buildProgressActionHtml({ action: "Checking target directory" })));
 eq("아무 정보도 없으면 줄을 만들지 않는다", "", api.buildProgressActionHtml({}));
+eq("작업 폴더 아래 파일은 상대 경로로(전체 경로는 title 에 남는다)", "지금: 파일 읽기 src\\a.py (1~10행) · Reading a.py",
+  text(api.buildProgressActionHtml({ tool: "view_file", detail: "C:\\w\\p\\src\\a.py (1~10행)", cwd: "C:\\w\\p", action: "Reading a.py" })));
+ok("title 의 대상은 전체 경로 그대로", api.buildProgressActionHtml({ tool: "view_file", detail: "C:\\w\\p\\src\\a.py", cwd: "C:\\w\\p" }).indexOf("대상: C:\\w\\p\\src\\a.py") >= 0);
+ok("지금 줄 아래에 agy 의 생각이 보인다(pg-think)", api.buildProgressActionHtml({ tool: "run_command", detail: "Get-Location", action: "Checking", thinking: "Check the folder first." }).indexOf('<span class="pg-think"><b>생각</b> Check the folder first.</span>') >= 0);
+ok("진행 설명(say)도 보인다", api.buildProgressActionHtml({ tool: "run_command", detail: "x", say: "Waiting for lint." }).indexOf('<span class="pg-say"><b>설명</b> Waiting for lint.</span>') >= 0);
+ok("생각이 없으면 pg-think 를 만들지 않는다", api.buildProgressActionHtml({ tool: "run_command", detail: "x" }).indexOf("pg-think") === -1);
+ok("도구 정보 없이 생각만 있어도 줄이 나온다", api.buildProgressActionHtml({ thinking: "Only thinking." }).indexOf("Only thinking.") >= 0);
+eq("작업 폴더를 인자로 주면 그 기준으로 줄인다(진행 정보의 cwd 는 명령 실행 폴더라 대신 쓰지 않는다)", "지금: 파일 읽기 a.py",
+  text(api.buildProgressActionHtml({ tool: "view_file", detail: "C:\\w\\p\\a.py", cwd: "D:\\elsewhere" }, "C:\\w\\p")));
 eq("라벨 없이 도구 이름만 있어도 보인다", "지금: 웹 검색 agy login", text(api.buildProgressActionHtml({ tool: "search_web", detail: "agy login" })));
 
 console.log("HTML 이스케이프(명령에 <, >, &, 따옴표가 있어도 화면이 깨지거나 주입되지 않는다)");

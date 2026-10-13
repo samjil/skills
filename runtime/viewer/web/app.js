@@ -1776,22 +1776,45 @@
     return "도구 호출 " + steps.length + "번 · " + parts.join(" · ") + (order.length > 3 ? " 외 " + (order.length - 3) + "종" : "");
   }
 
+  // 작업 폴더(@cwd) 아래 경로는 폴더 이름을 빼고 보인다. 예) C:\workpp\src.py -> src.py (폴더 자체는 ".")
+  // 명령 안에 적힌 경로도 같은 규칙이다. work2 처럼 이름만 비슷한 폴더는 건드리지 않는다. 전체 경로는 마우스를 올리면 보인다.
+  function shortenPathsForCwd(text, cwd) {
+    var src = String(text == null ? "" : text);
+    var base = String(cwd || "").trim().replace(/[\\/]+$/, "");
+    if (!src || !base) return src;
+    var esc = base.replace(/[.*+?^${}()|[\]\\\/]/g, function (ch) { return (ch === "\\" || ch === "/") ? "[\\\\/]" : "\\" + ch; });
+    var re = new RegExp("(^|[\\s\"'(=])" + esc + "([\\\\/]+|(?=$|[\\s\"')]))", "gi");
+    var out = src.replace(re, function (m, pre, sep) { return sep ? pre : pre + "."; });
+    return out === "" ? "." : out;
+  }
+
+  // agy 가 그 단계에서 적은 말. say 는 도구를 부르며 알린 진행 설명, think 는 agy 의 생각(영어 원문)이다.
+  // 클래스 접두어는 과정 목록 "proc", 진행 중 카드 "pg". 둘 다 없으면 빈 글.
+  function buildNarrationHtml(prefix, say, think) {
+    var out = "";
+    if (say) out += '<span class="' + prefix + '-say"><b>설명</b> ' + escapeHtml(say) + '</span>';
+    if (think) out += '<span class="' + prefix + '-think"><b>생각</b> ' + escapeHtml(think) + '</span>';
+    return out;
+  }
+
   // 과정 목록(<ol>). 단계 번호 · 시각 · 한글 도구 설명 · 실제 대상 · 영어 라벨. 마우스를 올리면 생각까지 보인다.
-  function buildProcessRowsHtml(steps) {
+  function buildProcessRowsHtml(steps, cwd) {
     var rows = steps.map(function (st) {
       var tool = progressToolLabel(st.tool) || "기타";
+      var shown = shortenPathsForCwd(st.detail, cwd);
       var tip = [];
       if (st.tool) tip.push("도구: " + st.tool);
       if (st.detail) tip.push("대상: " + st.detail);
+      if (cwd && shown !== st.detail) tip.push("작업 폴더(@cwd): " + cwd + " — 목록에는 이 폴더 아래 경로만 줄여 보입니다");
       if (st.label) tip.push("agy 가 붙인 설명: " + st.label);
-      if (st.think) tip.push("생각: " + st.think);
       return '<li class="proc-row"' + (tip.length ? ' title="' + escapeHtml(tip.join("\n")) + '"' : '') + '>' +
         '<span class="proc-n">' + escapeHtml(String(st.n)) + '</span>' +
         '<span class="proc-at">' + escapeHtml(st.at || "") + '</span>' +
         '<span class="proc-tool">' + escapeHtml(tool) + (st.bg ? ' (백그라운드)' : '') + '</span>' +
         '<span class="proc-text">' +
-          (st.detail ? '<span class="proc-detail">' + escapeHtml(st.detail) + '</span>' : '') +
+          (st.detail ? '<span class="proc-detail">' + escapeHtml(shown) + '</span>' : '') +
           (st.label ? ' <span class="proc-label">' + (st.detail ? '· ' : '') + escapeHtml(st.label) + '</span>' : '') +
+          buildNarrationHtml("proc", st.say, st.think) +
         '</span></li>';
     });
     var note = steps.length >= 400 ? '<p class="proc-note">기록은 처음 400번까지만 남깁니다.</p>' : "";
@@ -1813,7 +1836,7 @@
       .then(function () { applyQaFilters(); });
   }
 
-  // opts: { steps: 배열|null, convId: 대화 id, live: 진행 중, waiting: 아직 시작 안 함 }
+  // opts: { steps: 배열|null, convId: 대화 id, live: 진행 중, waiting: 아직 시작 안 함, cwd: 작업 폴더(경로를 줄여 보이는 기준) }
   function buildProcessDetails(opts) {
     var d = document.createElement("details");
     d.className = "qa p";
@@ -1851,7 +1874,7 @@
     if (steps) {
       kw.textContent = summarizeProcess(steps, opts.live);
       kw.title = kw.textContent;
-      if (steps.length) body.innerHTML = buildProcessRowsHtml(steps);
+      if (steps.length) body.innerHTML = buildProcessRowsHtml(steps, opts.cwd);
       else body.innerHTML = '<p class="proc-empty">' + escapeHtml(kw.textContent) + '.</p>';
     } else {
       kw.textContent = message;
@@ -1934,7 +1957,7 @@
     dq.appendChild(qb);
     card.appendChild(dq);
 
-    card.appendChild(buildProcessDetails({ steps: Array.isArray(r.process) ? r.process : null, convId: r.session_id || "" }));
+    card.appendChild(buildProcessDetails({ steps: Array.isArray(r.process) ? r.process : null, convId: r.session_id || "", cwd: qImgInfo.cwd }));
 
     var da = document.createElement("details");
     da.className = "qa a";
@@ -1997,12 +2020,12 @@
   // "지금:" 줄. 한글 도구 설명 + 실제 대상(명령, 파일, 폴더) + agy 가 붙인 영어 라벨 순서로 보여 준다.
   // 예) 지금: 명령 실행 Get-Location · Checking target directory
   // 서버가 tool/detail 을 주지 않는 옛 서버면 영어 라벨만 보인다(기존 동작).
-  function buildProgressActionHtml(pg) {
+  function buildProgressActionHtml(pg, cwd) {
     var tool = progressToolLabel(pg.tool);
-    if (!tool && !pg.detail && !pg.action) return "";
+    if (!tool && !pg.detail && !pg.action && !pg.say && !pg.thinking) return "";
     var pieces = [];
     if (tool) pieces.push('<span class="pg-tool">' + escapeHtml(tool) + (pg.background ? ' (백그라운드)' : '') + '</span>');
-    if (pg.detail) pieces.push('<span class="pg-detail">' + escapeHtml(pg.detail) + '</span>');
+    if (pg.detail) pieces.push('<span class="pg-detail">' + escapeHtml(shortenPathsForCwd(pg.detail, cwd || pg.cwd)) + '</span>');
     if (pg.action) pieces.push('<span class="pg-label">' + ((tool || pg.detail) ? '· ' : '') + escapeHtml(pg.action) + '</span>');
     var html = '지금: ' + pieces.join(' ');
     // 줄이 길어 잘리면 마우스를 올려 전체를 본다
@@ -2011,11 +2034,11 @@
     if (pg.detail) tip.push("대상: " + pg.detail);
     if (pg.cwd) tip.push("실행 폴더: " + pg.cwd);
     if (pg.action) tip.push("agy 가 붙인 설명: " + pg.action);
-    if (pg.thinking) tip.push("생각: " + pg.thinking);
-    return '<div class="pg-action" title="' + escapeHtml(tip.join("\n")) + '">' + html + '</div>';
+    return '<div class="pg-action" title="' + escapeHtml(tip.join("\n")) + '">' + html + '</div>' +
+      buildNarrationHtml("pg", pg.say, pg.thinking);
   }
 
-  function buildProgressHtml(pg) {
+  function buildProgressHtml(pg, cwd) {
     if (!pg) return "";
     var parts = [];
     if (pg.step != null) {
@@ -2027,7 +2050,7 @@
       parts.push('<span class="pg-idle" data-ms="' + escapeHtml(String(pg.last_activity_ms)) + '">' +
         formatDuration((Date.now() - pg.last_activity_ms) / 1000) + ' 전 활동</span>');
     }
-    var action = buildProgressActionHtml(pg);
+    var action = buildProgressActionHtml(pg, cwd);
     return '<div class="pending-progress">' + (parts.length ? '<div class="pg-line">' + parts.join('<span class="pg-sep">·</span>') + '</div>' : "") + action + '</div>';
   }
 
@@ -2098,7 +2121,8 @@
     card.appendChild(buildProcessDetails({
       steps: (isProcessing && p.progress && Array.isArray(p.progress.steps)) ? p.progress.steps : null,
       live: isProcessing,
-      waiting: !isProcessing
+      waiting: !isProcessing,
+      cwd: effectiveCwd
     }));
 
     var da = document.createElement("details");
@@ -2127,7 +2151,7 @@
       (isProcessing ? '  <span class="pending-spinner" aria-hidden="true"></span><span>agy가' + modelText + ' 응답을 만들고 있습니다. 끝나면 이 자리에 답변이 나옵니다.</span>' :
                       '  <span>앞 작업이 끝나면' + modelText + ' 자동으로 실행됩니다.</span>'),
       '</div>',
-      (isProcessing ? buildProgressHtml(p.progress) : "")
+      (isProcessing ? buildProgressHtml(p.progress, effectiveCwd) : "")
     ].join("");
     da.appendChild(ab);
     card.appendChild(da);

@@ -70,6 +70,18 @@ $expectedAt = ([datetime]::SpecifyKind([datetime]"2026-10-13 07:48:57", [DateTim
 Assert-Equal "  시각은 UTC 를 이 PC 의 시각(HH:mm:ss)으로" $expectedAt $st[0].at
 Assert-Equal "  Offset 은 파일 끝" (Get-Item $path).Length $r.Offset
 
+Write-Host "Read-AgyProcessSteps: agy 가 도구를 부르며 적은 진행 설명(say)"
+$sayLine = New-Line ([ordered]@{ step_index = 1; type = "PLANNER_RESPONSE"; created_at = "2026-10-13T07:48:57Z"; content = 'I have  launched `npm run build`   and will wait.';
+    tool_calls = @((Call "run_command" @{ CommandLine = "npm run build"; toolAction = "Building" }), (Call "view_file" @{ AbsolutePath = "C:\f"; toolAction = "V" })) })
+$ps = Write-Transcript "say.jsonl" @($sayLine, (Planner 3 @((Call "list_dir" @{ DirectoryPath = "C:\w"; toolAction = "L" }))))
+$sst = @((Read-AgyProcessSteps $ps).Steps)
+Assert-Equal "도구를 부르면서 적은 content 는 첫 호출의 say (공백은 줄인다)" 'I have launched `npm run build` and will wait.' $sst[0].say
+Assert-Equal "  같은 응답의 두 번째 호출에는 say 가 없다" $false $sst[1].Contains("say")
+Assert-Equal "  content 가 없는 응답에는 say 키가 없다" $false $sst[2].Contains("say")
+$longSay = New-Line ([ordered]@{ step_index = 1; type = "PLANNER_RESPONSE"; created_at = "2026-10-13T07:48:57Z"; content = ("나" * 400); tool_calls = @((Call "list_dir" @{ DirectoryPath = "C:\w"; toolAction = "L" })) })
+$rls = @((Read-AgyProcessSteps (Write-Transcript "longsay.jsonl" @($longSay))).Steps)[0].say
+Assert-Equal "say 기본 상한은 300자(넘으면 … 를 붙인다)" 301 $rls.Length
+
 Write-Host "Read-AgyProcessSteps: 이어 읽기(진행 중인 대화)"
 $base = @((Planner 1 @((Call "list_dir" @{ DirectoryPath = "C:\w"; toolAction = "L" }))), (Planner 2 @((Call "view_file" @{ AbsolutePath = "C:\f"; toolAction = "V" }))))
 $p2 = Write-Transcript "b.jsonl" $base
@@ -108,6 +120,7 @@ $pt = Write-Transcript "think.jsonl" @((Planner 1 @((Call "list_dir" @{ Director
 $rt = Read-AgyProcessSteps $pt 0 400 50
 Assert-Equal "생각은 ThinkingMax(50)에서 자르고 … 를 붙인다" 51 @($rt.Steps)[0].think.Length
 Assert-Equal "  끝이 …" "…" @($rt.Steps)[0].think.Substring(50)
+Assert-Equal "생각 기본 상한은 500자(넘으면 … 를 붙인다)" 501 @((Read-AgyProcessSteps (Write-Transcript "think600.jsonl" @((Planner 1 @((Call "list_dir" @{ DirectoryPath = "C:\w"; toolAction = "L" })) "2026-10-13T07:48:57Z" ("가" * 600))))).Steps)[0].think.Length
 $rn = Read-AgyProcessSteps (Join-Path $work "없는파일.jsonl") 123
 Assert-Equal "파일이 없으면 빈 목록" 0 @($rn.Steps).Count
 Assert-Equal "  Offset 은 그대로" 123 $rn.Offset
