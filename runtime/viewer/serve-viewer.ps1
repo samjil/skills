@@ -338,6 +338,72 @@ function Find-DelegateScript([string]$RelPath) {
     return $null
 }
 
+# 진행 중인 agy 작업이 지금 무엇을 하는지 agy의 대화 기록(transcript_full.jsonl)에서 읽습니다.
+# agy는 단계를 하나 끝낼 때마다 이 파일에 한 줄씩 덧붙이므로, 끝부분만 읽어도 현재 단계/최근 동작을 알 수 있습니다.
+# 대화를 못 찾거나 모호하면 $null 을 돌려주고, 화면은 진행 상황 줄 없이 기존대로 표시합니다.
+function Get-AgyProgress([string]$ConversationId, $StartedAt) {
+    try {
+        $agyHome = if ($env:AGY_HOME) { $env:AGY_HOME } else { Join-Path $env:USERPROFILE ".gemini\antigravity-cli" }
+        if (-not $ConversationId) {
+            # 새 대화: 작업 시작 직후(약 7초 안)에 생긴 대화 DB가 딱 하나일 때만 이번 작업의 것으로 봅니다.
+            if (-not $StartedAt) { return $null }
+            $convDir = Join-Path $agyHome "conversations"
+            if (-not (Test-Path -LiteralPath $convDir -PathType Container)) { return $null }
+            $from = $StartedAt.AddSeconds(-2); $to = $StartedAt.AddSeconds(120)
+            $cands = @(Get-ChildItem -LiteralPath $convDir -Filter '*.db' -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.CreationTime -ge $from -and $_.CreationTime -le $to })
+            if ($cands.Count -ne 1) { return $null }
+            $ConversationId = $cands[0].BaseName
+        }
+        $tf = Join-Path $agyHome ("brain\{0}\.system_generated\logs\transcript_full.jsonl" -f $ConversationId)
+        $item = Get-Item -LiteralPath $tf -ErrorAction SilentlyContinue
+        if (-not $item) { return $null }
+
+        # 끝 256KB만 읽습니다(파일은 수 MB까지 커질 수 있음). 잘린 첫 줄은 버립니다.
+        $tailBytes = 262144
+        $fs = [System.IO.File]::Open($tf, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $offset = [Math]::Max(0, $fs.Length - $tailBytes)
+            [void]$fs.Seek($offset, [System.IO.SeekOrigin]::Begin)
+            $buf = New-Object byte[] ($fs.Length - $offset)
+            $read = $fs.Read($buf, 0, $buf.Length)
+        } finally { $fs.Dispose() }
+        $text = [System.Text.Encoding]::UTF8.GetString($buf, 0, $read)
+        $lines = @($text -split "\r?\n" | Where-Object { $_ })
+        if ($offset -gt 0 -and $lines.Count -gt 0) { $lines = @($lines | Select-Object -Skip 1) }
+
+        $step = $null; $action = ""; $thinking = ""
+        for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+            $o = $null
+            try { $o = $lines[$i] | ConvertFrom-Json } catch { continue }
+            if ($null -eq $step -and $null -ne $o.step_index) { $step = [int]$o.step_index }
+            if ($o.type -eq 'PLANNER_RESPONSE') {
+                $calls = @($o.tool_calls)
+                if ($calls.Count -gt 0 -and $calls[-1].args) {
+                    $a = $calls[-1].args
+                    $action = [string]$a.toolAction
+                    if (-not $action) { $action = [string]$a.toolSummary }
+                    if (-not $action) { $action = [string]$calls[-1].name }
+                }
+                if ($o.thinking) { $thinking = ([string]$o.thinking).Trim() }
+                break
+            }
+        }
+        if ($thinking.Length -gt 160) { $thinking = $thinking.Substring(0, 160) + "…" }
+        $last = $item.LastWriteTime
+        return [PSCustomObject]@{
+            conversation_id = $ConversationId
+            step            = $step
+            action          = $action
+            thinking        = $thinking
+            last_activity   = $last.ToString("yyyy-MM-dd HH:mm:ss")
+            last_activity_ms = [int64]([DateTimeOffset]$last).ToUnixTimeMilliseconds()
+        }
+    } catch {
+        return $null
+    }
+}
+
 # HTTP 리스너 기동 (충돌 시 기존 뷰어 자동 정리 및 대체 포트 탐색)
 $listener = $null
 $prefix = $null
@@ -925,6 +991,21 @@ try {
                                 $resolvedModel = "gemini-3.8-flash-high"
                             }
 
+                            # 진행 중인 작업이면 agy 대화 기록에서 현재 단계/최근 동작을 읽어 붙입니다.
+                            $progress = $null
+                            if ($state -eq "processing" -and $currentTask -and $currentTask.task_id -eq $f.BaseName) {
+                                $convId = ""
+                                if ($sessionVal) {
+                                    $sFile2 = Join-Path $sessionsDir ("{0}.json" -f (($sessionVal -replace '[\\/:*?"<>|]', '_').Trim()))
+                                    if (Test-Path -LiteralPath $sFile2) {
+                                        try { $convId = [string]((Get-Content -LiteralPath $sFile2 -Raw -Encoding UTF8 | ConvertFrom-Json).conversation_id) } catch {}
+                                    }
+                                }
+                                $startedAt = $null
+                                try { $startedAt = [datetime]::ParseExact([string]$currentTask.started_at, "yyyy-MM-dd HH:mm:ss", $null) } catch {}
+                                $progress = Get-AgyProgress $convId $startedAt
+                            }
+
                             $pendingList += [PSCustomObject]@{
                                 task_id    = $f.BaseName
                                 created    = $f.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")
@@ -934,6 +1015,7 @@ try {
                                 session_id = $sessionId
                                 model      = $resolvedModel
                                 state      = $state
+                                progress   = $progress
                             }
                         } catch {
                             continue

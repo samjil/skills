@@ -790,6 +790,12 @@
     for (var i = 0; i < els2.length; i++) {
       els2[i].textContent = formatDuration((Date.now() - Number(els2[i].getAttribute("data-start"))) / 1000);
     }
+    var idles = document.querySelectorAll(".pg-idle[data-ms]");
+    for (var j = 0; j < idles.length; j++) {
+      var idleSec = (Date.now() - Number(idles[j].getAttribute("data-ms"))) / 1000;
+      idles[j].textContent = formatDuration(idleSec) + " 전 활동";
+      idles[j].classList.toggle("quiet", idleSec >= PROGRESS_QUIET_SEC);
+    }
   }, 1000);
 
   function stopNowTicker() {
@@ -1833,6 +1839,23 @@
     return card;
   }
 
+  // 마지막 활동이 이 시간(초) 이상 없으면 "조용함" 표시로 바꾼다. 워처의 멈춤 판정(300초)보다 먼저 눈치챌 수 있게 짧게 둔다.
+  var PROGRESS_QUIET_SEC = 120;
+
+  // 진행 중인 위임의 진행 상황 줄. 서버가 agy 대화 기록에서 읽은 단계/최근 동작/마지막 활동 시각을 보여 준다.
+  function buildProgressHtml(pg) {
+    if (!pg) return "";
+    var parts = [];
+    if (pg.step != null) parts.push('<span class="pg-step">' + escapeHtml(String(pg.step)) + '단계 진행</span>');
+    if (pg.last_activity_ms) {
+      parts.push('<span class="pg-idle" data-ms="' + escapeHtml(String(pg.last_activity_ms)) + '">' +
+        formatDuration((Date.now() - pg.last_activity_ms) / 1000) + ' 전 활동</span>');
+    }
+    var action = pg.action ? '<div class="pg-action"' + (pg.thinking ? ' title="' + escapeHtml(pg.thinking) + '"' : '') +
+      '>지금: ' + escapeHtml(pg.action) + '</div>' : "";
+    return '<div class="pending-progress">' + (parts.length ? '<div class="pg-line">' + parts.join('<span class="pg-sep">·</span>') + '</div>' : "") + action + '</div>';
+  }
+
   function buildPendingCard(p, queueIndex) {
     var isProcessing = (p.state === "processing");
     var card = document.createElement("div");
@@ -1923,7 +1946,8 @@
       '<div class="pending-status-wrap ' + escapeHtml(p.state) + '">',
       (isProcessing ? '  <span class="pending-spinner" aria-hidden="true"></span><span>agy가' + modelText + ' 응답을 만들고 있습니다. 끝나면 이 자리에 답변이 나옵니다.</span>' :
                       '  <span>앞 작업이 끝나면' + modelText + ' 자동으로 실행됩니다.</span>'),
-      '</div>'
+      '</div>',
+      (isProcessing ? buildProgressHtml(p.progress) : "")
     ].join("");
     da.appendChild(ab);
     card.appendChild(da);
