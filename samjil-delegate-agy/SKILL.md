@@ -1,6 +1,6 @@
 ---
 name: samjil-delegate-agy
-description: "사용자 컴퓨터에 agy 워처(~/.samjil/delegate-agy/scripts/start-agy.ps1)가 떠 있으면, 작업을 난이도로 나눠서 Claude는 '설계'와 '가장 어려운 수준'만 직접 처리하고 나머지(약간 어려움 이하의 구현·디자인 구현·글쓰기·분석 등)는 Antigravity CLI(agy)에 파일 기반으로 위임해서 Claude quota를 아낀다. 코딩뿐 아니라 디자인도 같은 기준(디자인 방향·시스템 설계는 직접, 그 명세대로의 구현은 위임)이다. agy 결과는 반드시 검토하고, Claude가 직접 했을 때의 수준에 못 미치면 그대로 쓰지 않고 피드백을 담아 만족할 때까지 재위임한다. 그 밖의 직접 처리 예외는 맥락 필요/실수 비용 큼/Claude 전용 도구 필요/왕복보다 빠름이다. 프로젝트 폴더 코딩 위임은 대화당 폴더를 한 번 확인받고 이후 자동 위임한다. 위임 사실은 매번 짧게 밝히고, 워처가 응답하지 않으면 직접 처리로 폴백한다. superpower 등 다른 스킬이 하위 작업을 서브에이전트(Agent/Task 도구)로 열려는 시점에도 이 분담 판단이 서브에이전트 스폰보다 먼저 적용된다."
+description: "사용자 컴퓨터에 agy 워처(~/.samjil/delegate-agy/scripts/start-agy.ps1)가 떠 있으면, 작업을 난이도로 나눠서 Claude는 '설계'와 '가장 어려운 수준'만 직접 처리하고 나머지(약간 어려움 이하의 구현·디자인 구현·글쓰기·분석 등)는 Antigravity CLI(agy)에 파일 기반으로 위임해서 Claude quota를 아낀다. 코딩뿐 아니라 디자인도 같은 기준(디자인 방향·시스템 설계는 직접, 그 명세대로의 구현은 위임)이다. agy 결과는 반드시 검토하고, Claude가 직접 했을 때의 수준에 못 미치면 그대로 쓰지 않고 피드백을 담아 만족할 때까지 재위임한다. 그 밖의 직접 처리 예외는 맥락 필요/실수 비용 큼/Claude 전용 도구 필요/왕복보다 빠름이다. 프로젝트 폴더 코딩 위임은 대화당 폴더를 한 번 확인받고 이후 자동 위임한다. 위임 사실은 매번 짧게 밝히고, 워처가 꺼져 있으면 임의로 켜지 않고 사용자에게 켜도 되는지 먼저 묻는다(거절하거나 켜지지 않으면 직접 처리로 폴백한다). superpower 등 다른 스킬이 하위 작업을 서브에이전트(Agent/Task 도구)로 열려는 시점에도 이 분담 판단이 서브에이전트 스폰보다 먼저 적용된다."
 ---
 
 # samjil-delegate-agy: Antigravity CLI 위임 (설계·최고 난이도는 직접, 나머지는 위임 + 필수 검토)
@@ -141,16 +141,72 @@ echo "found: $BASE"
 ```
 
   찾지 못하면(마운트가 안 됐거나 워처가 없으면) 위임 없이 바로 직접 처리로 폴백한다.
-- 워처 생존 확인: `$BASE/logs/heartbeat/` 안의 `hb_*.txt` 파일 중 가장 최근 것의
-  나이가 300초 이내면 정상 (PC 이름은 알 수 없으니 글롭으로 찾는다 - PC마다 독립 실행이라
-  보통 파일이 하나뿐이다). 오래됐으면 워치독(`ensure-agy-running.ps1`)이 2분 안에 자동
-  복구하므로, 한 번 더 시도해보고 그래도 안 되면 직접 처리로 폴백하면서 "워처가 꺼져 있는
-   것 같다(~/.samjil/delegate-agy/scripts/start-agy.ps1 실행 필요)"고 한 번만 알린다.
+
+## 워처가 꺼져 있을 때: 켜도 되는지 먼저 묻는다
+
+다른 작업 세션에서 위임 요청이 와도 마찬가지다. **위임 파일을 inbox에 넣기 직전마다** 워처가 켜져 있는지 확인하고,
+꺼져 있으면 **사용자에게 묻기 전에는 켜지 않는다.** 워처를 켜면 사용자 PC에 agy 호출을 처리하는 프로세스가 계속 떠 있게 되므로
+그 결정은 사용자의 것이다. (뷰어가 떠 있으면 60초마다 점검해 켜 주기도 하지만, 위임하는 시점에는 그걸 기다리지 않고 이 절차를 따른다.)
+
+**1. 확인한다.** 하트비트 파일의 나이로는 판단하지 않는다 — 워처는 agy 호출을 기다리는 동안(최대 30분) 하트비트를 쓰지 않아서
+일하는 중인 워처가 꺼진 것처럼 보이고, 반대로 워처 창을 닫아도 하트비트 파일은 최대 5분 남아서 죽은 워처가 켜진 것처럼 보인다.
+워처가 시작할 때 적는 PID 잠금 파일로 판단하는 `ensure-agy-running.ps1 -CheckOnly`를 쓴다(켜지는 않는다).
 
 ```bash
-H=$(ls -t "$BASE/logs/heartbeat"/hb_*.txt 2>/dev/null | head -1)
-[ -n "$H" ] && echo "heartbeat age: $(( $(date +%s) - $(stat -c %Y "$H") ))s"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -CheckOnly -StaleThresholdSeconds 0
+echo "exit=$?"
 ```
+
+| 출력 | 종료 코드 | 뜻 | 다음 |
+|---|---|---|---|
+| `ALIVE` | 0 | 워처가 켜져 있다 | 그대로 위임한다 |
+| `DEAD` | 1 | 꺼져 있다 | 2번으로 |
+| `MANUAL_STOP` | 2 | 꺼져 있고, 사용자가 `stop-agy`로 **일부러 끈** 상태다 | 2번으로 (일부러 끈 상태임을 질문에 밝힌다) |
+
+**출력이 위 셋 중 하나가 아니면(비어 있거나 오류) 확인에 실패한 것이다 — "켜져 있다"로 읽지 않는다.** 설치본이 낡으면
+`ensure-agy-running.ps1`이 `-CheckOnly`를 모르고 **그냥 무시한 채 아무것도 출력하지 않고 종료 코드 0으로 끝난다.** 게다가 그때는
+평소 동작대로 워처가 꺼져 있으면 20초 뒤 스스로 켜 버릴 수 있다(사용자에게 묻지 않고). 이 경우 워처를 켜지 말고, 설치본이 낡았으니
+저장소에서 `install.ps1`을 다시 실행해 달라고 사용자에게 알린 뒤, 이번 작업은 직접 처리한다.
+
+**2. 켜도 되는지 묻는다.** 한 번에 짧게, 무엇이 일어나는지와 함께 묻는다. 답을 받기 전에는 워처를 켜지 않고 inbox에 작업도 넣지 않는다.
+
+**`AskUserQuestion` 도구가 있으면 그것으로 묻는다** — 사용자가 글로 답하지 않고 마우스로 고르는 선택 팝업이 뜬다. 도구가 지연 로드 목록에만
+보이면 먼저 불러온다(`ToolSearch`로 `select:AskUserQuestion`). 질문은 한 개, 선택지는 아래 둘이다. 어느 쪽도 "(Recommended)"로 표시하지 않는다 —
+켤지는 사용자의 결정이다.
+
+- 질문: `agy 워처가 꺼져 있습니다(직접 끈 상태입니다 / 꺼진 것으로 보입니다). 이 작업을 위임하려면 워처가 필요합니다. 켜도 될까요?`
+- 머리말(header): `워처 켜기`
+- 선택지 1 `창 없이 켜기` — 이 PC에서 agy가 위임 작업을 처리하는 프로세스가 계속 떠 있게 됩니다. 끄려면 `stop-agy.ps1`을 실행하세요.
+- 선택지 2 `켜지 않고 직접 처리` — 워처를 켜지 않고 이 작업은 Claude가 직접 처리합니다(Claude quota를 씁니다).
+- 사용자가 "기타"로 직접 쓴 답은 내용대로 따른다. 켜라는 뜻이 분명하지 않으면 켜지 않는다.
+
+도구가 없는 환경(선택 팝업을 못 쓰는 세션)에서는 같은 내용을 글로 묻는다:
+
+> agy 워처가 꺼져 있습니다(직접 끈 상태입니다 / 꺼진 것으로 보입니다). 이 작업을 agy에 위임하려면 워처가 필요합니다.
+> 지금 창 없이 켤까요? 켜면 이 PC에서 agy가 위임 작업을 처리하는 프로세스가 계속 떠 있게 되며, 끄려면 `stop-agy.ps1`을 실행하면 됩니다.
+> (켜지 않으면 이 작업은 Claude가 직접 처리합니다.)
+
+사용자가 이 대화에서 **미리 명시적으로 허락**했다면("워처 꺼져 있으면 알아서 켜 줘" 등) 묻지 않고 켠다. 허락한 적이 없으면 묻는다 — 그럴 것 같다는 짐작은 허락이 아니다.
+
+**3. 승인하면 켜고, 켜졌는지 확인한다.** `MANUAL_STOP`이었다면 사용자가 켜라고 한 것이므로 수동 정지 표시를 지운다. 재확인 대기 없이(0초) 창 없이 켠다.
+(맨 앞에 위 `BASE` 탐색을 넣는다.)
+
+```bash
+rm -f "$BASE/logs/manual_stop.flag"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -ConfirmDelaySeconds 0 -StaleThresholdSeconds 0
+for i in $(seq 1 10); do
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -CheckOnly -StaleThresholdSeconds 0 | grep -q ALIVE && echo "켜짐" && break
+  sleep 3
+done
+```
+
+- 30초 안에 `ALIVE`가 되면 위임을 이어간다.
+- 안 켜지면 **위임하지 않고 직접 처리**하면서, `~/.samjil/delegate-agy/runtime/logs/watchdog.log`와 `watcher.log`를 확인하라고 한 줄로 알린다. 켜졌다고 추측하지 않는다.
+
+**4. 거절하거나 답이 없으면 직접 처리한다.** 위임하지 않고 Claude가 직접 하며, 같은 대화에서 같은 질문을 되풀이하지 않는다.
+사용자가 나중에 켜 달라고 하거나 `ALIVE`가 확인되면 그때부터 다시 위임한다.
+
+**5. 승인은 그 한 번의 기동에만 쓴다.** 켠 뒤 같은 대화에서 다시 `DEAD`가 되면 다시 묻는다. 반복해서 꺼지면 이유 확인이 필요하다고 알린다.
 
 ## 프로젝트 폴더 코딩 위임 (`@cwd`)
 
