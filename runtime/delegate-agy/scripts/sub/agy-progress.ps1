@@ -183,12 +183,13 @@ function Get-AgyTranscriptPath([string]$AgyHome, [string]$ConversationId) {
 
 # 대화 기록(transcript_full.jsonl)에서 도구 호출 목록을 읽습니다. 반환: @{ Steps = @(...); Offset = <다음에 읽을 위치> }
 #   Steps 의 각 항목: n(단계 번호) at(시각 HH:mm:ss) tool(도구 이름) detail(대상) label(agy 가 붙인 영어 설명)
-#                    think(생각, 잘라 둠) bg(백그라운드면 $true. 아니면 키 없음)
+#                    think(agy 의 생각, 잘라 둠) say(도구를 부르면서 agy 가 적은 진행 설명. 있을 때만) bg(백그라운드면 $true. 아니면 키 없음)
+#   think/say 는 한 응답에서 부른 도구가 여러 개여도 첫 호출에만 붙습니다.
 #   FromOffset 부터 읽고, 아직 줄바꿈으로 끝나지 않은 마지막 줄(agy 가 쓰는 중)은 읽지 않고 Offset 을 그 앞에 둡니다.
 #   그래서 진행 중인 대화는 Offset 을 기억해 두고 새로 쌓인 부분만 이어서 읽을 수 있습니다.
 #   MaxSteps 를 넘는 호출은 담지 않습니다(저장 크기 제한). 파일이 없으면 빈 목록.
 function Read-AgyProcessSteps {
-    param([string]$Path, [long]$FromOffset = 0, [int]$MaxSteps = 400, [int]$ThinkingMax = 240)
+    param([string]$Path, [long]$FromOffset = 0, [int]$MaxSteps = 400, [int]$ThinkingMax = 500, [int]$SayMax = 300)
     $res = [ordered]@{ Steps = @(); Offset = $FromOffset }
     if (-not $Path) { return $res }
     $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
@@ -232,6 +233,11 @@ function Read-AgyProcessSteps {
             $think = (([string]$o.thinking) -replace '\s+', ' ').Trim()
             if ($think.Length -gt $ThinkingMax) { $think = $think.Substring(0, $ThinkingMax) + "…" }
         }
+        $say = ""
+        if ($o.content) {
+            $say = (([string]$o.content) -replace '\s+', ' ').Trim()
+            if ($say.Length -gt $SayMax) { $say = $say.Substring(0, $SayMax) + "…" }
+        }
         $first = $true
         foreach ($c in @($o.tool_calls)) {
             if ($steps.Count -ge $MaxSteps) { break }
@@ -245,6 +251,7 @@ function Read-AgyProcessSteps {
                 label  = $label
                 think  = $(if ($first) { $think } else { "" })
             }
+            if ($first -and $say) { $st.say = $say }
             if ([string]$c.name -eq 'run_command' -and $c.args -and ([string]$c.args.IsDaemon -match '^(?i:true|1)$')) { $st.bg = $true }
             [void]$steps.Add($st)
             $first = $false

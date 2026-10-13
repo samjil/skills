@@ -1027,6 +1027,13 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .pending-progress .pg-tool { color: var(--ink); font-weight: 600; }
 .pending-progress .pg-detail { font-family: var(--font-mono); font-size: 0.92em; color: var(--ink); }
 .pending-progress .pg-label { color: var(--ink-3); }
+/* agy 가 지금 적은 설명/생각: 줄 수를 제한하고 전체는 과정 구역에서 본다 */
+.pending-progress .pg-say, .pending-progress .pg-think {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+  margin-top: 4px; color: var(--ink-2); line-height: 1.55; overflow-wrap: anywhere;
+}
+.pending-progress .pg-think { color: var(--ink-3); }
+.pending-progress .pg-say b, .pending-progress .pg-think b { font-weight: 600; margin-right: 4px; color: var(--ink-3); }
 
 /* 과정 목록: 단계 번호 · 시각 · 도구 · 대상 */
 .proc-list { list-style: none; margin: 0; padding: 0; font-size: var(--fs-sm); }
@@ -1046,6 +1053,10 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .proc-text { min-width: 0; overflow-wrap: anywhere; }
 .proc-detail { font-family: var(--font-mono); font-size: 0.92em; color: var(--ink); }
 .proc-label { color: var(--ink-3); }
+/* 그 단계에서 agy 가 적은 설명(say)과 생각(think). 영어 원문이라 흐리게, 도구 줄과 구분되게 아래 줄에 둔다 */
+.proc-say, .proc-think { display: block; margin-top: 2px; color: var(--ink-2); line-height: 1.55; }
+.proc-think { color: var(--ink-3); }
+.proc-say b, .proc-think b { font-weight: 600; margin-right: 4px; color: var(--ink-3); }
 .proc-note, .proc-empty { margin: 6px 0 0; font-size: var(--fs-sm); color: var(--ink-3); }
 .proc-empty { margin-top: 2px; }
 

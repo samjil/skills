@@ -402,14 +402,15 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt) {
         $lines = @($text -split "\r?\n" | Where-Object { $_ })
         if ($offset -gt 0 -and $lines.Count -gt 0) { $lines = @($lines | Select-Object -Skip 1) }
 
-        $step = $null; $action = ""; $thinking = ""; $tool = ""; $detail = ""; $cwd = ""; $background = $false
+        $step = $null; $action = ""; $thinking = ""; $say = ""; $tool = ""; $detail = ""; $cwd = ""; $background = $false; $found = $false
         for ($i = $lines.Count - 1; $i -ge 0; $i--) {
             $o = $null
             try { $o = $lines[$i] | ConvertFrom-Json } catch { continue }
             if ($null -eq $step -and $null -ne $o.step_index) { $step = [int]$o.step_index }
             if ($o.type -eq 'PLANNER_RESPONSE') {
                 $calls = @($o.tool_calls)
-                if ($calls.Count -gt 0 -and $calls[-1].args) {
+                # 마지막 도구 호출은 가장 최근 응답에서 읽고, agy 의 생각은 그 응답에 없으면(생각은 응답 3개 중 1개꼴) 더 앞 응답까지 거슬러 찾는다
+                if (-not $found -and $calls.Count -gt 0 -and $calls[-1].args) {
                     $a = $calls[-1].args
                     $action = [string]$a.toolAction
                     if (-not $action) { $action = [string]$a.toolSummary }
@@ -421,11 +422,15 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt) {
                         $background = ([string]$a.IsDaemon -match '^(?i:true|1)$')
                     }
                 }
-                if ($o.thinking) { $thinking = ([string]$o.thinking).Trim() }
-                break
+                if (-not $found) {
+                    $found = $true
+                    if ($o.content -and $calls.Count -gt 0) { $say = (([string]$o.content) -replace '\s+', ' ').Trim() }
+                }
+                if ($o.thinking) { $thinking = (([string]$o.thinking) -replace '\s+', ' ').Trim(); break }
             }
         }
-        if ($thinking.Length -gt 160) { $thinking = $thinking.Substring(0, 160) + "…" }
+        if ($thinking.Length -gt 500) { $thinking = $thinking.Substring(0, 500) + "…" }
+        if ($say.Length -gt 300) { $say = $say.Substring(0, 300) + "…" }
         $last = $item.LastWriteTime
         return [PSCustomObject]@{
             conversation_id = $ConversationId
@@ -437,6 +442,7 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt) {
             background      = $background
             steps           = @(Get-AgyProcessStepsCached $ConversationId)
             thinking        = $thinking
+            say             = $say
             last_activity   = $last.ToString("yyyy-MM-dd HH:mm:ss")
             last_activity_ms = [int64]([DateTimeOffset]$last).ToUnixTimeMilliseconds()
         }
