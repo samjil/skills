@@ -26,7 +26,15 @@ $i = [Array]::IndexOf([string[]]$a, '--model'); $model = if ($i -ge 0) { $a[$i +
 Add-Content -Path $env:FAKE_ARGS_LOG -Value ("model=" + $model)
 $quota = @($env:FAKE_QUOTA_MODELS -split ',' | Where-Object { $_ })
 if ($quota -contains $model) { '{"status":"ERROR","error":"quota exceeded for model ' + $model + '"}' }
-else { '{"status":"SUCCESS","response":"ok from ' + $model + '","conversation_id":"conv-test","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}' }
+else {
+    $dir = Join-Path $env:AGY_HOME "brain\conv-test\.system_generated\logs"
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $l1 = '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-10-13T07:48:57Z","thinking":"folder first","tool_calls":[{"name":"run_command","args":{"CommandLine":"Get-Location","Cwd":"C:\\w","toolAction":"Checking target directory","toolSummary":"Check"}}]}'
+    $l2 = '{"step_index":2,"source":"MODEL","type":"GENERIC","status":"DONE","content":"result"}'
+    $l3 = '{"step_index":3,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-10-13T07:49:51Z","thinking":"then write","tool_calls":[{"name":"write_to_file","args":{"TargetFile":"C:\\w\\x.py","CodeContent":"body","toolAction":"Writing x.py"}}]}'
+    Set-Content -Path (Join-Path $dir "transcript_full.jsonl") -Value @($l1, $l2, $l3) -Encoding UTF8
+    '{"status":"SUCCESS","response":"ok from ' + $model + '","conversation_id":"conv-test","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}'
+}
 '@
 Set-Content -Path (Join-Path $fakeBin "agy.cmd") -Encoding ASCII -Value "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0fake-agy.ps1`" %*"
 
@@ -79,7 +87,30 @@ try {
     Assert-Equal "  기본 요청 -> 첫 우선순위 모델" 1 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-high" }).Count
     Assert-Equal "  쿼터 초과 요청 -> 다른 모델을 시도하지 않고 medium 1번만" 1 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-medium" }).Count
 
-    Write-Host "사용량 기록 (usage.csv)"
+    Write-Host "기록(qa jsonl)에 과정 저장"
+$qaFile = Join-Path $rt "logs\data"
+$deadline2 = (Get-Date).AddSeconds(40)
+$qaRows = @()
+while ((Get-Date) -lt $deadline2) {
+    $qaRows = @(Get-ChildItem $qaFile -Filter "qa-*.jsonl" -File -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+    if (@($qaRows | Where-Object { $_.task_id -like "e2e_*" }).Count -ge 4) { break }
+    Start-Sleep -Seconds 2
+}
+$qaLow = $qaRows | Where-Object { $_.task_id -eq "e2e_low" } | Select-Object -First 1
+$stepsLow = @($qaLow.process)
+Assert-Equal "  성공한 작업의 기록에 process(도구 호출 2개)가 있다" 2 $stepsLow.Count
+Assert-Equal "    첫 호출: 도구/대상/라벨" "run_command|Get-Location|Checking target directory" ("{0}|{1}|{2}" -f $stepsLow[0].tool, $stepsLow[0].detail, $stepsLow[0].label)
+Assert-Equal "    둘째 호출: 파일 쓰기 대상은 경로(코드 본문 없음)" "write_to_file|C:\w\x.py" ("{0}|{1}" -f $stepsLow[1].tool, $stepsLow[1].detail)
+Assert-Equal "    단계 번호는 대화 기록의 step_index" "1,3" (($stepsLow | ForEach-Object { $_.n }) -join ",")
+Assert-Equal "    생각이 붙는다" "folder first" $stepsLow[0].think
+$qaQuota = $qaRows | Where-Object { $_.task_id -eq "e2e_quota" } | Select-Object -First 1
+Assert-Equal "  대화가 없는 실패(쿼터 초과) 기록의 process 는 null(= 모름)" $true ($null -eq $qaQuota.process)
+$qaBad = $qaRows | Where-Object { $_.task_id -eq "e2e_bad" } | Select-Object -First 1
+Assert-Equal "  agy 를 부르지 않은 실패(잘못된 모델) 기록의 process 도 null" $true ($null -eq $qaBad.process)
+$qaDef = $qaRows | Where-Object { $_.task_id -eq "e2e_default" } | Select-Object -First 1
+Assert-Equal "  모델을 안 고른 성공 작업도 process 가 저장된다" 2 @($qaDef.process).Count
+
+Write-Host "사용량 기록 (usage.csv)"
     $usage = @(Import-Csv (Join-Path $rt "logs\usage.csv") -Encoding UTF8)
     $row = { param($id) $usage | Where-Object { $_.task_id -eq $id } | Select-Object -First 1 }
     Assert-Equal "  low: 모델 칸에 그 모델, 상태 OK" "gemini-3.8-flash-low|OK" ("{0}|{1}" -f (& $row "e2e_low").model, (& $row "e2e_low").status)

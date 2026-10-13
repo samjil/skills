@@ -550,6 +550,10 @@ $QaShardMaxBytes  = 5MB    # 월별 파일이 이보다 커지면 .p2, .p3 으�
 
 $QaKeepMonths     = 12     # 이보다 오래된 월별 파일은 자동으로 지웁니다.
 
+# 기록에 저장하는 "과정"(agy 가 부른 도구 목록)의 최대 개수. 한 작업이 100~수백 번 도구를 부르는 일이 있어
+# 기록 파일이 커지는 것을 막는다. 넘으면 앞쪽 이만큼만 남긴다.
+$QaProcessMaxSteps = 400
+
 
 
 # @session: <이름>으로 이어가는 agy 대화의 이름<->conversation_id 매핑 파일들이 담깁니다.
@@ -698,6 +702,16 @@ function Sync-QaStore {
 
 
 
+            # 과정(agy 가 부른 도구 목록)도 같이 기록한다. agy 의 대화 기록은 나중에 정리될 수 있어서 작업이 끝난 직후에
+            # 저장해 둔다. 대화 기록을 못 읽으면(대화 id 없음/파일 없음) $null = "모름", 읽었는데 도구를 안 썼으면 @() = "없음".
+            $processSteps = $null
+            if ($r.session_id) {
+                $tPath = Get-AgyTranscriptPath (Get-AgyHomeDir) ([string]$r.session_id)
+                if ($tPath -and (Test-Path -LiteralPath $tPath)) {
+                    $processSteps = @((Read-AgyProcessSteps $tPath 0 $QaProcessMaxSteps).Steps)
+                }
+            }
+
             $rec = [ordered]@{
 
                 timestamp       = [string]$r.timestamp
@@ -731,6 +745,8 @@ function Sync-QaStore {
                 question        = (Truncate-Text ([string]$qText) 20000)
 
                 answer          = (Truncate-Text ([string]$aText) 20000)
+
+                process         = $processSteps
 
             }
 
