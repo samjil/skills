@@ -93,6 +93,10 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
   실행 시 로컬 브라우저(`http://127.0.0.1:8787`, `127.0.0.1` 전용)가 열리고, 왼쪽 메뉴로 세 화면을 오갑니다. 5초마다 자동으로 갱신됩니다.
   - **대시보드**: 지금 `agy`가 무엇을 하는지(작업 중 / 대기 / 워처 꺼짐 / 서버 연결 끊김. 작업 중이면 모델과 경과 시간)와 최근 위임 결과 띠, **확인 필요**(처리 대기 중인 인수인계 메시지, 최근 24시간 안에 실패한 위임), 위임과 인수인계를 합친 시간순 최근 활동, 누적 통계와 모델별 분포
   - **위임 실행 기록**: 세션별 목록, 모델·상태 필터와 검색. 카드 맨 윗줄에서 모델명과 소요 시간을 강조하고, 실패한 작업도 시도한 모델을 표시
+    - 카드는 **질문 / 과정 / 답변** 세 구역입니다. **과정**은 `agy`가 질문과 답변 사이에 한 일, 즉 부른 도구 목록입니다(단계 번호 · 시각 · 한글 도구 설명 · 실제 대상 · 영어 라벨, 마우스를 올리면 생각까지). 요약 줄에는 `도구 호출 23번 · 명령 실행 9 · 파일 읽기 6 …`처럼 횟수가 나옵니다.
+    - **펼침 기본값**: 맨 위(가장 최근) 카드의 **답변만** 펼치고, 나머지는 질문·과정·답변 모두 접은 채로 시작합니다. 직접 열거나 닫은 구역은 5초 자동 갱신 뒤에도 그대로 유지됩니다(페이지를 새로고침하면 기본값으로 돌아갑니다).
+    - **과정 기록**: 워처가 작업을 마칠 때 `agy`의 대화 기록(`~/.gemini/antigravity-cli/brain/<대화 ID>/.system_generated/logs/transcript_full.jsonl`)에서 도구 호출을 읽어 `qa-YYYY-MM.jsonl` 기록의 `process` 항목에 저장합니다(최대 400번, 코드 본문 같은 큰 인자는 빼고 대상만). `agy`의 대화 기록이 없어져도 과정이 남습니다. 도구를 쓰지 않았으면 `[]`, 대화 기록을 못 읽었으면 `null`입니다.
+    - 이 기능 이전에 만든 옛 기록은 `process`가 없어서, 과정을 **펼칠 때** `/api/delegate/process?id=<대화 ID>`로 `agy` 대화 기록에서 읽어 옵니다(대화 기록이 정리됐으면 그렇게 안내). 진행 중인 카드는 지금까지 부른 도구를 실시간으로 보여 주고, `지금:` 줄에는 마지막 호출의 한글 도구 설명과 실제 대상이 나옵니다.
   - **에이전트 인수인계**: 프로젝트별 메시지 타임라인, 방향·상태 필터, `BRIEF.md` 열람. 상태는 보냄 → 읽음 → 처리됨 → 확인함 진행 표시로 보여 줍니다
   - 색은 보낸 쪽을 뜻합니다: Claude는 황토, agy는 청록. 초록/빨강은 성공/실패에만 씁니다. 탭 아이콘 33은 삼짇날(음력 3월 3일)입니다.
   - **워처 자동 점검**: 뷰어가 60초마다(`-WatcherCheckSeconds`, 기본 60, 0이면 끔) 워처가 살아 있는지 보고, 꺼져 있으면 `ensure-agy-running.ps1`로 **창 없이** 다시 켭니다(20초 뒤 한 번 더 확인한 뒤 실행하고 `runtime/logs/watchdog.log`에 기록). `stop-agy.ps1`로 일부러 끈 상태(`manual_stop.flag`)면 켜지 않고, 화면에도 "수동 정지"로 보입니다. 브라우저 탭이 닫혀 있어도 뷰어 서버만 떠 있으면 동작하며, `-NoAgent`로 뷰어를 띄우면 이 기능도 꺼집니다.
@@ -137,6 +141,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\delegate-agy\invoke-ag
 - `model-select.tests.ps1`: `@model:` 지시어 해석, 모델 검증(허용 목록·이어가는 세션), 가짜 `agy`로 후보 선택과 폴백 없음 확인 (약 20초)
 - `watch-agy-model.e2e.tests.ps1`: 임시 런타임으로 `watch-agy.ps1`을 실제로 띄워 `@model:`이 메인 루프 끝까지 이어지는지(처리 결과·`usage.csv`·`agy` 호출 기록) 확인합니다 (약 1분). 실제 워처는 건드리지 않습니다.
 - `ensure-check-only.tests.ps1`: `ensure-agy-running.ps1 -CheckOnly`의 `ALIVE`/`DEAD`/`MANUAL_STOP` 판정
+- `agy-process.tests.ps1`: `agy` 대화 기록에서 과정(도구 호출 목록)을 읽는 `Read-AgyProcessSteps` 테스트 — 도구별 대상, 시각 변환, 이어 읽기(쓰는 중인 마지막 줄·파일이 바뀐 경우), 상한, BOM, 깨진 줄, 경로 문자가 든 대화 ID 거절 (몇 초)
 
 뷰어의 워처 자동 점검:
 
@@ -146,7 +151,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\viewer\serve-viewer-au
 ```
 
 - `watcher-health.tests.ps1`: 켜짐/꺼짐 판정(잠금 PID, PID 재사용, 하트비트와의 관계), 재시작 결정, 점검 주기, 켜기 요청 처리, `ensure`에 넘기는 인자 단위 테스트 (몇 초)
+- `progress-detail.tests.ps1`: 진행 중인 카드의 서버 쪽 데이터(`Get-AgyProgress`) — 도구 12종의 대상, 백그라운드 표시, 과정 목록의 증분 읽기 (몇 초)
 - `serve-viewer-autostart.tests.ps1`: `serve-viewer.ps1`을 실제로 띄우고 점검 주기를 3초로 줄여, 꺼져 있을 때 `ensure`를 띄우는지·살아 있거나 수동 정지면 안 띄우는지·그동안 다른 요청에 응답하는지·켜기 API(GET 405, 헤더 없는 POST 403, 켜져 있으면 already-running, 꺼져 있으면 started)를 확인합니다 (약 1분). 임시 폴더와 가짜 스크립트만 쓰며 실제 워처/뷰어는 건드리지 않습니다.
+
+뷰어의 화면 쪽 텍스트 정리는 `node`로 검증합니다(`app.js`에서 함수 원문을 꺼내 실행하므로 복사본이 아닙니다):
+
+```powershell
+node tests\viewer\preview-text.tests.js
+node tests\viewer\progress-text.tests.js
+node tests\viewer\process-text.tests.js
+```
+
+- `preview-text.tests.js`: 질문·답변 미리보기에서 `merge_intervals`, `~/.samjil`, `src/*.ts`의 `_ ~ *`를 지우지 않고, `@cwd`/`@session`/`@model` 지시어 줄을 건너뛰는지
+- `progress-text.tests.js`: 진행 중인 카드의 "지금:" 줄(한글 도구 설명 + 실제 대상 + 영어 라벨), HTML 이스케이프
+- `process-text.tests.js`: 과정 구역의 요약 줄과 목록(번호·시각·도구·대상), 400번 안내, HTML 이스케이프
 
 ---
 

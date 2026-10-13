@@ -1292,7 +1292,6 @@
     // (앞에서 부르면 직전 값이 표시되어, 대시보드에서 막 넘어왔을 때 "0건"으로 보였다.)
     updateQaHeader(session);
 
-    var openState = snapshotQaOpenState();
     shownQaCount = 0;
     if (els.cards) {
       els.cards.innerHTML = "";
@@ -1310,29 +1309,31 @@
     }
 
     renderMoreQa();
-    restoreQaOpenState(openState);
     updateTopbarMeta();
   }
 
-  // 자동 새로고침으로 카드를 다시 그려도 사용자가 열고 닫은 질문/답변 상태를 유지한다.
-  function snapshotQaOpenState() {
-    var state = {};
-    if (!els.cards) return state;
-    var items = els.cards.querySelectorAll(".card[data-key] > details.qa");
-    for (var i = 0; i < items.length; i++) {
-      var d = items[i];
-      state[d.parentNode.getAttribute("data-key") + "|" + (d.classList.contains("q") ? "q" : "a")] = d.open;
-    }
-    return state;
+  // 질문/과정/답변 구역의 펼침 상태.
+  //   기본: 맨 위(가장 최근) 카드의 답변만 펼치고, 나머지는 질문·과정·답변 모두 접은 채로 시작한다.
+  //   사용자가 직접 열거나 닫은 구역만 qaOpenOverrides 에 기억해서, 5초마다 카드를 다시 그려도 그대로 유지한다.
+  //   (예전에는 그리기 직전의 "현재 상태"를 통째로 저장했는데, 그러면 기본으로 펼쳐졌던 카드도 사용자가 연 것으로
+  //   기억돼 새 카드가 생겨도 이전 카드가 계속 펼쳐 있었다.)
+  var qaOpenOverrides = {};   // "<카드 키>|q" / "|p" / "|a" -> true(열었음) / false(닫았음)
+
+  function qaSectionKey(d) {
+    var type = d.classList.contains("q") ? "q" : (d.classList.contains("p") ? "p" : "a");
+    return d.parentNode.getAttribute("data-key") + "|" + type;
   }
 
-  function restoreQaOpenState(state) {
+  function applyQaOpenDefaults() {
     if (!els.cards) return;
+    var first = els.cards.querySelector(".card[data-key]");
     var items = els.cards.querySelectorAll(".card[data-key] > details.qa");
     for (var i = 0; i < items.length; i++) {
       var d = items[i];
-      var k = d.parentNode.getAttribute("data-key") + "|" + (d.classList.contains("q") ? "q" : "a");
-      if (Object.prototype.hasOwnProperty.call(state, k)) d.open = state[k];
+      var k = qaSectionKey(d);
+      d.open = Object.prototype.hasOwnProperty.call(qaOpenOverrides, k)
+        ? qaOpenOverrides[k]
+        : (d.parentNode === first && d.classList.contains("a"));
     }
   }
 
@@ -1383,6 +1384,7 @@
     if (shownQaCount === 0 && filteredPending.length === 0) {
       els.cards.innerHTML = '<p class="empty">해당 세션 또는 조건에 일치하는 위임 기록이 없습니다.</p>';
     }
+    applyQaOpenDefaults();
   }
 
   // ==========================================================================
@@ -1755,6 +1757,115 @@
     return cleanTextForPreview(text).substring(0, 100);
   }
 
+  // ==========================================================================
+  // 과정: agy 가 질문과 답변 사이에 한 일(부른 도구 목록). 기록(r.process)에서 읽고,
+  // 기록에 없는 옛 위임은 펼칠 때 agy 대화 기록에서 읽어 온다(/api/delegate/process).
+  // ==========================================================================
+
+  // 한 줄 요약. 예) 도구 호출 23번 · 명령 실행 9 · 파일 읽기 6 · 파일 쓰기 3 외 1종
+  function summarizeProcess(steps, live) {
+    if (!steps || !steps.length) return live ? "아직 도구를 부르지 않았습니다" : "도구를 쓰지 않고 바로 답했습니다";
+    var counts = {}, order = [];
+    steps.forEach(function (st) {
+      var k = progressToolLabel(st.tool) || "기타";
+      if (!Object.prototype.hasOwnProperty.call(counts, k)) { counts[k] = 0; order.push(k); }
+      counts[k]++;
+    });
+    order.sort(function (x, y) { return counts[y] - counts[x]; });
+    var parts = order.slice(0, 3).map(function (k) { return k + " " + counts[k]; });
+    return "도구 호출 " + steps.length + "번 · " + parts.join(" · ") + (order.length > 3 ? " 외 " + (order.length - 3) + "종" : "");
+  }
+
+  // 과정 목록(<ol>). 단계 번호 · 시각 · 한글 도구 설명 · 실제 대상 · 영어 라벨. 마우스를 올리면 생각까지 보인다.
+  function buildProcessRowsHtml(steps) {
+    var rows = steps.map(function (st) {
+      var tool = progressToolLabel(st.tool) || "기타";
+      var tip = [];
+      if (st.tool) tip.push("도구: " + st.tool);
+      if (st.detail) tip.push("대상: " + st.detail);
+      if (st.label) tip.push("agy 가 붙인 설명: " + st.label);
+      if (st.think) tip.push("생각: " + st.think);
+      return '<li class="proc-row"' + (tip.length ? ' title="' + escapeHtml(tip.join("\n")) + '"' : '') + '>' +
+        '<span class="proc-n">' + escapeHtml(String(st.n)) + '</span>' +
+        '<span class="proc-at">' + escapeHtml(st.at || "") + '</span>' +
+        '<span class="proc-tool">' + escapeHtml(tool) + (st.bg ? ' (백그라운드)' : '') + '</span>' +
+        '<span class="proc-text">' +
+          (st.detail ? '<span class="proc-detail">' + escapeHtml(st.detail) + '</span>' : '') +
+          (st.label ? ' <span class="proc-label">' + (st.detail ? '· ' : '') + escapeHtml(st.label) + '</span>' : '') +
+        '</span></li>';
+    });
+    var note = steps.length >= 400 ? '<p class="proc-note">기록은 처음 400번까지만 남깁니다.</p>' : "";
+    return '<ol class="proc-list">' + rows.join("") + '</ol>' + note;
+  }
+
+  // 기록에 과정이 없는 옛 위임: 대화 id 별로 한 번만 읽어 와서 기억해 둔다(카드를 다시 그려도 다시 읽지 않는다).
+  var processFetchCache = {};   // 대화 id -> { state: "loading" | "done" | "error", found, steps }
+
+  function loadProcessFor(convId) {
+    var c = processFetchCache[convId];
+    if (c && c.state !== "error") return;
+    processFetchCache[convId] = { state: "loading" };
+    fetchJson("/api/delegate/process?id=" + encodeURIComponent(convId))
+      .then(function (res) {
+        processFetchCache[convId] = { state: "done", found: Boolean(res && res.found), steps: (res && Array.isArray(res.steps)) ? res.steps : [] };
+      })
+      .catch(function () { processFetchCache[convId] = { state: "error" }; })
+      .then(function () { applyQaFilters(); });
+  }
+
+  // opts: { steps: 배열|null, convId: 대화 id, live: 진행 중, waiting: 아직 시작 안 함 }
+  function buildProcessDetails(opts) {
+    var d = document.createElement("details");
+    d.className = "qa p";
+    var sum = document.createElement("summary");
+    var badgeEl = document.createElement("span");
+    badgeEl.className = "qa-type-badge p-type";
+    badgeEl.textContent = "과정";
+    sum.appendChild(badgeEl);
+    var kw = document.createElement("span");
+    kw.className = "qa-preview-keyword";
+    sum.appendChild(kw);
+    d.appendChild(sum);
+    var body = document.createElement("div");
+    body.className = "body";
+    d.appendChild(body);
+
+    var steps = Array.isArray(opts.steps) ? opts.steps : null;
+    var message = "";
+    var fetchId = "";
+    if (!steps) {
+      if (opts.waiting) {
+        message = "아직 시작하지 않았습니다";
+      } else if (opts.convId) {
+        var c = processFetchCache[opts.convId];
+        if (c && c.state === "done" && c.found) { steps = c.steps; }
+        else if (c && c.state === "done") { message = "agy 대화 기록이 남아 있지 않아 과정을 볼 수 없습니다"; }
+        else if (c && c.state === "loading") { message = "agy 대화 기록에서 읽어 오는 중입니다"; }
+        else if (c && c.state === "error") { message = "과정을 불러오지 못했습니다. 다시 펼치면 한 번 더 시도합니다"; fetchId = opts.convId; }
+        else { message = "기록에 저장되지 않은 위임입니다. 펼치면 agy 대화 기록에서 읽어 옵니다"; fetchId = opts.convId; }
+      } else {
+        message = "과정이 기록되지 않았습니다";
+      }
+    }
+
+    if (steps) {
+      kw.textContent = summarizeProcess(steps, opts.live);
+      kw.title = kw.textContent;
+      if (steps.length) body.innerHTML = buildProcessRowsHtml(steps);
+      else body.innerHTML = '<p class="proc-empty">' + escapeHtml(kw.textContent) + '.</p>';
+    } else {
+      kw.textContent = message;
+      kw.title = message;
+      body.innerHTML = '<p class="proc-empty">' + escapeHtml(message) + '.</p>';
+    }
+    if (fetchId) {
+      // 사용자가 요약을 눌러 펼칠 때만 불러온다(클릭은 열림 상태가 바뀌기 전에 오므로 !d.open 이 "지금 펼치는 중").
+      // toggle 이벤트로 하면 펼친 채로 다시 그려질 때마다 재시도해서, 실패가 계속되면 요청이 연쇄한다.
+      sum.addEventListener("click", function () { if (!d.open) loadProcessFor(fetchId); });
+    }
+    return d;
+  }
+
   function buildCard(r) {
     var st = (r.status == null ? "" : String(r.status)).trim();
     var isOk = (st === "OK");
@@ -1823,9 +1934,10 @@
     dq.appendChild(qb);
     card.appendChild(dq);
 
+    card.appendChild(buildProcessDetails({ steps: Array.isArray(r.process) ? r.process : null, convId: r.session_id || "" }));
+
     var da = document.createElement("details");
     da.className = "qa a";
-    da.open = true;
     var sa = document.createElement("summary");
     var aBadge = document.createElement("span");
     aBadge.className = "qa-type-badge a-type";
@@ -1861,16 +1973,61 @@
   var PROGRESS_QUIET_SEC = 120;
 
   // 진행 중인 위임의 진행 상황 줄. 서버가 agy 대화 기록에서 읽은 단계/최근 동작/마지막 활동 시각을 보여 준다.
+  // agy 도구 이름 -> 한글 설명. 영어 라벨(Checking target directory 등)만으로는 무슨 일을 하는지 알 수 없어서 덧붙인다.
+  // agy 대화 기록 131개, 도구 호출 2,287건에서 나온 12종이다. 모르는 도구는 이름을 그대로 보인다.
+  function progressToolLabel(name) {
+    var m = {
+      run_command: "명령 실행",
+      view_file: "파일 읽기",
+      write_to_file: "파일 쓰기",
+      replace_file_content: "파일 일부 수정",
+      list_dir: "폴더 목록 보기",
+      find_by_name: "파일 이름 찾기",
+      grep_search: "파일 내용 검색",
+      search_web: "웹 검색",
+      read_url_content: "웹 페이지 읽기",
+      manage_task: "작업 관리",
+      schedule: "잠시 대기",
+      generate_image: "이미지 생성"
+    };
+    if (!name) return "";
+    return Object.prototype.hasOwnProperty.call(m, name) ? m[name] : name;
+  }
+
+  // "지금:" 줄. 한글 도구 설명 + 실제 대상(명령, 파일, 폴더) + agy 가 붙인 영어 라벨 순서로 보여 준다.
+  // 예) 지금: 명령 실행 Get-Location · Checking target directory
+  // 서버가 tool/detail 을 주지 않는 옛 서버면 영어 라벨만 보인다(기존 동작).
+  function buildProgressActionHtml(pg) {
+    var tool = progressToolLabel(pg.tool);
+    if (!tool && !pg.detail && !pg.action) return "";
+    var pieces = [];
+    if (tool) pieces.push('<span class="pg-tool">' + escapeHtml(tool) + (pg.background ? ' (백그라운드)' : '') + '</span>');
+    if (pg.detail) pieces.push('<span class="pg-detail">' + escapeHtml(pg.detail) + '</span>');
+    if (pg.action) pieces.push('<span class="pg-label">' + ((tool || pg.detail) ? '· ' : '') + escapeHtml(pg.action) + '</span>');
+    var html = '지금: ' + pieces.join(' ');
+    // 줄이 길어 잘리면 마우스를 올려 전체를 본다
+    var tip = [];
+    if (pg.tool) tip.push("도구: " + pg.tool);
+    if (pg.detail) tip.push("대상: " + pg.detail);
+    if (pg.cwd) tip.push("실행 폴더: " + pg.cwd);
+    if (pg.action) tip.push("agy 가 붙인 설명: " + pg.action);
+    if (pg.thinking) tip.push("생각: " + pg.thinking);
+    return '<div class="pg-action" title="' + escapeHtml(tip.join("\n")) + '">' + html + '</div>';
+  }
+
   function buildProgressHtml(pg) {
     if (!pg) return "";
     var parts = [];
-    if (pg.step != null) parts.push('<span class="pg-step">' + escapeHtml(String(pg.step)) + '단계 진행</span>');
+    if (pg.step != null) {
+      parts.push('<span class="pg-step" title="' +
+        escapeHtml("agy 대화 기록의 번호입니다. 도구를 부르는 것과 그 결과가 각각 한 단계로 세어져서, 실제로 한 일의 수보다 큽니다.") +
+        '">' + escapeHtml(String(pg.step)) + '단계 진행</span>');
+    }
     if (pg.last_activity_ms) {
       parts.push('<span class="pg-idle" data-ms="' + escapeHtml(String(pg.last_activity_ms)) + '">' +
         formatDuration((Date.now() - pg.last_activity_ms) / 1000) + ' 전 활동</span>');
     }
-    var action = pg.action ? '<div class="pg-action"' + (pg.thinking ? ' title="' + escapeHtml(pg.thinking) + '"' : '') +
-      '>지금: ' + escapeHtml(pg.action) + '</div>' : "";
+    var action = buildProgressActionHtml(pg);
     return '<div class="pending-progress">' + (parts.length ? '<div class="pg-line">' + parts.join('<span class="pg-sep">·</span>') + '</div>' : "") + action + '</div>';
   }
 
@@ -1938,9 +2095,14 @@
     dq.appendChild(qb);
     card.appendChild(dq);
 
+    card.appendChild(buildProcessDetails({
+      steps: (isProcessing && p.progress && Array.isArray(p.progress.steps)) ? p.progress.steps : null,
+      live: isProcessing,
+      waiting: !isProcessing
+    }));
+
     var da = document.createElement("details");
     da.className = "qa a qa-pending-a";
-    da.open = true;
     var sa = document.createElement("summary");
     var aBadge = document.createElement("span");
     aBadge.className = "qa-type-badge a-type";
@@ -2275,6 +2437,14 @@
 
     // 푸터 새로고침 & 자동 갱신
     if (els.refreshBtn) els.refreshBtn.addEventListener("click", function () { refresh(true); });
+    if (els.cards) {
+      els.cards.addEventListener("click", function (e) {
+        var sumEl = e.target && e.target.closest ? e.target.closest("summary") : null;
+        var d = sumEl ? sumEl.parentNode : null;
+        if (!d || !d.classList || !d.classList.contains("qa") || !d.parentNode || !d.parentNode.getAttribute("data-key")) return;
+        qaOpenOverrides[qaSectionKey(d)] = !d.open;
+      });
+    }
     if (els.watcherStartBtn) els.watcherStartBtn.addEventListener("click", startWatcher);
     if (els.autoRefresh) els.autoRefresh.addEventListener("change", scheduleAutoRefresh);
 
