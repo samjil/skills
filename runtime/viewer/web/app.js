@@ -1660,11 +1660,28 @@
     return sMeta;
   }
 
+  // 미리보기용으로 마크다운 "표시"를 걷어 낸다. 글자로 쓰인 _ * ~ 는 지우지 않는다:
+  //   merge_intervals, __init__.py, ~/.samjil, src/*.ts, 2 * 3 은 그대로 남기고,
+  //   **굵게**, *기울임*, _기울임_, ~~취소~~ 처럼 짝이 맞는 강조 표시만 벗긴다.
+  // (예전에는 [*_`~] 를 전부 지워서 merge_intervals 가 mergeintervals 로, ~/.samjil 이 /.samjil 로 보였다.)
+  function stripEmphasis(s) {
+    return s
+      .replace(/(^|[\s(\["'])\*\*(?=\S)([\s\S]*?\S)\*\*/g, "$1$2")
+      .replace(/(^|[\s(\["'])\*(?=\S)([^*\n]*?\S)\*/g, "$1$2")
+      .replace(/(^|[\s(\["'])~~(?=\S)([\s\S]*?\S)~~/g, "$1$2")
+      // _기울임_ 은 단어 사이의 밑줄(snake_case)이 아닐 때만. __init__ 같은 이중 밑줄은 식별자로 보고 둔다.
+      .replace(/(^|[^A-Za-z0-9_가-힣])_(?=\S)([^_\n]*?\S)_(?![A-Za-z0-9_가-힣])/g, "$1$2");
+  }
+
   function cleanTextForPreview(str) {
     if (!str) return "";
-    return String(str)
-      .replace(/^#+\s*/, "")
-      .replace(/[*_`~]/g, "")
+    // `인라인 코드` 안은 마크다운이 아니므로 그대로 두고(백틱만 벗김), 바깥만 강조 표시를 벗긴다.
+    var parts = String(str).replace(/^#+\s*/, "").split(/(`+[^`]*`+)/);
+    for (var i = 0; i < parts.length; i++) {
+      parts[i] = (i % 2 === 1) ? parts[i].replace(/^`+|`+$/g, "") : stripEmphasis(parts[i]);
+    }
+    return parts.join("")
+      .replace(/`/g, "")
       .replace(/\[(.*?)\]\(.*?\)/g, "$1")
       .replace(/<[^>]*>/g, " ")
       .replace(/\s+/g, " ")
@@ -1679,7 +1696,8 @@
     for (var i = 0; i < lines.length; i++) {
       var t = lines[i].trim();
       if (!t) continue;
-      if (t.indexOf("@cwd:") === 0 || t.indexOf("@session:") === 0) continue;
+      // 워처 지시어 줄(@cwd / @session / @model)은 질문 내용이 아니다
+      if (/^\ufeff?@(cwd|session|model):/i.test(t)) continue;
       if (t.indexOf("**읽기") === 0 || t.indexOf("**[읽기") === 0 || t.indexOf("<!--") === 0) continue;
       if (t.indexOf("```") === 0) continue;
       if (t.indexOf("|") === 0 && t.lastIndexOf("|") === t.length - 1) continue;
