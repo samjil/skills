@@ -932,6 +932,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .qa.q { border-left-color: var(--claude); }
 .qa.a { border-left-color: var(--agy); }
+.qa.p { border-left-color: var(--line-strong); }
 
 .qa > summary {
   list-style: none;
@@ -966,6 +967,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .qa.q .qa-type-badge { color: var(--claude); }
 .qa.a .qa-type-badge { color: var(--agy); }
+.qa.p .qa-type-badge { color: var(--ink-2); }
 
 .qa-preview-keyword {
   flex: 1;
@@ -976,7 +978,8 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   font-size: var(--fs-md);
   color: var(--ink);
 }
-.qa.q:not([open]) .qa-preview-keyword { color: var(--ink-2); }
+.qa.q:not([open]) .qa-preview-keyword,
+.qa.p .qa-preview-keyword { color: var(--ink-2); }
 
 .qa > .body { padding: 6px 12px 10px; }
 
@@ -1021,6 +1024,30 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .pending-progress .pg-sep { color: var(--ink-3); }
 .pending-progress .pg-idle.quiet { color: #e0b25c; }
 .pending-progress .pg-action { margin-top: 2px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pending-progress .pg-tool { color: var(--ink); font-weight: 600; }
+.pending-progress .pg-detail { font-family: var(--font-mono); font-size: 0.92em; color: var(--ink); }
+.pending-progress .pg-label { color: var(--ink-3); }
+
+/* 과정 목록: 단계 번호 · 시각 · 도구 · 대상 */
+.proc-list { list-style: none; margin: 0; padding: 0; font-size: var(--fs-sm); }
+.proc-row {
+  display: grid;
+  grid-template-columns: 2.6em 4.8em 12em minmax(0, 1fr);   /* 도구 칸: "명령 실행 (백그라운드)"가 줄바꿈되지 않는 폭 */
+  gap: 0 10px;
+  align-items: baseline;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--line);
+  line-height: 1.5;
+}
+.proc-row:last-child { border-bottom: 0; }
+.proc-n { text-align: right; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.proc-at { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.proc-tool { color: var(--ink); font-weight: 600; }
+.proc-text { min-width: 0; overflow-wrap: anywhere; }
+.proc-detail { font-family: var(--font-mono); font-size: 0.92em; color: var(--ink); }
+.proc-label { color: var(--ink-3); }
+.proc-note, .proc-empty { margin: 6px 0 0; font-size: var(--fs-sm); color: var(--ink-3); }
+.proc-empty { margin-top: 2px; }
 
 .load-more-wrap { display: flex; justify-content: center; margin: 24px 0 8px; max-width: 960px; }
 #loadmore {
@@ -1319,6 +1346,12 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
 
   .row { grid-template-columns: 3px minmax(0, 1fr) auto; }
   .row-when { display: none; }
+
+  /* 과정 목록: 좁은 화면에서는 시각을 빼고 도구 설명 아래에 대상을 둔다 */
+  .proc-row { grid-template-columns: 2.2em minmax(0, 1fr); }
+  .proc-at { display: none; }
+  .proc-tool { grid-column: 2; }
+  .proc-text { grid-column: 2; }
 
   .handoff-card-header { grid-template-columns: minmax(0, 1fr) auto; }
   .handoff-num { display: none; }

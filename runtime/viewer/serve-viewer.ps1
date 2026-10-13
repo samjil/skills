@@ -329,8 +329,11 @@ function Find-HandoffProjectDir([string]$projectName) {
 function Find-DelegateScript([string]$RelPath) {
     $cands = @()
     if ($env:AGY_DELEGATE_SCRIPTS) { $cands += (Join-Path $env:AGY_DELEGATE_SCRIPTS $RelPath) }
-    $cands += (Join-Path $env:USERPROFILE (Join-Path ".samjil\delegate-agy\scripts" $RelPath))
+    # 이 뷰어와 같은 폴더 구조의 형제 폴더를 먼저 본다: 설치본 뷰어(~/.samjil/viewer) 옆에는 설치본 delegate-agy 가,
+    # 저장소의 뷰어(runtime/viewer) 옆에는 저장소의 delegate-agy 가 있어서 두 경우 모두 버전이 맞는다.
+    # (설치본을 먼저 보면, 저장소에서 뷰어를 돌릴 때 아직 설치 전인 옛 agy-progress.ps1 을 불러온다.)
     $cands += (Join-Path (Split-Path $PSScriptRoot -Parent) (Join-Path "delegate-agy\scripts" $RelPath))
+    $cands += (Join-Path $env:USERPROFILE (Join-Path ".samjil\delegate-agy\scripts" $RelPath))
     $cands += (Join-Path $PSScriptRoot (Join-Path "runtime\delegate-agy\scripts" $RelPath))
     foreach ($c in $cands) {
         if ($c -and (Test-Path -LiteralPath $c)) { return $c }
@@ -341,6 +344,33 @@ function Find-DelegateScript([string]$RelPath) {
 # 진행 중인 agy 작업이 지금 무엇을 하는지 agy의 대화 기록(transcript_full.jsonl)에서 읽습니다.
 # agy는 단계를 하나 끝낼 때마다 이 파일에 한 줄씩 덧붙이므로, 끝부분만 읽어도 현재 단계/최근 동작을 알 수 있습니다.
 # 대화를 못 찾거나 모호하면 $null 을 돌려주고, 화면은 진행 상황 줄 없이 기존대로 표시합니다.
+# 진행 중인 대화의 과정(도구 호출 목록)을 읽는다. 5초마다 불리는데 대화 기록이 수 MB 까지 커질 수 있어서, 대화마다
+# "어디까지 읽었는지(Offset)"와 읽은 단계를 기억해 두고 새로 쌓인 부분만 이어 읽는다(Read-AgyProcessSteps 참고).
+# 기억은 최근 8개 대화까지만 둔다.
+$script:ProcessCache = @{}
+function Get-AgyProcessStepsCached([string]$ConversationId) {
+    if (-not (Get-Command Read-AgyProcessSteps -ErrorAction SilentlyContinue)) { return @() }
+    $tp = Get-AgyTranscriptPath (Get-AgyHomeDir) $ConversationId
+    if (-not $tp) { return @() }
+    $item = Get-Item -LiteralPath $tp -ErrorAction SilentlyContinue
+    if (-not $item) { return @() }
+    $c = $script:ProcessCache[$ConversationId]
+    if (-not $c -or $item.Length -lt $c.Offset) {
+        # 처음 보는 대화이거나, 파일이 더 짧아졌으면(새로 만들어짐) 처음부터 읽는다
+        $c = @{ Offset = [long]0; Steps = (New-Object System.Collections.ArrayList); Touched = (Get-Date) }
+        $script:ProcessCache[$ConversationId] = $c
+        if ($script:ProcessCache.Count -gt 8) {
+            $oldest = $script:ProcessCache.GetEnumerator() | Sort-Object { $_.Value.Touched } | Select-Object -First 1
+            if ($oldest) { $script:ProcessCache.Remove($oldest.Key) }
+        }
+    }
+    $c.Touched = Get-Date
+    $r = Read-AgyProcessSteps $tp $c.Offset 400
+    foreach ($st in @($r.Steps)) { if ($c.Steps.Count -lt 400) { [void]$c.Steps.Add($st) } }
+    $c.Offset = [long]$r.Offset
+    return @($c.Steps.ToArray())
+}
+
 function Get-AgyProgress([string]$ConversationId, $StartedAt) {
     try {
         $agyHome = if ($env:AGY_HOME) { $env:AGY_HOME } else { Join-Path $env:USERPROFILE ".gemini\antigravity-cli" }
@@ -372,7 +402,7 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt) {
         $lines = @($text -split "\r?\n" | Where-Object { $_ })
         if ($offset -gt 0 -and $lines.Count -gt 0) { $lines = @($lines | Select-Object -Skip 1) }
 
-        $step = $null; $action = ""; $thinking = ""
+        $step = $null; $action = ""; $thinking = ""; $tool = ""; $detail = ""; $cwd = ""; $background = $false
         for ($i = $lines.Count - 1; $i -ge 0; $i--) {
             $o = $null
             try { $o = $lines[$i] | ConvertFrom-Json } catch { continue }
@@ -384,6 +414,12 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt) {
                     $action = [string]$a.toolAction
                     if (-not $action) { $action = [string]$a.toolSummary }
                     if (-not $action) { $action = [string]$calls[-1].name }
+                    $tool = [string]$calls[-1].name
+                    if (Get-Command Get-AgyToolDetail -ErrorAction SilentlyContinue) { $detail = Get-AgyToolDetail $calls[-1] }
+                    if ($tool -eq 'run_command') {
+                        $cwd = [string]$a.Cwd
+                        $background = ([string]$a.IsDaemon -match '^(?i:true|1)$')
+                    }
                 }
                 if ($o.thinking) { $thinking = ([string]$o.thinking).Trim() }
                 break
@@ -395,6 +431,11 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt) {
             conversation_id = $ConversationId
             step            = $step
             action          = $action
+            tool            = $tool
+            detail          = $detail
+            cwd             = $cwd
+            background      = $background
+            steps           = @(Get-AgyProcessStepsCached $ConversationId)
             thinking        = $thinking
             last_activity   = $last.ToString("yyyy-MM-dd HH:mm:ss")
             last_activity_ms = [int64]([DateTimeOffset]$last).ToUnixTimeMilliseconds()
@@ -403,6 +444,10 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt) {
         return $null
     }
 }
+
+# 워처와 같이 쓰는 도구 호출·과정 읽기 코드(agy-progress.ps1). 못 찾으면 진행 표시의 도구 설명과 과정 목록만 빠진다.
+$agyProgressLib = Find-DelegateScript "sub\agy-progress.ps1"
+if ($agyProgressLib) { . $agyProgressLib }
 
 # HTTP 리스너 기동 (충돌 시 기존 뷰어 자동 정리 및 대체 포트 탐색)
 $listener = $null
@@ -1103,6 +1148,30 @@ try {
                     $startRes = Invoke-WatcherStartRequest $watcherHealth
                     Write-Host ("[{0}] 화면에서 워처 켜기 요청: {1}" -f (Get-Date -Format 'HH:mm:ss'), $startRes.Result) -ForegroundColor Yellow
                     $json = ([PSCustomObject]@{ result = $startRes.Result; message = $startRes.Message }) | ConvertTo-Json -Depth 3
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+                    $response.ContentType = "application/json; charset=utf-8"
+                    $response.Headers.Add("Cache-Control", "no-store")
+                }
+                $response.ContentLength64 = $bytes.Length
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
+
+            } elseif ($urlPath -eq "/api/delegate/process") {
+
+                # 기록에 과정이 저장되지 않은 옛 위임용: agy 의 대화 id 로 대화 기록에서 도구 호출 목록을 읽어 온다.
+                # id 는 영문자·숫자·- 만 받는다(경로 문자 차단은 Get-AgyTranscriptPath 가 한다).
+                $params = Get-Utf8QueryParams $request.Url
+                $cid = [string]$params["id"]
+                $tp = $null
+                if (Get-Command Get-AgyTranscriptPath -ErrorAction SilentlyContinue) { $tp = Get-AgyTranscriptPath (Get-AgyHomeDir) $cid }
+                if (-not $tp) {
+                    $response.StatusCode = 400
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes("Invalid id")
+                    $response.ContentType = "text/plain; charset=utf-8"
+                } else {
+                    $found = Test-Path -LiteralPath $tp -PathType Leaf
+                    $stepsOut = @()
+                    if ($found) { $stepsOut = @((Read-AgyProcessSteps $tp 0 400).Steps) }
+                    $json = ([PSCustomObject]@{ id = $cid; found = $found; steps = $stepsOut }) | ConvertTo-Json -Depth 5
                     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
                     $response.ContentType = "application/json; charset=utf-8"
                     $response.Headers.Add("Cache-Control", "no-store")
