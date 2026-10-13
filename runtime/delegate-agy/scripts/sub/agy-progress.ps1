@@ -115,3 +115,141 @@ function Stop-ProcessTree([int]$ProcessId) {
     # taskkill 이 못 죽였으면(권한 등) 마지막 수단으로 본체만이라도 종료
     try { Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue } catch {}
 }
+
+# ---------------------------------------------------------------------------------------------------------------
+# 과정(agy 가 부른 도구 목록) 읽기
+#   위임 카드의 "지금:" 줄, "과정" 구역, 기록(QA)에 저장하는 과정이 모두 이 함수들을 씁니다.
+#   뷰어(serve-viewer.ps1)도 이 파일을 불러 와서 같은 코드를 씁니다.
+# ---------------------------------------------------------------------------------------------------------------
+
+# agy 도구 호출 하나가 "무엇을 어디에" 하는지 짧은 글로 만듭니다. 화면의 "지금:" 줄에서 영어 라벨(toolAction)만으로는
+# 알 수 없는 실제 내용(어떤 명령, 어떤 파일, 어떤 폴더)을 보여 주기 위한 것입니다.
+# 도구마다 인자 이름이 달라서 도구별로 고릅니다(agy 대화 기록 131개, 도구 호출 2,287건에서 나온 12종).
+function Get-AgyToolDetail($call) {
+    if ($null -eq $call -or $null -eq $call.args) { return "" }
+    $a = $call.args
+    $n = [string]$call.name
+    $get = { param($k) $x = $a.$k; if ($null -eq $x) { "" } else { ([string]$x).Trim() } }
+    $d = ""
+    switch ($n) {
+        'run_command'          { $d = & $get 'CommandLine' }
+        'view_file' {
+            $d = & $get 'AbsolutePath'
+            $sl = & $get 'StartLine'; $el = & $get 'EndLine'
+            if ($sl -and $el) { $d += " ($sl~${el}행)" }
+        }
+        'write_to_file'        { $d = & $get 'TargetFile' }
+        'replace_file_content' { $d = & $get 'TargetFile' }
+        'list_dir'             { $d = & $get 'DirectoryPath' }
+        'find_by_name' {
+            $d = & $get 'Pattern'
+            $dir = & $get 'SearchDirectory'
+            if ($dir) { $d += " ($dir)" }
+        }
+        'grep_search' {
+            $d = & $get 'Query'
+            $dir = & $get 'SearchPath'
+            if ($dir) { $d += " ($dir)" }
+        }
+        'search_web'           { $d = & $get 'query' }
+        'read_url_content'     { $d = & $get 'Url' }
+        'manage_task' {
+            $d = ((& $get 'Action') + " " + (& $get 'TaskId')).Trim()
+        }
+        'schedule' {
+            $sec = & $get 'DurationSeconds'; $pr = & $get 'Prompt'
+            $d = $(if ($sec) { "${sec}초" } else { "" })
+            if ($pr) { $d = ($d + " · " + $pr).Trim(' ', '·') }
+        }
+        'generate_image'       { $d = & $get 'ImageName' }
+        default {
+            # 모르는 도구: 라벨이 아닌 첫 문자열 인자를 대상으로 본다
+            foreach ($prop in $a.PSObject.Properties) {
+                if ($prop.Name -in @('toolAction', 'toolSummary')) { continue }
+                if ($prop.Value -is [string] -and $prop.Value.Trim()) { $d = $prop.Value.Trim(); break }
+            }
+        }
+    }
+    $d = ($d -replace '\s+', ' ').Trim()
+    if ($d.Length -gt 200) { $d = $d.Substring(0, 200) + "…" }
+    return $d
+}
+
+# 대화 id 로 기록 파일 경로를 만듭니다. id 에 경로 문자가 섞여 있으면 $null (뷰어가 주소로 받은 값을 그대로 쓰므로 막아 둔다).
+function Get-AgyTranscriptPath([string]$AgyHome, [string]$ConversationId) {
+    if ($ConversationId -notmatch '^[A-Za-z0-9-]{1,80}$') { return $null }
+    return (Join-Path $AgyHome ("brain\{0}\.system_generated\logs\transcript_full.jsonl" -f $ConversationId))
+}
+
+# 대화 기록(transcript_full.jsonl)에서 도구 호출 목록을 읽습니다. 반환: @{ Steps = @(...); Offset = <다음에 읽을 위치> }
+#   Steps 의 각 항목: n(단계 번호) at(시각 HH:mm:ss) tool(도구 이름) detail(대상) label(agy 가 붙인 영어 설명)
+#                    think(생각, 잘라 둠) bg(백그라운드면 $true. 아니면 키 없음)
+#   FromOffset 부터 읽고, 아직 줄바꿈으로 끝나지 않은 마지막 줄(agy 가 쓰는 중)은 읽지 않고 Offset 을 그 앞에 둡니다.
+#   그래서 진행 중인 대화는 Offset 을 기억해 두고 새로 쌓인 부분만 이어서 읽을 수 있습니다.
+#   MaxSteps 를 넘는 호출은 담지 않습니다(저장 크기 제한). 파일이 없으면 빈 목록.
+function Read-AgyProcessSteps {
+    param([string]$Path, [long]$FromOffset = 0, [int]$MaxSteps = 400, [int]$ThinkingMax = 240)
+    $res = [ordered]@{ Steps = @(); Offset = $FromOffset }
+    if (-not $Path) { return $res }
+    $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if (-not $item) { return $res }
+    if ($FromOffset -lt 0 -or $FromOffset -gt $item.Length) { $FromOffset = 0; $res.Offset = 0 }
+
+    $buf = $null; $read = 0
+    $fs = $null
+    try {
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        [void]$fs.Seek($FromOffset, [System.IO.SeekOrigin]::Begin)
+        $len = [int]($fs.Length - $FromOffset)
+        if ($len -le 0) { return $res }
+        $buf = New-Object byte[] $len
+        while ($read -lt $len) {
+            $n = $fs.Read($buf, $read, $len - $read)
+            if ($n -le 0) { break }
+            $read += $n
+        }
+    } catch { return $res } finally { if ($fs) { $fs.Dispose() } }
+
+    $lastNl = if ($read -gt 0) { [Array]::LastIndexOf($buf, [byte]10, $read - 1) } else { -1 }
+    if ($lastNl -lt 0) { return $res }
+    $text = [System.Text.Encoding]::UTF8.GetString($buf, 0, $lastNl + 1)
+    $res.Offset = $FromOffset + $lastNl + 1
+
+    $steps = New-Object System.Collections.ArrayList
+    foreach ($line in ($text -split "\r?\n")) {
+        if (-not $line -or $line.IndexOf('"tool_calls"') -lt 0) { continue }
+        if ($steps.Count -ge $MaxSteps) { break }
+        $o = $null
+        try { $o = $line.TrimStart([char]0xFEFF) | ConvertFrom-Json } catch { continue }
+        if ($o.type -ne 'PLANNER_RESPONSE') { continue }
+        $at = ""
+        try {
+            $at = [datetime]::Parse([string]$o.created_at, [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::RoundtripKind).ToLocalTime().ToString("HH:mm:ss")
+        } catch {}
+        $think = ""
+        if ($o.thinking) {
+            $think = (([string]$o.thinking) -replace '\s+', ' ').Trim()
+            if ($think.Length -gt $ThinkingMax) { $think = $think.Substring(0, $ThinkingMax) + "…" }
+        }
+        $first = $true
+        foreach ($c in @($o.tool_calls)) {
+            if ($steps.Count -ge $MaxSteps) { break }
+            $label = ""
+            if ($c.args) { $label = [string]$c.args.toolAction; if (-not $label) { $label = [string]$c.args.toolSummary } }
+            $st = [ordered]@{
+                n      = [int]$o.step_index
+                at     = $at
+                tool   = [string]$c.name
+                detail = (Get-AgyToolDetail $c)
+                label  = $label
+                think  = $(if ($first) { $think } else { "" })
+            }
+            if ([string]$c.name -eq 'run_command' -and $c.args -and ([string]$c.args.IsDaemon -match '^(?i:true|1)$')) { $st.bg = $true }
+            [void]$steps.Add($st)
+            $first = $false
+        }
+    }
+    $res.Steps = @($steps.ToArray())
+    return $res
+}
