@@ -20,8 +20,10 @@ function extractFunction(name) {
   throw new Error(name + " 의 끝을 찾지 못했습니다.");
 }
 
-const names = ["escapeHtml", "progressToolLabel", "summarizeProcess", "shortenPathsForCwd", "buildNarrationHtml", "buildProcessRowsHtml"];
-const api = new Function(names.map(extractFunction).join("\n") + "\nreturn { summarizeProcess, shortenPathsForCwd, buildNarrationHtml, buildProcessRowsHtml };")();
+const names = ["escapeHtml", "progressToolLabel", "summarizeProcess", "shortenPathsForCwd", "buildNarrationHtml", "buildProcessRowsHtml", "resolveProcessState"];
+// resolveProcessState 는 옛 위임을 읽어 온 결과(processFetchCache)를 본다. 테스트에서는 이 객체를 직접 채운다.
+const api = new Function("var processFetchCache = {};\n" + names.map(extractFunction).join("\n") +
+  "\nreturn { summarizeProcess, shortenPathsForCwd, buildNarrationHtml, buildProcessRowsHtml, resolveProcessState, processFetchCache };")();
 
 let passed = 0, failed = 0;
 function eq(name, expected, actual) {
@@ -117,6 +119,53 @@ ok("말은 도구·대상 칸과 같은 칸(proc-text) 안, 대상 뒤에 놓인
 eq("접두어를 바꿔 진행 카드용 클래스를 만든다", '<span class="pg-think"><b>생각</b> x</span>', api.buildNarrationHtml("pg", "", "x"));
 eq("둘 다 비면 빈 글", "", api.buildNarrationHtml("pg", "", ""));
 ok("말의 HTML 은 이스케이프된다", api.buildNarrationHtml("proc", "<img src=x onerror=alert(1)>", "a&b").indexOf("<img") === -1 && api.buildNarrationHtml("proc", "", "a&b").indexOf("a&amp;b") >= 0);
+
+console.log("resolveProcessState: 카드의 한 줄과 과정 창이 함께 쓰는 상태");
+const two = [S("run_command"), S("view_file")];
+let st = api.resolveProcessState({ steps: two, convId: "c1" });
+eq("기록에 단계가 있으면 그것과 요약", "도구 호출 2번 · 명령 실행 1 · 파일 읽기 1", st.summary);
+ok("  읽어 올 것이 없다", st.steps === two && st.fetchId === "" && st.error === false);
+st = api.resolveProcessState({ steps: [], live: true });
+eq("진행 중인데 아직 호출이 없으면", "아직 도구를 부르지 않았습니다", st.summary);
+ok("  빈 목록도 '단계가 있는 상태'(steps 가 빈 배열)", Array.isArray(st.steps) && st.steps.length === 0);
+eq("대기 중인 작업", "아직 시작하지 않았습니다", api.resolveProcessState({ steps: null, waiting: true }).summary);
+eq("대화 id 도 단계도 없으면", "과정이 기록되지 않았습니다", api.resolveProcessState({ steps: null }).summary);
+st = api.resolveProcessState({ steps: null, convId: "c-old" });
+ok("저장 안 된 옛 위임: 누르면 읽어 온다는 안내와 읽어 올 대화 id", st.summary.indexOf("누르면 agy 대화 기록에서 읽어 옵니다") >= 0 && st.fetchId === "c-old" && st.steps === null);
+api.processFetchCache["c-old"] = { state: "loading" };
+st = api.resolveProcessState({ steps: null, convId: "c-old" });
+ok("읽는 중이면 안내만(다시 읽지 않는다)", st.summary === "agy 대화 기록에서 읽어 오는 중입니다" && st.fetchId === "");
+api.processFetchCache["c-old"] = { state: "done", found: true, steps: two };
+st = api.resolveProcessState({ steps: null, convId: "c-old" });
+ok("읽어 온 단계가 있으면 그것을 쓴다", st.steps === two && st.summary.indexOf("도구 호출 2번") === 0 && st.fetchId === "");
+api.processFetchCache["c-old"] = { state: "done", found: false, steps: [] };
+eq("대화 기록이 정리된 경우", "agy 대화 기록이 남아 있지 않아 과정을 볼 수 없습니다", api.resolveProcessState({ steps: null, convId: "c-old" }).summary);
+api.processFetchCache["c-old"] = { state: "error" };
+st = api.resolveProcessState({ steps: null, convId: "c-old" });
+ok("읽기 실패: error 표시와 다시 읽을 대화 id(창의 '다시 시도'가 쓴다)", st.error === true && st.fetchId === "c-old" && st.summary === "과정을 불러오지 못했습니다");
+ok("기록에 단계가 있으면 읽어 온 결과보다 우선한다", api.resolveProcessState({ steps: two, convId: "c-old" }).steps === two);
+
+console.log("resolveProcessState: 버튼의 단계 수(count)와 누를 수 있는지(openable)");
+delete api.processFetchCache["c-old"];
+let r2 = api.resolveProcessState({ steps: two });
+ok("단계가 있으면 개수를 보이고 누를 수 있다", r2.count === 2 && r2.openable === true);
+r2 = api.resolveProcessState({ steps: [], live: false });
+ok("도구를 안 쓴 완료 작업은 0단계이고 누를 수 없다(볼 것이 없다)", r2.count === 0 && r2.openable === false);
+r2 = api.resolveProcessState({ steps: [], live: true });
+ok("진행 중이면 아직 0단계여도 누를 수 있다(곧 쌓인다)", r2.count === 0 && r2.openable === true);
+r2 = api.resolveProcessState({ steps: null, waiting: true });
+ok("대기 중인 작업은 누를 수 없다", r2.count === null && r2.openable === false);
+r2 = api.resolveProcessState({ steps: null });
+ok("과정이 기록되지 않았고 대화 id 도 없으면 누를 수 없다", r2.count === null && r2.openable === false);
+r2 = api.resolveProcessState({ steps: null, convId: "c-new" });
+ok("저장 안 된 옛 위임은 개수를 모르지만 누를 수 있다(누르면 읽어 온다)", r2.count === null && r2.openable === true);
+api.processFetchCache["c-new"] = { state: "done", found: false, steps: [] };
+ok("대화 기록이 정리됐으면 누를 수 없다", api.resolveProcessState({ steps: null, convId: "c-new" }).openable === false);
+api.processFetchCache["c-new"] = { state: "error" };
+ok("읽기에 실패했으면 다시 누를 수 있다", api.resolveProcessState({ steps: null, convId: "c-new" }).openable === true);
+api.processFetchCache["c-new"] = { state: "done", found: true, steps: two };
+r2 = api.resolveProcessState({ steps: null, convId: "c-new" });
+ok("읽어 온 뒤에는 개수가 나온다", r2.count === 2 && r2.openable === true);
 
 console.log("HTML 이스케이프");
 const evil = api.buildProcessRowsHtml([S("run_command", { detail: 'echo "<script>alert(1)</script>" & dir', label: "<b>x</b>", think: 'a"b' })]);
