@@ -6,7 +6,9 @@
 :root {
   color-scheme: dark;
   --sidebar-w: 272px;
-  --sidebar-collapsed-w: 60px;
+  --sidebar-collapsed-w: 60px;   /* 접힌 폭. 아이콘 중심을 x=30 에 두는 기준(아래 사이드바 주석 참고) */
+  --sidebar-dur: 0.22s;
+  --sidebar-ease: cubic-bezier(0.4, 0, 0.2, 1);
   --topbar-h: 52px;
 
   /* 바탕 계층 */
@@ -142,6 +144,10 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 
 /* ==========================================================================
    사이드바
+   접고 펼칠 때 아이콘이 가로로 튀지 않게 한다. 예전에는 접힘 상태에서 아이콘을 "가운데 정렬"해서,
+   폭이 줄기 시작하는 순간 아직 넓은 사이드바의 한가운데로 아이콘이 순간 이동했다가 다시 쓸려 왔다.
+   그래서 아이콘의 가로 위치를 펼침/접힘에서 같게(중심 x=30 = 접힌 폭 60px의 한가운데) 두고
+   폭만 줄어들게 했다. 글자와 보조 요소는 먼저 옅어지고, 줄어드는 폭에 잘려 나간다.
    ========================================================================== */
 .app-sidebar {
   width: var(--sidebar-w);
@@ -151,7 +157,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
-  transition: width 0.2s ease, min-width 0.2s ease;
+  transition: width var(--sidebar-dur) var(--sidebar-ease), min-width var(--sidebar-dur) var(--sidebar-ease);
   z-index: 50;
   position: relative;
   overflow: hidden;
@@ -159,7 +165,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 
 .sidebar-header {
   height: var(--topbar-h);
-  padding: 0 12px 0 16px;
+  padding: 0 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -168,11 +174,14 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 
 .sidebar-brand {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
   overflow: hidden;
   white-space: nowrap;
+  transition: opacity 0.15s ease 0.06s;
 }
 
 .brand-mark {
@@ -187,10 +196,11 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .brand-sub { font-size: var(--fs-xs); color: var(--ink-3); }
 
 .sidebar-toggle-btn .icon { width: 16px; height: 16px; }
+.sidebar-toggle-btn { transition: transform var(--sidebar-dur) var(--sidebar-ease), background 0.12s ease, border-color 0.12s ease; }
 
 /* 1차 네비게이션 */
 .sidebar-primary-nav {
-  padding: 10px 8px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -202,7 +212,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 8px 11px;
   border-radius: var(--r-md);
   border: none;
   background: transparent;
@@ -220,22 +230,24 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .nav-item.active::before {
   content: "";
   position: absolute;
-  left: -8px;
+  left: -10px;
   top: 8px;
   bottom: 8px;
   width: 3px;
   border-radius: 0 2px 2px 0;
   background: var(--ink);
 }
-.nav-label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; transition: opacity 0.15s ease 0.06s; }
 
 /* 2차 패널 */
 .sidebar-sub-section {
   flex: 1;
+  width: calc(var(--sidebar-w) - 1px);   /* 사이드바가 좁아져도 폭을 유지(안 그러면 접히는 동안 글줄이 다시 감긴다) */
   overflow-y: auto;
   overflow-x: hidden;
   padding: 14px 8px;
   scrollbar-width: thin;
+  transition: opacity 0.15s ease 0.06s;
 }
 
 .sub-panel {
@@ -348,7 +360,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 /* 사이드바 하단 */
 .sidebar-footer {
   border-top: 1px solid var(--line);
-  padding: 12px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -362,6 +374,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   font-size: var(--fs-sm);
   color: var(--ink-2);
   padding: 0 4px;
+  transition: padding-left var(--sidebar-dur) var(--sidebar-ease);
 }
 
 .status-pulse-dot {
@@ -373,7 +386,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .status-pulse-dot.offline { background: var(--ink-3); }
 
-.status-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: opacity 0.15s ease 0.06s; }
 
 /* 워처가 꺼져 있을 때만 보이는 켜기 버튼. agy 색 외곽선으로 "agy를 켠다"를 나타낸다 */
 .watcher-start-btn {
@@ -387,6 +400,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   border: 1px solid var(--agy);
   border-radius: var(--r-md);
   cursor: pointer;
+  transition: opacity 0.15s ease 0.06s, background 0.12s ease;
 }
 .watcher-start-btn:hover:not(:disabled) { background: var(--agy-soft); }
 .watcher-start-btn:disabled {
@@ -402,6 +416,11 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--ink-2);
+  width: calc(var(--sidebar-w) - 29px);   /* 폭 고정: 접히는 동안 글줄이 다시 감기지 않게 */
+  flex-shrink: 0;
+  max-height: 96px;
+  overflow: hidden;
+  transition: max-height var(--sidebar-dur) var(--sidebar-ease), margin var(--sidebar-dur) var(--sidebar-ease), opacity 0.15s ease 0.06s;
 }
 .watcher-start-msg.is-error { color: var(--err); }
 .watcher-start-msg[hidden] { display: none; }
@@ -411,16 +430,21 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   align-items: center;
   justify-content: space-between;
   padding-left: 4px;
+  transition: padding-left var(--sidebar-dur) var(--sidebar-ease);
 }
 
 .auto-refresh-label {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   font-size: var(--fs-xs);
   color: var(--ink-3);
   cursor: pointer;
   user-select: none;
+  transition: opacity 0.15s ease 0.06s;
 }
 .auto-refresh-label:hover { color: var(--ink-2); }
 .auto-refresh-label input { accent-color: var(--agy); margin: 0; }
@@ -433,30 +457,66 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--ink-3);
+  width: calc(var(--sidebar-w) - 29px);   /* 폭 고정: 접히는 동안 글줄이 다시 감기지 않게 */
+  flex-shrink: 0;
+  max-height: 96px;
+  overflow: hidden;
+  transition: max-height var(--sidebar-dur) var(--sidebar-ease), margin var(--sidebar-dur) var(--sidebar-ease), opacity 0.15s ease 0.06s;
 }
 .sidebar-note code { font-size: 11px; color: var(--ink-2); }
 
-/* 접힌 사이드바 */
-.app-sidebar.collapsed {
-  width: var(--sidebar-collapsed-w);
-  min-width: var(--sidebar-collapsed-w);
+/* 접힌 사이드바 (데스크톱만. 모바일은 서랍식이라 접힘이 없다)
+   아이콘은 제자리(중심 x=30)에 두고 폭만 줄인다. 옅어지는 요소는 접힐 때 지연 없이 빨리 사라지고(0.1s),
+   펼칠 때는 폭이 어느 정도 늘어난 뒤 나타난다(위 기본 규칙의 0.06s 지연). */
+@media (min-width: 769px) {
+  .app-sidebar.collapsed {
+    width: var(--sidebar-collapsed-w);
+    min-width: var(--sidebar-collapsed-w);
+  }
+  .app-sidebar.collapsed .sidebar-toggle-btn { transform: rotate(180deg); }
+
+  .app-sidebar.collapsed .sidebar-brand,
+  .app-sidebar.collapsed .nav-label,
+  .app-sidebar.collapsed .status-text,
+  .app-sidebar.collapsed .auto-refresh-label {
+    opacity: 0;
+    transition: opacity 0.1s ease;
+  }
+
+  .app-sidebar.collapsed .sidebar-sub-section {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.1s ease, visibility 0s linear var(--sidebar-dur);
+  }
+
+  /* 켜기 버튼과 안내: 보이지 않는 동안 포커스가 가지 않게 visibility 도 함께 끈다 */
+  .app-sidebar.collapsed .watcher-start-btn {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.1s ease, visibility 0s linear 0.1s;
+  }
+
+  /* 점과 새로고침 버튼의 중심이 x=30 이 되도록 가로 여백만 옮긴다 */
+  .app-sidebar.collapsed .watcher-status-card { padding-left: 12px; }
+  .app-sidebar.collapsed .sidebar-controls { padding-left: 0; }
+
+  /* 안내 문단은 높이를 0 으로 줄이고, 플렉스 gap(8px)까지 상쇄한다 */
+  .app-sidebar.collapsed .sidebar-note {
+    max-height: 0;
+    margin-top: -8px;
+    opacity: 0;
+    transition: max-height var(--sidebar-dur) var(--sidebar-ease), margin var(--sidebar-dur) var(--sidebar-ease), opacity 0.1s ease;
+  }
+  .app-sidebar.collapsed .watcher-start-msg {
+    max-height: 0;
+    margin-top: -8px;
+    margin-bottom: -8px;
+    opacity: 0;
+    transition: max-height var(--sidebar-dur) var(--sidebar-ease), margin var(--sidebar-dur) var(--sidebar-ease), opacity 0.1s ease;
+  }
 }
-.app-sidebar.collapsed .sidebar-header { padding: 0; justify-content: center; }
-.app-sidebar.collapsed .sidebar-brand { display: none; }
-.app-sidebar.collapsed .sidebar-toggle-btn { transform: rotate(180deg); }
-.app-sidebar.collapsed .sidebar-primary-nav { padding: 10px 0; align-items: center; }
-.app-sidebar.collapsed .nav-item { width: 40px; height: 40px; padding: 0; justify-content: center; }
-.app-sidebar.collapsed .nav-item.active::before { left: -10px; }
-.app-sidebar.collapsed .nav-label,
-.app-sidebar.collapsed .sidebar-sub-section,
-.app-sidebar.collapsed .status-text,
-.app-sidebar.collapsed .auto-refresh-label,
-.app-sidebar.collapsed .sidebar-note,
-.app-sidebar.collapsed .watcher-start-btn,
-.app-sidebar.collapsed .watcher-start-msg { display: none; }
-.app-sidebar.collapsed .sidebar-footer { padding: 12px 0; align-items: center; }
-.app-sidebar.collapsed .watcher-status-card { justify-content: center; padding: 0; }
-.app-sidebar.collapsed .sidebar-controls { justify-content: center; padding: 0; }
 
 /* ==========================================================================
    상단 바와 메인 스크롤
@@ -1242,7 +1302,6 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
     transition: left 0.2s ease;
   }
   .app-sidebar.open { left: 0; }
-  .app-sidebar.collapsed { width: var(--sidebar-w); min-width: var(--sidebar-w); }
 
   .main-content-scroll { padding: 20px 16px 40px; }
   .dash { gap: 28px; }
