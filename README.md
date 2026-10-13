@@ -107,6 +107,7 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
   실행 시 `~/.samjil/delegate-agy/runtime/inbox`를 감시하며 Claude로부터 위임받은 작업을 `agy` CLI로 자동 처리하고 응답을 반환합니다.
   - 이미 워처가 떠 있으면 정상 종료를 요청하고 **처리 중인 작업이 끝나기를 기다린 뒤** 새 워처로 교체합니다. 기본 대기는 30초이고, 그 안에 끝나지 않으면 새 워처를 띄우지 않고 중단합니다. 긴 작업이 돌고 있으면 `-WaitSeconds 900`처럼 늘리세요.
   - **마감 규칙**: `agy` 호출 하나는 최대 1800초(30분)까지 기다립니다. 그 전이라도 `agy`의 대화 기록에 새 단계가 300초 동안 없으면 멈춘 것으로 보고 중단하며, 이유를 실패 메시지에 남깁니다. 단계가 계속 쌓이는 동안은 끊지 않습니다. 10분을 넘기는 호출은 600초마다 `runtime/logs/watcher.log`에 `진행 점검` 줄을 남깁니다.
+  - **상태 확인**: `ensure-agy-running.ps1 -CheckOnly -StaleThresholdSeconds 0`은 켜지 않고 `ALIVE`(종료 코드 0) / `DEAD`(1) / `MANUAL_STOP`(2)만 알려 줍니다. `samjil-delegate-agy` 스킬이 위임 직전에 이것으로 확인하고, 꺼져 있으면 사용자에게 켜도 되는지 먼저 묻습니다.
 
 - **🛑 Antigravity CLI 위임 워처 안전 중지**:
   ```powershell
@@ -127,6 +128,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\delegate-agy\invoke-ag
 
 - `agy-progress.tests.ps1`: 대화 찾기, 마지막 활동 시각, 멈춤 판정 경계값 등 단위 테스트 (몇 초)
 - `invoke-agy-once.tests.ps1`: 가짜 `agy`로 기다리는 루프를 끝까지 돌리는 통합 테스트 (약 1~2분). 임시 폴더에 `agy.exe`로 복사한 `powershell.exe`를 쓰므로 실제 `agy`는 건드리지 않습니다.
+- `ensure-check-only.tests.ps1`: `ensure-agy-running.ps1 -CheckOnly`의 `ALIVE`/`DEAD`/`MANUAL_STOP` 판정
 
 뷰어의 워처 자동 점검:
 

@@ -19,6 +19,10 @@
 # 사용법:
 #   .\ensure-agy-running.ps1                 # 1회만 점검하고 종료
 #   .\ensure-agy-running.ps1 -LoopMinutes 2  # 계속 떠서 2분마다 점검 (start-watchdog.vbs 방식)
+#   .\ensure-agy-running.ps1 -CheckOnly      # 켜지 않고 상태만 확인: ALIVE(종료 코드 0) / DEAD(1) / MANUAL_STOP(2)
+#
+# -StaleThresholdSeconds 0 을 함께 주면 "하트비트가 최근이면 살아 있음" 판정(마지막 보조 검사)을 끕니다.
+# 워처 창을 닫아도 하트비트 파일은 남아서, 그 판정을 두면 죽은 직후 최대 300초 동안 살아 있다고 오판합니다.
 
 param(
     [string]$RepoRoot    = "",
@@ -26,7 +30,9 @@ param(
     [int]$StaleThresholdSeconds = 300,
     [int]$LoopMinutes = 0,
     # "죽은 것 같다"고 판단됐을 때, 재시작하기 전에 한 번 더 확인하기까지 기다리는 시간입니다.
-    [int]$ConfirmDelaySeconds = 20
+    [int]$ConfirmDelaySeconds = 20,
+    # 켜지 않고 상태만 보고합니다(스킬이 위임 직전에 "워처가 켜져 있는가"를 확인하는 용도).
+    [switch]$CheckOnly
 )
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -162,6 +168,14 @@ function Invoke-EnsureAgyRunningCheck {
     }
 
     Write-WatchdogLog "재시작 명령을 실행했습니다. (watcher.log에서 '===== 워처 시작' 로그로 확인 가능)"
+}
+
+if ($CheckOnly) {
+    # 살아 있으면 수동 정지 플래그가 있어도 ALIVE 입니다(워처가 현재 작업을 마치고 끄는 중일 수 있음).
+    if (Test-AgyWatcherAlive) { Write-Output "ALIVE"; exit 0 }
+    if (Test-Path $ManualStopFlag) { Write-Output "MANUAL_STOP"; exit 2 }
+    Write-Output "DEAD"
+    exit 1
 }
 
 if ($LoopMinutes -le 0) {
