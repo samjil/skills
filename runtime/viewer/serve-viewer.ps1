@@ -326,6 +326,24 @@ function Find-HandoffProjectDir([string]$projectName) {
 
 
 # delegate-agy 스크립트를 찾습니다. $RelPath 는 scripts 폴더 기준(예: "start-agy.ps1", "sub\ensure-agy-running.ps1").
+# @cwd 값 목록을 중복(대소문자, 끝의 \ 또는 / 무시)·빈 값을 빼고 줄 순서대로 배열로 만든다.
+# common.ps1 의 ConvertTo-CwdList 와 같은 규칙의 사본이다(뷰어는 common.ps1 을 불러오지 않는다). tests\delegate-agy\cwd-list.tests.ps1 이 둘이 같은지 확인한다.
+function ConvertTo-CwdList($Value) {
+    $out = New-Object System.Collections.ArrayList
+    $seen = @{}
+    foreach ($v in @($Value)) {
+        if ($null -eq $v) { continue }
+        $s = ([string]$v).Trim()
+        if (-not $s) { continue }
+        $key = $s.TrimEnd([char]92, [char]47).ToLowerInvariant()
+        if (-not $key) { $key = $s.ToLowerInvariant() }
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        [void]$out.Add($s)
+    }
+    return @($out.ToArray())
+}
+
 function Find-DelegateScript([string]$RelPath) {
     $cands = @()
     if ($env:AGY_DELEGATE_SCRIPTS) { $cands += (Join-Path $env:AGY_DELEGATE_SCRIPTS $RelPath) }
@@ -1059,7 +1077,7 @@ try {
                                 $rawText = $rawText.Substring(1)
                             }
                             $lines = $rawText -split "\r?\n"
-                            $cwdVal = ""
+                            $cwdLines = New-Object System.Collections.ArrayList
                             $sessionVal = ""
                             $modelVal = ""
                             $bodyStartIdx = $lines.Length
@@ -1069,7 +1087,7 @@ try {
                                     continue
                                 }
                                 if ($trimmed -match '^@cwd:\s*(.*)$') {
-                                    $cwdVal = $Matches[1].Trim()
+                                    [void]$cwdLines.Add($Matches[1].Trim())
                                     continue
                                 }
                                 if ($trimmed -match '^@session:\s*(.*)$') {
@@ -1133,7 +1151,7 @@ try {
                                 task_id    = $f.BaseName
                                 created    = $f.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")
                                 question   = $question
-                                cwd        = $cwdVal
+                                cwd        = @(ConvertTo-CwdList $cwdLines.ToArray())
                                 session    = $sessionVal
                                 session_id = $sessionId
                                 model      = $resolvedModel

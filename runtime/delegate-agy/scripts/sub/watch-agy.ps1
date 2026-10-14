@@ -124,19 +124,19 @@ $FallbackErrorPattern = '(?i)(quota|rate.?limit|429|resource.?exhausted|overload
 $SelectableModels = @(@("gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low") + $ModelPriority | Select-Object -Unique)
 
 # 지시파일 맨 위의 "@키: 값" 줄(순서 무관, 여러 줄 가능)을 읽고, 그 형식이 아닌 첫 줄부터를 프롬프트 본문으로 돌려줍니다.
-#   @cwd:     agy 의 워크스페이스에 추가할 폴더 (--add-dir)
+#   @cwd:     agy 의 워크스페이스에 추가할 폴더 (--add-dir). 여러 줄 가능: 줄마다 폴더 하나, 폴더마다 --add-dir 를 한 번씩 넘긴다(줄 순서 유지, 같은 경로는 대소문자·끝의 \ 를 무시하고 한 번만)
 #   @session: 대화를 이어갈 세션 이름
 #   @model:   이번 호출에 쓸 모델 하나 (위 $SelectableModels)
-# 반환: @{ Cwd; Session; Model; Prompt }  (없는 키는 $null)
+# 반환: @{ Cwd; Session; Model; Prompt }  (Cwd 는 폴더 배열이고 없으면 빈 배열, Session/Model 은 없으면 $null)
 function ConvertFrom-TaskDirectives([string]$rawText) {
-    $cwd = $null; $session = $null; $model = $null
+    $cwdRaw = New-Object System.Collections.ArrayList; $session = $null; $model = $null
     $prompt = $rawText
     while ($prompt.Length -gt 0) {
         $firstLine = ($prompt -split "`r?`n", 2)[0]
         if ($firstLine -match '^\s*$') {
             # 빈 줄은 건너뛰고 계속 파싱합니다
         } elseif ($firstLine -match '^\ufeff?@cwd:\s*(.+)$') {
-            $cwd = $Matches[1].Trim()
+            [void]$cwdRaw.Add($Matches[1].Trim())
         } elseif ($firstLine -match '^\ufeff?@session:\s*(.+)$') {
             $session = $Matches[1].Trim()
         } elseif ($firstLine -match '^\ufeff?@model:\s*(.+)$') {
@@ -147,7 +147,7 @@ function ConvertFrom-TaskDirectives([string]$rawText) {
         $rest = ($prompt -split "`r?`n", 2)
         $prompt = if ($rest.Length -gt 1) { $rest[1] } else { "" }
     }
-    return @{ Cwd = $cwd; Session = $session; Model = $model; Prompt = $prompt }
+    return @{ Cwd = @(ConvertTo-CwdList $cwdRaw.ToArray()); Session = $session; Model = $model; Prompt = $prompt }
 }
 
 # 요청한 @model 을 확인합니다. 반환: @{ Model = <정식 ID 또는 $null>; Error = <사용자에게 보일 사유 또는 $null> }
@@ -1089,7 +1089,7 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
 
         if ($conversationId) { $agyArgs += @('--conversation', $conversationId) } else { $agyArgs += @('--model', $candidate) }
 
-        if ($targetCwd) { $agyArgs += @('--add-dir', $targetCwd) }
+        foreach ($dir in @($targetCwd)) { if ($dir) { $agyArgs += @('--add-dir', [string]$dir) } }
 
         if ($skipPerm)  { $agyArgs += '--dangerously-skip-permissions' }
 
@@ -1439,7 +1439,7 @@ try {
 
             # 그 형식이 아닌 첫 줄부터가 실제 프롬프트 본문입니다. 지원하는 키:
 
-            #   @cwd:     agy의 워크스페이스에 추가할 폴더 (--add-dir)
+            #   @cwd:     agy의 워크스페이스에 추가할 폴더 (--add-dir). 여러 줄 가능(폴더마다 --add-dir 한 번씩)
 
             #   @session: 대화를 이어갈 세션 이름 (3.8절 - docs\설계.md). 같은 이름으로 다시
 
@@ -1449,7 +1449,7 @@ try {
 
             # (@model: <ID> 는 이번 호출에 쓸 모델 하나를 지정합니다 - ConvertFrom-TaskDirectives 참고)
             $directives     = ConvertFrom-TaskDirectives $rawText
-            $targetCwd      = $directives.Cwd
+            $targetCwds     = @($directives.Cwd)
             $sessionName    = $directives.Session
             $requestedModel = $directives.Model
             $promptText     = $directives.Prompt
@@ -1472,7 +1472,8 @@ try {
 
                     if ($existingSession.conversation_id) { $conversationId = [string]$existingSession.conversation_id }
 
-                    if (-not $targetCwd -and $existingSession.cwd) { $targetCwd = [string]$existingSession.cwd }
+                    # 이번 호출에 @cwd 가 하나라도 있으면 이번 목록만, 없으면 세션의 목록(예전 파일의 문자열 하나도 읽는다)
+                    $targetCwds = @(Resolve-TaskCwds $targetCwds $existingSession.cwd)
 
                     if ($existingSession.model) { $knownModel = [string]$existingSession.model }
 
@@ -1495,11 +1496,12 @@ try {
             $requestedModel = $modelCheck.Model
             if ($requestedModel) { Log "  -> 지정 모델(@model): $requestedModel (다른 모델로 자동 전환하지 않음)" }
 
-            if ($targetCwd -and -not (Test-Path $targetCwd)) {
+            $missingCwds = @(Get-MissingCwds $targetCwds)
+            if ($missingCwds.Count -gt 0) {
 
-                Set-Content -Path $outFile -Value "지정한 @cwd 경로를 찾을 수 없습니다: $targetCwd" -Encoding UTF8
+                Set-Content -Path $outFile -Value "지정한 @cwd 경로를 찾을 수 없습니다: $($missingCwds -join ', ')" -Encoding UTF8
 
-                Log "실패: @cwd 경로 없음 ($targetCwd)"
+                Log "실패: @cwd 경로 없음 ($($missingCwds -join ', '))"
 
                 # agy를 호출하지 않고 여기서 바로 실패 처리하는 경우도, 나중에 "이 작업이
 
@@ -1519,9 +1521,9 @@ try {
 
 
 
-            if ($targetCwd) {
+            foreach ($cwdPath in $targetCwds) {
 
-                Log "  -> 대상 폴더(--add-dir): $targetCwd"
+                Log "  -> 대상 폴더(--add-dir): $cwdPath"
 
             }
 
@@ -1557,7 +1559,7 @@ try {
                     $safePrompt = $promptText -replace '"', '\"'
                 }
 
-                $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwd -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel -taskId $baseName -promptFile $tempPromptFile -requestedModel $requestedModel
+                $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwds -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel -taskId $baseName -promptFile $tempPromptFile -requestedModel $requestedModel
 
                 if ($agyResult.RawJson) {
 
@@ -1611,7 +1613,7 @@ try {
 
                     if ($sessionName -and $agyResult.ConversationId) {
 
-                        Write-Session -Name $sessionName -ConversationId $agyResult.ConversationId -Cwd $targetCwd -Model $agyResult.ModelUsed
+                        Write-Session -Name $sessionName -ConversationId $agyResult.ConversationId -Cwd $targetCwds -Model $agyResult.ModelUsed
 
                     }
 

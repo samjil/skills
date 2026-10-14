@@ -24,6 +24,8 @@ Set-Content -Path (Join-Path $fakeBin "fake-agy.ps1") -Encoding ASCII -Value @'
 $a = @($args)
 $i = [Array]::IndexOf([string[]]$a, '--model'); $model = if ($i -ge 0) { $a[$i + 1] } else { "" }
 Add-Content -Path $env:FAKE_ARGS_LOG -Value ("model=" + $model)
+$dirs = @(); for ($k = 0; $k -lt ($a.Count - 1); $k++) { if ($a[$k] -eq '--add-dir') { $dirs += $a[$k + 1] } }
+Add-Content -Path $env:FAKE_DIRS_LOG -Value ("dirs=" + ($dirs -join '|'))
 $quota = @($env:FAKE_QUOTA_MODELS -split ',' | Where-Object { $_ })
 if ($quota -contains $model) { '{"status":"ERROR","error":"quota exceeded for model ' + $model + '"}' }
 else {
@@ -41,6 +43,7 @@ Set-Content -Path (Join-Path $fakeBin "agy.cmd") -Encoding ASCII -Value "@echo o
 $env:PATH = "$fakeBin;$env:PATH"
 $env:AGY_HOME = Join-Path $work "agyhome"
 $env:FAKE_ARGS_LOG = Join-Path $work "args.log"
+$env:FAKE_DIRS_LOG = Join-Path $work "dirs.log"
 $env:FAKE_QUOTA_MODELS = "gemini-3.8-flash-medium"
 
 function Send-Task([string]$name, [string]$text) {
@@ -109,6 +112,95 @@ $qaBad = $qaRows | Where-Object { $_.task_id -eq "e2e_bad" } | Select-Object -Fi
 Assert-Equal "  agy 를 부르지 않은 실패(잘못된 모델) 기록의 process 도 null" $true ($null -eq $qaBad.process)
 $qaDef = $qaRows | Where-Object { $_.task_id -eq "e2e_default" } | Select-Object -First 1
 Assert-Equal "  모델을 안 고른 성공 작업도 process 가 저장된다" 2 @($qaDef.process).Count
+
+
+    Write-Host "@cwd 여러 폴더 (한 번에 하나씩 보내고 가짜 agy 가 받은 --add-dir 를 본다)"
+    $dirA = Join-Path $work "proj-a"; $dirB = Join-Path $work "docs b"; $dirC = Join-Path $work "proj-c"
+    foreach ($dd in @($dirA, $dirB, $dirC)) { New-Item -ItemType Directory -Force -Path $dd | Out-Null }
+    function Invoke-CwdTask([string]$name, [string]$text) {
+        if (Test-Path $env:FAKE_DIRS_LOG) { Remove-Item $env:FAKE_DIRS_LOG -Force }
+        Send-Task $name $text
+        $until = (Get-Date).AddSeconds(60)
+        while ((Get-Date) -lt $until -and $null -eq (Get-Response $name)) { Start-Sleep -Milliseconds 500 }
+        $dl = @(if (Test-Path $env:FAKE_DIRS_LOG) { Get-Content $env:FAKE_DIRS_LOG })
+        return @{ Response = (Get-Response $name); Dirs = $dl }
+    }
+    $watcherLog = Join-Path $rt "logs\watcher.log"
+    # 응답 파일이 먼저 생기고 세션 파일은 그 직후에 쓰이므로, 기대한 내용이 될 때까지 잠깐 기다리며 읽는다
+    function Read-SessionUntil([string]$path, [scriptblock]$ok) {
+        $obj = $null
+        $until = (Get-Date).AddSeconds(15)
+        while ((Get-Date) -lt $until) {
+            try { $obj = (Get-Content -Raw -LiteralPath $path -Encoding UTF8) | ConvertFrom-Json } catch { $obj = $null }
+            if ($obj -and (& $ok $obj)) { break }
+            Start-Sleep -Milliseconds 300
+        }
+        return $obj
+    }
+    function Get-LogLines([string]$name) {
+        # 그 작업을 처리하는 동안 남은 로그만(처리 중: <이름>.md 줄부터 다음 처리 중 줄 앞까지)
+        $all = @(Get-Content $watcherLog -Encoding UTF8)
+        $start = -1; for ($i = 0; $i -lt $all.Count; $i++) { if ($all[$i] -like "*처리 중: $name.md*") { $start = $i } }
+        if ($start -lt 0) { return @() }
+        $end = $all.Count; for ($i = $start + 1; $i -lt $all.Count; $i++) { if ($all[$i] -like "*처리 중:*") { $end = $i; break } }
+        return @($all[$start..($end - 1)])
+    }
+
+    $r = Invoke-CwdTask "cwd_one" "@cwd: $dirA`n한 폴더 질문"
+    Assert-Equal "@cwd 한 줄은 이전과 같이 --add-dir 하나" "dirs=$dirA" $r.Dirs[0]
+    Assert-Equal "  agy 는 한 번 불렸다" 1 $r.Dirs.Count
+    $logOne = Get-LogLines "cwd_one"
+    Assert-Equal "  watcher.log 에 '대상 폴더(--add-dir)' 줄이 한 번" 1 @($logOne | Where-Object { $_ -like "*대상 폴더(--add-dir): $dirA*" }).Count
+
+    $r = Invoke-CwdTask "cwd_two" "@cwd: $dirA`n@cwd: $dirB`n@model: gemini-3.8-flash-low`n두 폴더 질문"
+    Assert-Equal "@cwd 두 줄은 --add-dir 를 폴더마다 한 번씩, 줄 순서대로" "dirs=$dirA|$dirB" $r.Dirs[0]
+    Assert-Equal "  처리되어 응답이 온다(@model 도 함께 읽힘)" "ok from gemini-3.8-flash-low" $r.Response
+    $logTwo = Get-LogLines "cwd_two"
+    Assert-Equal "  watcher.log 에 '대상 폴더(--add-dir)' 줄이 폴더마다 한 줄(2번)" 2 @($logTwo | Where-Object { $_ -like "*대상 폴더(--add-dir):*" }).Count
+    $dirLines = @($logTwo | Where-Object { $_ -like "*대상 폴더(--add-dir):*" })
+    Assert-Equal "  첫 번째 로그 줄이 A, 두 번째가 B" "A|B" ("{0}|{1}" -f $(if ($dirLines[0] -like "*proj-a") { "A" } else { "?" }), $(if ($dirLines[1] -like "*docs b") { "B" } else { "?" }))
+
+    $r = Invoke-CwdTask "cwd_dup" "@cwd: $dirA`n@cwd: $($dirA.ToUpper())\`n@cwd: $dirB`n중복 질문"
+    Assert-Equal "같은 폴더를 대소문자·끝의 \ 만 다르게 또 써도 한 번만 넘긴다" "dirs=$dirA|$dirB" $r.Dirs[0]
+
+    $callsBefore = @(if (Test-Path $env:FAKE_ARGS_LOG) { Get-Content $env:FAKE_ARGS_LOG }).Count
+    $missing1 = Join-Path $work "no-such-1"; $missing2 = Join-Path $work "no-such-2"
+    $r = Invoke-CwdTask "cwd_missing" "@cwd: $dirA`n@cwd: $missing1`n@cwd: $dirB`n@cwd: $missing2`n없는 폴더가 섞인 질문"
+    Assert-Equal "없는 폴더가 하나라도 있으면 agy 를 부르지 않는다" 0 $r.Dirs.Count
+    Assert-Equal "  agy 호출 기록도 늘지 않았다" $callsBefore (@(if (Test-Path $env:FAKE_ARGS_LOG) { Get-Content $env:FAKE_ARGS_LOG }).Count)
+    Assert-Equal "  오류 메시지에 없는 폴더를 모두 적는다" $true (($r.Response -like "*지정한 @cwd 경로를 찾을 수 없습니다*") -and ($r.Response -like "*$missing1*") -and ($r.Response -like "*$missing2*"))
+    Assert-Equal "  있는 폴더(A, B)는 오류 메시지에 없다" $false (($r.Response -like "*$dirA*") -or ($r.Response -like "*$dirB*"))
+    Assert-Equal "  watcher.log 에도 '@cwd 경로 없음' 이 남는다" 1 @(Get-LogLines "cwd_missing" | Where-Object { $_ -like "*@cwd 경로 없음*" }).Count
+
+    Write-Host "@cwd 여러 폴더 + 세션(@session)"
+    $r = Invoke-CwdTask "cwd_s1" "@session: 다폴더-세션`n@cwd: $dirA`n@cwd: $dirB`n@model: gemini-3.8-flash-low`n첫 호출"
+    Assert-Equal "첫 호출: 두 폴더가 열린다" "dirs=$dirA|$dirB" $r.Dirs[0]
+    $sessFile = Join-Path $rt "logs\sessions\다폴더-세션.json"
+    $sess = Read-SessionUntil $sessFile { param($o) @($o.cwd).Count -eq 2 }
+    Assert-Equal "  세션 파일의 cwd 는 두 폴더 배열" "$dirA|$dirB" (@($sess.cwd) -join "|")
+    $r = Invoke-CwdTask "cwd_s2" "@session: 다폴더-세션`n두 번째 호출(@cwd 없음)"
+    Assert-Equal "두 번째 호출(@cwd 없음): 세션의 두 폴더가 그대로 열린다" "dirs=$dirA|$dirB" $r.Dirs[0]
+    $r = Invoke-CwdTask "cwd_s3" "@session: 다폴더-세션`n@cwd: $dirC`n세 번째 호출(@cwd 하나)"
+    Assert-Equal "이번 호출에 @cwd 가 하나라도 있으면 이번 목록만 쓴다(세션의 폴더와 합치지 않는다)" "dirs=$dirC" $r.Dirs[0]
+    $sess = Read-SessionUntil $sessFile { param($o) @($o.cwd).Count -eq 1 -and @($o.cwd)[0] -eq $dirC }
+    Assert-Equal "  세션에는 새 목록이 저장된다" "$dirC" (@($sess.cwd) -join "|")
+    $r = Invoke-CwdTask "cwd_s4" "@session: 다폴더-세션`n네 번째 호출(@cwd 없음)"
+    Assert-Equal "  그다음 @cwd 없는 호출은 바뀐 목록(C)을 이어서 쓴다" "dirs=$dirC" $r.Dirs[0]
+
+    Write-Host "예전 형식 세션 파일(cwd 가 문자열)"
+    $oldSess = '{ "name": "예전-세션", "conversation_id": "conv-old", "cwd": ' + (ConvertTo-Json -InputObject $dirB) + ', "model": "gemini-3.8-flash-low", "created_at": "2026-10-01 10:00:00", "last_used_at": "2026-10-01 10:00:00", "turn_count": 2 }'
+    [System.IO.File]::WriteAllText((Join-Path $rt "logs\sessions\예전-세션.json"), $oldSess, (New-Object System.Text.UTF8Encoding($false)))
+    $r = Invoke-CwdTask "cwd_old" "@session: 예전-세션`n예전 세션을 이어갑니다"
+    Assert-Equal "문자열 cwd 가 든 세션을 이어가면 그 폴더 하나가 열린다" "dirs=$dirB" $r.Dirs[0]
+    # 응답 파일이 먼저 생기고 세션 파일은 그 직후에 쓰이므로, 다 쓰일 때까지(횟수가 3이 될 때까지) 잠깐 기다린다
+    $oldAfter = $null
+    $untilSess = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $untilSess) {
+        try { $oldAfter = (Get-Content -Raw -LiteralPath (Join-Path $rt "logs\sessions\예전-세션.json") -Encoding UTF8) | ConvertFrom-Json } catch { $oldAfter = $null }
+        if ($oldAfter -and $oldAfter.turn_count -eq 3) { break }
+        Start-Sleep -Milliseconds 300
+    }
+    Assert-Equal "  이어간 뒤 세션 파일은 배열 형식으로 바뀌고 폴더·횟수가 유지된다" "$dirB|1|3" ("{0}|{1}|{2}" -f (@($oldAfter.cwd) -join "|"), @($oldAfter.cwd).Count, $oldAfter.turn_count)
 
 Write-Host "사용량 기록 (usage.csv)"
     $usage = @(Import-Csv (Join-Path $rt "logs\usage.csv") -Encoding UTF8)

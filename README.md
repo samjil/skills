@@ -125,6 +125,7 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
   - **지시파일 지시어**: 지시파일(`inbox`에 넣는 파일) 맨 위의 `@이름: 값` 줄입니다. 순서는 상관없고 여러 줄을 쓸 수 있으며, `@`로 시작하지 않는 첫 줄부터가 실제 질문입니다.
     - **`@cwd: <폴더>`** — `cwd`는 **c**urrent **w**orking **d**irectory(현재 작업 폴더)의 약자입니다. 원래는 프로그램이 지금 "서 있는" 폴더(셸의 `pwd`)라는 뜻이지만, 여기서는 **agy가 읽고 쓸 프로젝트 폴더를 알려 주는 줄**입니다. 이름과 달리 agy의 작업 폴더를 바꾸지는 않습니다. agy는 워처의 런타임 폴더에서 실행되고, 이 폴더는 `--add-dir`로 접근 허용만 추가됩니다(agy에는 `--cwd` 옵션이 없음). 폴더가 필요 없는 작업이면 이 줄을 빼면 되고, 경로가 없는 폴더면 `지정한 @cwd 경로를 찾을 수 없습니다`로 실패합니다.
       헷갈리면 이렇게 기억하세요: **`@cwd` = agy의 `--add-dir`(접근을 허용할 폴더 추가)**. `cwd`라는 이름은 `subprocess`의 `cwd=`처럼 "작업 폴더를 옮긴다"는 관례를 따랐을 뿐이고, 같은 일을 표준적으로 부르는 이름은 `--add-dir`입니다(이름은 바꾸지 않고 `@cwd`를 유지하기로 했습니다).
+    - **`@cwd: <폴더>`는 여러 줄 가능** — 폴더마다 한 줄씩 쓰면 워처가 폴더마다 `--add-dir`를 한 번씩 넘깁니다(저장소와 문서 폴더처럼 폴더가 여럿 필요한 작업용). 줄 순서는 유지하고 같은 경로(대소문자·끝의 `\` 무시)는 한 번만 씁니다. 없는 폴더가 하나라도 있으면 `agy`를 부르지 않고 실패하며 오류에 없는 폴더가 모두 적힙니다. `@session`으로 이어가는 호출에 `@cwd`가 하나라도 있으면 이번 목록만 쓰고(합치지 않음), 하나도 없으면 세션에 저장된 목록을 씁니다. 한 줄짜리와 `cwd`가 문자열인 예전 세션 파일은 그대로 동작합니다. 뷰어는 폴더 목록을 모두 보이고(과정 창의 작업 폴더 줄, 경로 줄이기는 폴더가 여럿이면 폴더 이름부터), 상대 경로 이미지는 첫 번째 폴더 기준으로 찾습니다.
     - **`@session: <이름>`** — 같은 이름으로 다시 보내면 agy의 이전 대화를 이어갑니다. `@cwd`는 세션에 저장되므로 이어갈 때는 생략해도 됩니다.
     - **`@model: <ID>`** — 이번 호출에 쓸 모델을 고릅니다(아래 모델 선택).
   - **모델 선택**: 지시파일 맨 위에 `@model: <ID>`를 쓰면 이번 호출에 그 모델 하나만 씁니다(`gemini-3.8-flash-high|medium|low` 등 Gemini 계열). 쓰지 않으면 기본 우선순위(`gemini-3.8-flash-high`부터, 쿼터 초과 시 다음 모델)입니다. 고른 모델이 쿼터 초과·사용 불가면 다른 모델로 자동 전환하지 않고 실패로 기록하며, 허용 목록에 없는 값은 `agy`를 부르지 않고 바로 실패합니다. 이어가는 세션(`@session:`)은 시작할 때의 모델을 유지하므로 다른 모델을 지정하면 오류입니다. `samjil-delegate-agy` 스킬은 난이도에 따라 Claude가 모델을 고르고, 지정한 모델이 실패하면 사용자에게 묻습니다.
@@ -151,6 +152,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\delegate-agy\invoke-ag
 - `invoke-agy-once.tests.ps1`: 가짜 `agy`로 기다리는 루프를 끝까지 돌리는 통합 테스트 (약 1~2분). 임시 폴더에 `agy.exe`로 복사한 `powershell.exe`를 쓰므로 실제 `agy`는 건드리지 않습니다.
 - `model-select.tests.ps1`: `@model:` 지시어 해석, 모델 검증(허용 목록·이어가는 세션), 가짜 `agy`로 후보 선택과 폴백 없음 확인 (약 20초)
 - `watch-agy-model.e2e.tests.ps1`: 임시 런타임으로 `watch-agy.ps1`을 실제로 띄워 `@model:`이 메인 루프 끝까지 이어지는지(처리 결과·`usage.csv`·`agy` 호출 기록) 확인합니다 (약 1분). 실제 워처는 건드리지 않습니다.
+- `cwd-list.tests.ps1`: `@cwd` 여러 폴더의 세션 파일 저장·읽기(`Write-Session`/`Read-Session`: 배열 저장, 예전 문자열 형식 읽기·이어가기), 폴더 목록 규칙(`ConvertTo-CwdList`, 중복·순서·빈 값)과 뷰어 사본이 같은 규칙인지, 세션 고정 규칙(`Resolve-TaskCwds`: 이번 호출에 `@cwd`가 있으면 이번 목록만) (몇 초)
+- `pending-cwd.tests.ps1`: 뷰어의 `/api/delegate/pending`이 `@cwd` 여러 줄을 폴더 배열(`cwd`)로 돌려주는지 — 두 폴더·한 폴더·없음·중복·본문 중간의 `@cwd`, JSON 배열 모양 (몇 초)
+- `cwd-list.tests.js`(node): 화면의 `@cwd` 처리 — 폴더 목록 읽기(문자열·배열·빈 배열), 맨 위 `@cwd` 줄들, 폴더가 여럿일 때 경로 줄이기(폴더 이름부터), 과정 창 옵션
 - `ensure-viewer.tests.ps1`: `ensure-viewer-running.ps1`(창·탭 없이 뷰어 켜기) — 명령줄 구성, 포트별 뷰어 구분, 꺼져 있을 때 DEAD/NONE, 같은 포트의 다른 프로그램은 뷰어로 보지 않기, 임시 포트에 `-NoAgent` 뷰어를 숨김 실행해 `STARTED`·새로 보이는 터미널/콘솔 창 0개(`EnumWindows`로 셈)·cmd 창 없음, 두 번째는 `ALIVE`이고 또 켜지 않음, `-Stop`이 그 포트의 뷰어만 끄고 진짜 뷰어(8787)는 건드리지 않음, **뷰어와 워처가 둘 다 꺼진 임시 런타임에서 한 번에 켜면 워처까지 켜지고 새 창이 0개이며 `-NoExit` 워처가 없음**(뷰어가 `start-agy.ps1`을 `-Hidden` 없이 부르던 때는 이 시험이 실패함을 확인), `start-agy.ps1 -Hidden`, `start-viewer-hidden.vbs` (약 40초)
 - `ensure-check-only.tests.ps1`: `ensure-agy-running.ps1 -CheckOnly`의 `ALIVE`/`DEAD`/`MANUAL_STOP` 판정
 - `process-translate.tests.ps1`: 과정 번역 보조 스크립트(`process-translate.ps1`) — 한글이 이미 든 칸·이미 번역한 칸 건너뛰기, 덩어리 나누기, 답에서 JSON 꺼내기와 검증, 캐시 읽기·쓰기, 가짜 `agy`로 끝까지(읽기 전용 호출, 캐시 재사용, 새 단계만 번역, 대화 기록 없음, 깨진 답, 시간 초과) (몇 초)

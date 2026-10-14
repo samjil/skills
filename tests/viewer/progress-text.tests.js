@@ -20,7 +20,7 @@ function extractFunction(name) {
   throw new Error(name + " 의 끝을 찾지 못했습니다.");
 }
 
-const names = ["escapeHtml", "formatDuration", "progressToolLabel", "shortenPathsForCwd", "buildNarrationHtml", "buildProgressActionHtml", "buildProgressHtml"];
+const names = ["escapeHtml", "formatDuration", "progressToolLabel", "cwdListOf", "shortenPathsForCwd", "buildNarrationHtml", "buildProgressActionHtml", "buildProgressHtml"];
 const api = new Function(names.map(extractFunction).join("\n") + "\nreturn { progressToolLabel, buildProgressActionHtml, buildProgressHtml };")();
 
 let passed = 0, failed = 0;

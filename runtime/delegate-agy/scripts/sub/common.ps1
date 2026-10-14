@@ -100,7 +100,40 @@ function Read-Session([string]$Name) {
     }
 }
 
-function Write-Session([string]$Name, [string]$ConversationId, [string]$Cwd, [string]$Model) {
+# @cwd(작업 폴더) 값을 폴더 경로 배열로 바꿉니다. 문자열 하나(예전 세션 파일이나 @cwd 한 줄)든 배열(여러 폴더)이든 받고,
+# 비어 있는 값과 중복(대소문자, 끝의 \ 또는 / 무시)은 뺍니다. 줄 순서는 유지합니다. 읽을 수 없는 값은 빈 배열.
+# (뷰어의 serve-viewer.ps1 에 같은 규칙의 사본이 있습니다 - tests\delegate-agy\cwd-list.tests.ps1 이 둘이 같은지 확인합니다.)
+function ConvertTo-CwdList($Value) {
+    $out = New-Object System.Collections.ArrayList
+    $seen = @{}
+    foreach ($v in @($Value)) {
+        if ($null -eq $v) { continue }
+        $s = ([string]$v).Trim()
+        if (-not $s) { continue }
+        $key = $s.TrimEnd([char]92, [char]47).ToLowerInvariant()
+        if (-not $key) { $key = $s.ToLowerInvariant() }
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        [void]$out.Add($s)
+    }
+    return @($out.ToArray())
+}
+
+# 이번 호출에 쓸 폴더 목록. 이번 지시파일에 @cwd 가 하나라도 있으면 이번 목록만 쓰고(세션의 폴더와 합치지 않는다),
+# 하나도 없으면 세션에 저장된 목록을 이어서 쓴다(sticky). 세션의 값은 문자열(예전 파일)이든 배열이든 읽는다.
+function Resolve-TaskCwds($DirectiveCwds, $SessionCwd) {
+    $own = @(ConvertTo-CwdList $DirectiveCwds)
+    if ($own.Count -gt 0) { return $own }
+    return @(ConvertTo-CwdList $SessionCwd)
+}
+
+# 없는 폴더만 골라 돌려줍니다(모두 있으면 빈 배열).
+function Get-MissingCwds($Cwds) {
+    $missing = @(@($Cwds) | Where-Object { $_ -and -not (Test-Path -LiteralPath $_) })
+    return $missing
+}
+
+function Write-Session([string]$Name, [string]$ConversationId, [string[]]$Cwd, [string]$Model) {
     $path = Get-SessionPath $Name
     $existing = Read-Session $Name
     $createdAt = if ($existing -and $existing.created_at) { [string]$existing.created_at } else { Get-Date -Format "yyyy-MM-dd HH:mm:ss" }
@@ -118,7 +151,7 @@ function Write-Session([string]$Name, [string]$ConversationId, [string]$Cwd, [st
     $data = [ordered]@{
         name            = $Name
         conversation_id = $ConversationId
-        cwd             = $Cwd
+        cwd             = @(ConvertTo-CwdList $Cwd)
         model           = $resolvedModel
         created_at      = $createdAt
         last_used_at    = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
