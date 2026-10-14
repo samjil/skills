@@ -457,9 +457,14 @@ function Start-ProcessTranslation([string]$ConversationId) {
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cachePath) | Out-Null
         # 보조 스크립트가 뜨기까지 1초쯤 걸려서, 그 사이 상태를 물으면 "안 함"으로 보이지 않게 표시 파일을 먼저 만든다
         [System.IO.File]::WriteAllText("$cachePath.running", '{"pid":0}', (New-Object System.Text.UTF8Encoding($false)))
-        Start-Process -FilePath "powershell.exe" -WindowStyle Hidden -ArgumentList @(
-            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$trScriptPath`"",
-            "-ConversationId", $ConversationId, "-OutFile", "`"$cachePath`"") | Out-Null
+        # 콘솔 창을 아예 만들지 않는 방식(CreateNoWindow)으로 띄운다. Start-Process -WindowStyle Hidden 은 창이 잠깐 깜빡일 수 있다.
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = "powershell.exe"
+        $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$trScriptPath`" -ConversationId $ConversationId -OutFile `"$cachePath`""
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+        [void][System.Diagnostics.Process]::Start($psi)
     } catch {
         Remove-Item -LiteralPath "$cachePath.running" -Force -ErrorAction SilentlyContinue
         $st.state = "error"; $st.message = "번역을 시작하지 못했습니다: " + $_.Exception.Message

@@ -1475,6 +1475,17 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
 
     $rawText = Get-Content -Raw -Path $file.FullName -Encoding UTF8
 
+    # 지시문 맨 앞의 "[언어 규칙 — 가장 먼저 지킨다] 생각·도구 설명을 한국어로…" 문단은 쓰지 않기로 했다(사용자 결정).
+    # 이미 예전 지침을 읽은 Claude 세션이 계속 붙여 보내도 agy 에 넘기지 않고, 지시파일에서도 뺀다(뷰어에도 안 보인다).
+    $ruleLine = [regex]::new('(?m)^[ \t]*\[언어 규칙[^\]\r\n]*\][^\r\n]*(\r?\n|$)')
+    if ($ruleLine.IsMatch($rawText)) {
+        $rawText = $ruleLine.Replace($rawText, '')
+        try {
+            [System.IO.File]::WriteAllText($file.FullName, $rawText, (New-Object System.Text.UTF8Encoding($false)))
+            Log "  -> 지시문 맨 앞의 언어 규칙 문단을 뺐습니다(사용하지 않는 규칙)"
+        } catch {}
+    }
+
 
 
     # 지시파일 맨 위에 "@키: 값" 줄이 있으면(순서 무관, 여러 줄 가능) 읽어들이고,
