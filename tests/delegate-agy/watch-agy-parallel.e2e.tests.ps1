@@ -33,6 +33,7 @@ $prompt = [string]$a[$pi + 1]
 if ($prompt.StartsWith('@')) { $prompt = [System.IO.File]::ReadAllText($prompt.Substring(1)) }
 $tag = 'x'; if ($prompt -match 'TAG:(\S+)') { $tag = $Matches[1] }
 $sec = 1; if ($prompt -match 'SLEEP:(\d+)') { $sec = [int]$Matches[1] }
+[System.IO.File]::WriteAllText((Join-Path $env:FAKE_TIMES_DIR "$tag.prompt"), $prompt)
 [System.IO.File]::WriteAllText((Join-Path $env:FAKE_TIMES_DIR "$tag.start"), [string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
 Start-Sleep -Seconds $sec
 [System.IO.File]::WriteAllText((Join-Path $env:FAKE_TIMES_DIR "$tag.end"), [string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
@@ -44,11 +45,11 @@ $env:PATH = "$fakeBin;$env:PATH"
 $env:AGY_HOME = Join-Path $work "agyhome"
 $env:FAKE_TIMES_DIR = $timesDir
 
-function Send-Task([string]$name, [string]$tagSleep, [string]$session = "", [string]$cwd = "") {
+function Send-Task([string]$name, [string]$tagSleep, [string]$session = "", [string]$cwd = "", [string]$bodyPrefix = "") {
     $head = ""
     if ($session) { $head += "@session: $session`n" }
     if ($cwd) { $head += "@cwd: $cwd`n" }
-    [System.IO.File]::WriteAllText((Join-Path $rt "inbox\$name.md"), ($head + "TAG:$name $tagSleep"), (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText((Join-Path $rt "inbox\$name.md"), ($head + $bodyPrefix + "TAG:$name $tagSleep"), (New-Object System.Text.UTF8Encoding($false)))
 }
 function Wait-Done([string[]]$names, [int]$seconds = 90) {
     $until = (Get-Date).AddSeconds($seconds)
@@ -135,6 +136,17 @@ try {
     Send-Task "e1" "SLEEP:5" "sess-e" $dirA; Send-Task "e2" "SLEEP:2" "sess-e" $sub
     Assert-Equal "  둘 다 끝난다" $true (Wait-Done @("e1", "e2"))
     Assert-Equal "  겹치지 않는다" $false (Test-Overlap "e1" "e2")
+
+    Write-Host "지시문 맨 앞의 언어 규칙 문단은 agy 에 넘기지 않고 지시파일에서도 뺀다"
+    $ruleText = "[언어 규칙 — 가장 먼저 지킨다] 너의 내부 생각(thinking)과 모든 도구 호출 설명, 답변을 처음부터 끝까지 한국어로 쓴다. (코드·경로·명령어·식별자만 원문 그대로)`n"
+    Send-Task "r1" "SLEEP:1" "" $dirA $ruleText
+    Assert-Equal "  처리된다" $true (Wait-Done @("r1"))
+    $promptR1 = if (Test-Path (Join-Path $timesDir "r1.prompt")) { [System.IO.File]::ReadAllText((Join-Path $timesDir "r1.prompt")) } else { "" }
+    Assert-Equal "  agy 가 받은 질문에 언어 규칙 문단이 없다" $false (($promptR1 -like "*언어 규칙*") -or ($promptR1 -like "*(thinking)*"))
+    Assert-Equal "  본문(TAG 줄)은 그대로 전달된다" $true ($promptR1 -like "*TAG:r1*")
+    $processedR1 = Join-Path $rt "processed\r1.md"
+    Assert-Equal "  처리된 지시파일에도 문단이 없다(뷰어에 안 보인다)" $false ((Test-Path $processedR1) -and ([System.IO.File]::ReadAllText($processedR1) -like "*언어 규칙*"))
+    Assert-Equal "  @cwd 줄은 그대로 남는다" $true ((Test-Path $processedR1) -and ([System.IO.File]::ReadAllText($processedR1) -like "*@cwd:*"))
 
     Write-Host "동시에 도는 수는 -MaxParallel(3)까지"
     $tags = @("f1", "f2", "f3", "f4", "f5")

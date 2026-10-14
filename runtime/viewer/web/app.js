@@ -678,6 +678,48 @@
   var QA_UNGROUPED = "__ungrouped__";
   var QA_UNLINKED = "__unlinked__";
 
+  // 폴더 경로 비교용 키(대소문자·슬래시 방향·끝의 구분자 무시)
+  function qaCwdKey(p) {
+    return String(p == null ? "" : p).trim().replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+  }
+
+  // 아직 대화 기록에 작업 ID 가 남지 않은 대기·진행 중 작업의 세션을 작업 폴더로 짐작한다.
+  // (Claude 가 위임을 보내고 같은 명령 안에서 결과를 기다리면, 그 명령이 끝날 때까지 작업 ID 가 대화 기록에 안 남아서 연결할 수 없다.)
+  // 작업 폴더(@cwd)가 Desktop 세션의 폴더와 같은 세션 중 가장 최근에 쓴 보관 안 된 세션을 고른다. 없으면 null.
+  function qaGuessSessionByCwd(item, tree) {
+    if (!item || !tree) return null;
+    var raw = item.cwd;
+    var cwds = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+    var keys = {};
+    var any = false;
+    for (var i = 0; i < cwds.length; i++) {
+      var k = qaCwdKey(cwds[i]);
+      if (k) { keys[k] = true; any = true; }
+    }
+    if (!any) return null;
+    var best = null;
+    function consider(sess, projectId, projectName) {
+      if (!sess || sess.archived || !keys[qaCwdKey(sess.cwd)]) return;
+      if (!best || String(sess.lastActivity || "") > String(best.sess.lastActivity || "")) {
+        best = { sess: sess, projectId: projectId, projectName: projectName };
+      }
+    }
+    var projects = Array.isArray(tree.projects) ? tree.projects : [];
+    for (var a = 0; a < projects.length; a++) {
+      var sessions = projects[a] && Array.isArray(projects[a].sessions) ? projects[a].sessions : [];
+      for (var b = 0; b < sessions.length; b++) { consider(sessions[b], projects[a].id, projects[a].name); }
+    }
+    var ungrouped = Array.isArray(tree.ungrouped) ? tree.ungrouped : [];
+    for (var c = 0; c < ungrouped.length; c++) { consider(ungrouped[c], QA_UNGROUPED, "그룹 없음"); }
+    if (!best) return null;
+    return {
+      projectId: best.projectId,
+      projectName: best.projectName,
+      sessionId: best.sess.id,
+      sessionTitle: best.sess.title ? best.sess.title : String(best.sess.id).slice(0, 8)
+    };
+  }
+
   function qaNodeOf(item, tree) {
     var link = (tree && tree.taskLinks && item && item.task_id) ? tree.taskLinks[item.task_id] : null;
     if (link) {
@@ -712,6 +754,11 @@
           }
         }
       }
+    }
+    // 대기·진행 중인 작업(완료 기록과 달리 timestamp 가 없고 state 가 있다)은 작업 폴더로 세션을 짐작해 본다
+    if (item && item.state && !item.timestamp) {
+      var guessed = qaGuessSessionByCwd(item, tree);
+      if (guessed) return guessed;
     }
     var sName = (item && item.session != null && String(item.session).trim() !== "") ? String(item.session) : "";
     return {
@@ -846,6 +893,10 @@
         if (time && (!targetSession.latestTime || time > targetSession.latestTime)) {
           targetSession.latestTime = time;
         }
+        // 완료 시각: 끝난 기록의 시각만(진행·대기 중인 작업은 뺀다). 사이드바 행에 보이는 시간이다.
+        if (!isPending && time && (!targetSession.latestDone || time > targetSession.latestDone)) {
+          targetSession.latestDone = time;
+        }
       }
     }
 
@@ -885,6 +936,7 @@
       var pPending = 0;
       var pErrors = 0;
       var pLatest = "";
+      var pDone = "";
 
       for (var j = 0; j < validSessions.length; j++) {
         var vs = validSessions[j];
@@ -894,6 +946,9 @@
         if (vs.latestTime && (!pLatest || vs.latestTime > pLatest)) {
           pLatest = vs.latestTime;
         }
+        if (vs.latestDone && (!pDone || vs.latestDone > pDone)) {
+          pDone = vs.latestDone;
+        }
       }
 
       p.sessions = validSessions;
@@ -901,6 +956,7 @@
       p.pending = pPending;
       p.errors = pErrors;
       p.latestTime = pLatest;
+      p.latestDone = pDone;
     }
 
     var result = [];
@@ -1079,7 +1135,7 @@
     return best;
   }
 
-  // opts.dateSource === "records" 이면 날짜 정렬이 위임 기록(agy 작업)의 최근 시각만 본다(Desktop 세션의 최근 활동은 무시하고,
+  // opts.dateSource === "records" 이면 날짜 정렬이 위임 기록(agy 작업)의 최근 완료 시각만 본다(Desktop 세션의 최근 활동은 무시하고,
   // 시각이 같거나 기록이 없을 때만 보조 기준으로 쓴다). 기본은 기록과 Desktop 활동 중 늦은 쪽.
   function sortTreeNodes(nodes, mode, opts) {
     if (!Array.isArray(nodes)) return [];
@@ -1094,9 +1150,15 @@
       return s1 > s2 ? s1 : s2;
     }
 
+    // records 모드의 기록 시각: 완료 시각(latestDone)이 있으면 그것, 없으면(옛 데이터) latestTime
+    function recordTimeOf(x) {
+      if (!x) return "";
+      return (x.latestDone != null ? x.latestDone : x.latestTime) || "";
+    }
+
     function sessionDateKey(s) {
       if (!s) return "";
-      return recordsOnly ? (s.latestTime || "") : maxTime(s.latestTime, s.lastActivity);
+      return recordsOnly ? recordTimeOf(s) : maxTime(s.latestTime, s.lastActivity);
     }
 
     // 보조 기준(records 모드): Desktop 에서 마지막으로 쓴 시각
@@ -1113,12 +1175,12 @@
 
     function projectDateKey(p) {
       if (!p) return "";
-      var maxT = p.latestTime || "";
+      var maxT = recordsOnly ? recordTimeOf(p) : (p.latestTime || "");
       if (Array.isArray(p.sessions)) {
         for (var i = 0; i < p.sessions.length; i++) {
           var s = p.sessions[i];
           if (!s) continue;
-          maxT = maxTime(maxT, s.latestTime);
+          maxT = maxTime(maxT, recordsOnly ? recordTimeOf(s) : s.latestTime);
           if (!recordsOnly) { maxT = maxTime(maxT, s.lastActivity); }
         }
       }
@@ -1715,6 +1777,13 @@
     } catch (e) {}
   }
 
+  // 사이드바 행의 시간 글: 마지막으로 끝난 agy 작업의 완료 시각. 끝난 것이 없으면 진행 중인지, 위임이 아예 없는지 보인다.
+  function qaDoneTimeText(node) {
+    if (node && node.latestDone) return formatRelativeTime(node.latestDone);
+    if (node && node.pending > 0) return "진행 중";
+    return "위임 없음";
+  }
+
   // 위임 실행 기록 화면의 날짜 정렬은 agy 작업(위임 기록) 시각 기준이라 라벨도 그렇게 보인다
   function qaSortLabel(m) {
     if (m.value === "recent-desc") return "agy 최근 작업순";
@@ -1829,11 +1898,10 @@
       pItem.setAttribute("role", "treeitem");
       pItem.setAttribute("aria-expanded", isOpen ? "true" : "false");
 
-      var relTime = p.latestTime ? formatRelativeTime(p.latestTime) : "위임 없음";   // 위임 기록 화면은 agy 작업 시각 기준
-      var errHtml = p.errors > 0 ? ' <span class="err-count">실패 ' + p.errors + '</span>' : '';
+      var relTime = qaDoneTimeText(p);   // 위임 실행 기록 화면은 agy 작업의 완료 시각을 보인다
       var sessCount = p.sessions ? p.sessions.length : 0;
       var sessHtml = ' · 세션 ' + sessCount;
-      var subHtml = relTime + errHtml + sessHtml;
+      var subHtml = relTime + sessHtml;
 
       var badgeHtml = '<span class="project-badge">' + (p.total + p.pending) + '</span>';
       if (p.pending > 0) {
@@ -1888,9 +1956,7 @@
           sItem.dataset.session = s.id;
           sItem.setAttribute("role", "treeitem");
 
-          var sTime = s.latestTime ? formatRelativeTime(s.latestTime) : "위임 없음";
-          var sErrHtml = s.errors > 0 ? ' <span class="err-count">실패 ' + s.errors + '</span>' : '';
-          var sSubHtml = sTime + sErrHtml;
+          var sSubHtml = qaDoneTimeText(s);
 
           var sBadgeHtml = '<span class="session-badge">' + (s.total + s.pending) + '</span>';
           if (s.pending > 0) {

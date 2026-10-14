@@ -32,6 +32,8 @@ const TREE_SORT_MODES = extractConstant("TREE_SORT_MODES");
 const TREE_SORT_DEFAULT = extractConstant("TREE_SORT_DEFAULT");
 
 const names = [
+  "qaCwdKey",
+  "qaGuessSessionByCwd",
   "qaNodeOf",
   "buildQaTree",
   "qaFilterTree",
@@ -515,6 +517,44 @@ const recSessions = [{ id: "a", title: "A", latestTime: "", lastActivity: "2026-
 eq("records: 세션도 위임 시각 우선(기록 없는 세션은 뒤)", "b,c,a", api.sortTreeNodes([{ id: "p", name: "P", latestTime: "", sessions: recSessions }], "recent-desc", { dateSource: "records" })[0].sessions.map((x) => x.id).join(","));
 eq("옵션이 없으면 예전 동작과 같다(기록·Desktop 활동 중 늦은 쪽: c 21시 > a 20시 > b 8시)", "c,a,b", api.sortTreeNodes([{ id: "p", name: "P", latestTime: "", sessions: recSessions }], "recent-desc")[0].sessions.map((x) => x.id).join(","));
 eq("records 모드여도 이름순은 영향 없음", "p-idle,p-active,p-old,p-new".split(",").length, api.sortTreeNodes(recNodes, "name-asc", { dateSource: "records" }).length);
+
+console.log("\nbuildQaTree: latestDone(완료 시각)은 끝난 기록만");
+const doneTree = { projects: [{ id: "g1", name: "G1", sessions: [{ id: "sA", title: "A", lastActivity: "2026-10-14 23:00:00" }, { id: "sB", title: "B", lastActivity: "" }] }], ungrouped: [], taskLinks: { t1: "sA", t2: "sA", t3: "sB" }, handoffLinks: {} };
+const doneRecs = [{ task_id: "t1", status: "OK", timestamp: "2026-10-14 10:00:00" }, { task_id: "t2", status: "ERROR", timestamp: "2026-10-14 12:00:00" }];
+const donePend = [{ task_id: "t3", created: "2026-10-14 22:00:00", state: "processing" }];
+const doneNodes = api.buildQaTree(doneRecs, donePend, doneTree);
+const gNode = doneNodes[0];
+const sNodeA = gNode.sessions.filter((x) => x.id === "sA")[0];
+const sNodeB = gNode.sessions.filter((x) => x.id === "sB")[0];
+eq("세션 A: 완료 시각은 끝난 기록 중 가장 늦은 것(실패 기록도 완료)", "2026-10-14 12:00:00", sNodeA.latestDone);
+eq("세션 B: 진행 중인 작업만 있으면 완료 시각이 없다(latestTime 에는 시작 시각)", "|2026-10-14 22:00:00", (sNodeB.latestDone || "") + "|" + sNodeB.latestTime);
+eq("프로젝트의 완료 시각은 세션들의 완료 시각 중 가장 늦은 것", "2026-10-14 12:00:00", gNode.latestDone);
+const doneSorted = api.sortTreeNodes([
+  { id: "p-run", name: "진행만", latestTime: "2026-10-14 22:00:00", latestDone: "", sessions: [] },
+  { id: "p-fin", name: "완료됨", latestTime: "2026-10-14 12:00:00", latestDone: "2026-10-14 12:00:00", sessions: [] }
+], "recent-desc", { dateSource: "records" });
+eq("records 정렬은 완료 시각 기준: 진행 중이던 프로젝트도 완료 시각이 없으면 뒤", "p-fin,p-run", doneSorted.map((n) => n.id).join(","));
+
+console.log("\nqaNodeOf: 대기·진행 중 작업은 작업 폴더로 세션을 짐작한다");
+const guessTree = {
+  projects: [{ id: "g1", name: "sh::q", sessions: [
+    { id: "s-old", title: "예전 세션", cwd: "D:\\Repos\\q", lastActivity: "2026-10-14 10:00:00", archived: false },
+    { id: "s-new", title: "[문진추적]", cwd: "d:/repos/q/", lastActivity: "2026-10-14 22:00:00", archived: false },
+    { id: "s-arch", title: "보관됨", cwd: "D:\\Repos\\q", lastActivity: "2026-10-14 23:00:00", archived: true },
+    { id: "s-other", title: "다른 폴더", cwd: "D:\\Repos\\other", lastActivity: "2026-10-14 23:30:00", archived: false }
+  ] }],
+  ungrouped: [{ id: "s-free", title: "그룹 없는 세션", cwd: "E:\\x", lastActivity: "2026-10-14 21:00:00", archived: false }],
+  taskLinks: { "t-done": "s-old" }, handoffLinks: {}
+};
+const pendingGuess = { task_id: "t-run", state: "processing", created: "2026-10-14 22:10:00", cwd: ["D:\\Repos\\q"], session: "문진-세션" };
+const guessNode = api.qaNodeOf(pendingGuess, guessTree);
+eq("진행 중 작업: 같은 폴더의 세션 중 가장 최근에 쓴 보관 안 된 세션(대소문자·슬래시 무시)", "g1|sh::q|s-new|[문진추적]", [guessNode.projectId, guessNode.projectName, guessNode.sessionId, guessNode.sessionTitle].join("|"));
+eq("그룹 없는 세션도 짐작 대상", "__ungrouped__|s-free", (function () { const n = api.qaNodeOf({ task_id: "t2", state: "queued", cwd: ["E:\\x"] }, guessTree); return n.projectId + "|" + n.sessionId; })());
+eq("폴더가 어느 세션과도 안 맞으면 연결 안 됨(예전 @session 이름)", "__unlinked__|u:문진-세션", (function () { const n = api.qaNodeOf({ task_id: "t3", state: "processing", cwd: ["D:\\nowhere"], session: "문진-세션" }, guessTree); return n.projectId + "|" + n.sessionId; })());
+eq("폴더가 없는 진행 중 작업은 짐작하지 않는다", "__unlinked__", api.qaNodeOf({ task_id: "t4", state: "processing", cwd: [] }, guessTree).projectId);
+eq("완료 기록(timestamp 있음)은 짐작하지 않고 링크만 본다", "__unlinked__", api.qaNodeOf({ task_id: "t5", timestamp: "2026-10-14 10:00:00", status: "OK", cwd: ["D:\\Repos\\q"] }, guessTree).projectId);
+eq("링크가 있으면 짐작보다 링크가 먼저", "s-old", api.qaNodeOf({ task_id: "t-done", state: "processing", cwd: ["D:\\Repos\\q"] }, guessTree).sessionId);
+eq("tree 가 null 이면 짐작 없이 연결 안 됨", "__unlinked__", api.qaNodeOf(pendingGuess, null).projectId);
 
 console.log("\n통과 " + passed + " / 실패 " + failed);
 if (failed > 0) {

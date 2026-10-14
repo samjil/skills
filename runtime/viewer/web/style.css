@@ -399,17 +399,73 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   }
 }
 
+/* 프로젝트와 세션을 한눈에 가르는 규칙
+   - 프로젝트(Claude Desktop 그룹)는 묶음 머리글: 옅은 띠 배경, 굵은 이름, 개수는 알약 모양
+   - 세션(대화)은 그 아래 세로선에 매달린 가벼운 줄: 선 위의 작은 점(Claude 쪽 색), 보통 굵기의 이름, 배경 없음
+   - 선택한 행만 강조: 프로젝트는 왼쪽 굵은 막대, 세션은 속이 찬 점과 왼쪽 막대 */
+.project-item.tree-project {
+  margin-top: 8px;
+  padding: 8px 10px 8px 6px;
+  background: rgba(230, 234, 237, 0.05);
+}
+.project-item.tree-project:hover { background: var(--raised); }
+.project-item.tree-project.active {
+  background: var(--raised);
+  box-shadow: inset 3px 0 0 var(--ink-2);
+}
+.project-item.tree-project .project-name {
+  font-weight: 600;
+  color: var(--ink);
+}
+.project-item.tree-project .project-icon { color: var(--ink-2); }
+.project-item.tree-project .project-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--sunken);
+  color: var(--ink-2);
+}
+
 .tree-children {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  margin: 1px 0 6px 12px;
-  padding-left: 8px;
-  border-left: 1px solid var(--line);
+  gap: 0;
+  margin: 2px 0 4px 20px;
+  padding-left: 0;
+  border-left: 1px solid var(--line-strong);
 }
 
 .session-item.tree-session {
-  padding: 6px 8px;
+  position: relative;
+  padding: 5px 8px 5px 16px;
+  gap: 8px;
+  border-radius: 0 6px 6px 0;
+}
+.session-item.tree-session .session-icon { display: none; }
+.session-item.tree-session::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--claude);
+  border-radius: 50%;
+  background: var(--surface);
+}
+.session-item.tree-session .session-name {
+  font-size: 12.5px;
+  font-weight: 400;
+}
+.session-item.tree-session .session-badge { color: var(--ink-3); }
+.session-item.tree-session.active {
+  box-shadow: inset 2px 0 0 var(--claude);
+}
+.session-item.tree-session.active::before { background: var(--claude); }
+.session-item.tree-session.active .session-name {
+  font-weight: 600;
+  color: var(--ink);
 }
 
 .tree-archived {
