@@ -615,9 +615,10 @@ if (-not $NoAgent) {
     if ($watcherRunning) {
         Write-Host "  agy agent (워처): 이미 실행 중 (정상)" -ForegroundColor Green
     } elseif ($startScript) {
-        Write-Host "  agy agent (워처): 미실행 감지 -> 새 창으로 자동 기동..." -ForegroundColor Yellow
+        Write-Host "  agy agent (워처): 미실행 감지 -> 창 없이 자동 기동..." -ForegroundColor Yellow
         try {
-            & $startScript | Out-Null
+            # -Hidden: 콘솔 창 없이 백그라운드로. (옵션 없이 부르면 -NoExit 콘솔 창이 뜬다. 숨김 뷰어가 이 창을 띄우면 닫을 수도 끌 수도 없다)
+            & $startScript -Hidden | Out-Null
             Write-Host "  agy agent (워처): 기동 완료" -ForegroundColor Green
         } catch {
             Write-Host "  agy agent (워처): 자동 기동 실패 ($($_.Exception.Message))" -ForegroundColor Red

@@ -26,7 +26,8 @@ $ensureLog = Join-Path $work "ensure-calls.txt"
 $startLog  = Join-Path $work "start-calls.txt"
 # 가짜: 호출됐다는 기록만 남기고 끝난다. (실제 워처를 띄우지 않는다)
 Set-Content -Path (Join-Path $scripts "start-agy.ps1") -Encoding ASCII -Value @'
-Add-Content -Path $env:FAKE_START_LOG -Value ("start " + (Get-Date -Format o))
+param([switch]$Hidden)
+Add-Content -Path $env:FAKE_START_LOG -Value ("start hidden=" + [bool]$Hidden + " " + (Get-Date -Format o))
 '@
 Set-Content -Path (Join-Path $scripts "sub\ensure-agy-running.ps1") -Encoding ASCII -Value @'
 param([string]$RuntimeDir = "", [int]$ConfirmDelaySeconds = -1, [int]$StaleThresholdSeconds = 300)
@@ -77,6 +78,8 @@ try {
     Assert-Equal "  autoRestart.intervalSeconds = 3" 3 $st.autoRestart.intervalSeconds
     Assert-Equal "  canStart = true (켜기 버튼을 보여도 됨)" $true $st.canStart
     Assert-Equal "  시작 시 start-agy.ps1 을 한 번 호출했다" 1 (Get-CallCount $startLog)
+    $startLine = if (Test-Path $startLog) { (Get-Content $startLog | Select-Object -First 1) } else { "" }
+    Assert-Equal "  -Hidden(창 없이)로 불렀다(없으면 -NoExit 콘솔 창이 뜬다)" $true ($startLine -match 'hidden=True')
 
     Write-Host "B) 주기 점검이 꺼진 워처를 보고 ensure-agy-running.ps1 을 띄운다 (요청이 없어도)"
     $called = Wait-Until { (Get-CallCount $ensureLog) -ge 1 } 20
