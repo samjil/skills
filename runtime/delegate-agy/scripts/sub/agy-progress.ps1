@@ -45,7 +45,23 @@ function Get-AgyConversationIdFromArgs($agyArgs) {
 #   unavailable - 대화 폴더 자체가 없음(agy 저장 방식이 바뀌었을 수 있음)
 # 새 대화는 호출을 시작한 시각 직후 WindowSeconds 안에 만들어진 것만 후보로 봅니다
 # (실측: 시작 후 약 7초 안에 생김). 그보다 늦게 생긴 다른 agy 대화는 무시합니다.
-function Resolve-AgyConversation($AgyHome, $KnownId, [datetime]$StartedAt, [int]$WindowSeconds = 120) {
+# 대화 기록 맨 앞(첫 질문 줄)에 표식 글이 들어 있는가. 기록이 아직 없거나 읽을 수 없으면 $false.
+function Test-AgyConversationHasMarker($AgyHome, [string]$Id, [string]$Marker) {
+    if (-not $Marker) { return $false }
+    $path = Get-AgyTranscriptPath $AgyHome $Id
+    if (-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+    $fs = $null
+    try {
+        $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        $buf = New-Object byte[] ([int][Math]::Min(16384, $fs.Length))
+        $n = $fs.Read($buf, 0, $buf.Length)
+        return ([System.Text.Encoding]::UTF8.GetString($buf, 0, $n)).Contains($Marker)
+    } catch { return $false } finally { if ($fs) { $fs.Dispose() } }
+}
+
+# Marker: 이 호출의 질문에만 들어 있는 글(프롬프트 파일 이름, 또는 지시문 첫머리). 여러 작업이 동시에 새 대화를 시작해
+# 후보가 둘 이상일 때, 대화 기록 맨 앞에 이 표식이 든 대화를 내 것으로 고른다(딱 하나일 때만).
+function Resolve-AgyConversation($AgyHome, $KnownId, [datetime]$StartedAt, [int]$WindowSeconds = 120, [string]$Marker = "") {
     $convDir = Join-Path $AgyHome "conversations"
     if (-not (Test-Path -LiteralPath $convDir -PathType Container)) {
         return @{ State = 'unavailable'; Id = $null }
@@ -58,6 +74,10 @@ function Resolve-AgyConversation($AgyHome, $KnownId, [datetime]$StartedAt, [int]
         Where-Object { $_.CreationTime -ge $from -and $_.CreationTime -le $to })
 
     if ($candidates.Count -eq 1) { return @{ State = 'found'; Id = $candidates[0].BaseName } }
+    if ($candidates.Count -gt 1 -and $Marker) {
+        $mine = @($candidates | Where-Object { Test-AgyConversationHasMarker $AgyHome $_.BaseName $Marker })
+        if ($mine.Count -eq 1) { return @{ State = 'found'; Id = $mine[0].BaseName } }
+    }
     if ($candidates.Count -gt 1) { return @{ State = 'ambiguous'; Id = $null } }
     return @{ State = 'none'; Id = $null }
 }
