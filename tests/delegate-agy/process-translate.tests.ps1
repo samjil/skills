@@ -25,6 +25,19 @@ Assert-Equal "영어에 한글이 조금 섞여도 true" $true (Test-HasHangul "
 Assert-Equal "빈 글은 false" $false (Test-HasHangul "")
 Assert-Equal "null 도 false" $false (Test-HasHangul $null)
 
+Write-Host "Test-NeedsTranslation (인용문 안의 한글은 세지 않는다)"
+Assert-Equal "영어 문장 속 백틱 한글 인용문은 번역 대상" $true (Test-NeedsTranslation 'Examined the `04_문진 이벤트 로그 - 조회.sql` file, identifying event names.')
+Assert-Equal "큰따옴표 안의 한글도 번역 대상" $true (Test-NeedsTranslation 'Open the "문진 로그" file now.')
+Assert-Equal "둥근 큰따옴표 안의 한글도 번역 대상" $true (Test-NeedsTranslation ('Open the ' + [char]0x201C + '문진 로그' + [char]0x201D + ' file now.'))
+Assert-Equal "작은따옴표 안의 한글도 번역 대상" $true (Test-NeedsTranslation "Open the '문진 로그' file now.")
+Assert-Equal "인용문 밖에 한글이 있으면 번역 안 함" $false (Test-NeedsTranslation '`a.sql` 파일을 읽는 중')
+Assert-Equal "영어에 한글이 조금 섞이면(인용문 밖) 번역 안 함" $false (Test-NeedsTranslation 'Reading 파일')
+Assert-Equal "영어만 있으면 번역 대상" $true (Test-NeedsTranslation 'Reading a.md')
+Assert-Equal "인용문뿐이면 번역할 영어가 없어 대상이 아니다" $false (Test-NeedsTranslation '`04_문진.sql`')
+Assert-Equal "기호뿐이어도 대상이 아니다" $false (Test-NeedsTranslation '---')
+Assert-Equal "빈 글·null 도 대상이 아니다" $false ((Test-NeedsTranslation '') -or (Test-NeedsTranslation $null))
+Assert-Equal "don't 같은 아포스트로피는 인용문이 아니다" $false (Test-NeedsTranslation "I don't know 문진 it's")
+
 Write-Host "Get-TranslationTodo"
 $steps = @(
     [ordered]@{ n = 1; tool = "view_file"; detail = "a.md"; label = "Reading a.md"; think = "Read the spec first." },

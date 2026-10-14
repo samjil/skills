@@ -21,14 +21,17 @@ function extractFunction(name) {
 }
 
 const names = ["escapeHtml", "progressToolLabel", "summarizeProcess", "cwdListOf", "shortenPathsForCwd", "buildNarrationHtml", "buildProcessRowsHtml", "resolveProcessState",
-  "hasHangul", "needsTranslation", "applyProcessTranslation", "procItemCount", "procTrViewOf", "procTrItemsFor", "buildTranslateToolsHtml",
+  "hasHangul", "quotedSpanRe", "withoutQuotedSpans", "needsTranslationText", "needsTranslation", "applyProcessTranslation", "procItemCount", "procTrViewOf", "procTrItemsFor", "buildTranslateToolsHtml",
   "browserTranslatorSupported", "protectCodeSpans", "restoreCodeSpans", "codeSpansOf", "codesSurvive", "splitSentences",
   "translateChunkKeepingCode", "translateTextWithBrowser", "translateStepsWithBrowser", "browserTranslationMessage"];
 // resolveProcessState 는 옛 위임을 읽어 온 결과(processFetchCache)를 본다. 테스트에서는 이 객체를 직접 채운다.
 // 상태 변수(옛 위임을 읽어 온 결과, agy 번역·브라우저 번역 결과, 보기 선택)는 테스트에서 직접 채운다.
-const api = new Function("var processFetchCache = {}; var procTr = {}; var procTrB = {}; var procTrView = {};\n" + names.map(extractFunction).join("\n") +
+// 인용문 정규식 원문(변수)도 app.js 에서 그대로 꺼낸다
+const quotedSrcLine = (appJs.match(/^ *var QUOTED_SPAN_SRC = .*;$/m) || [""])[0];
+if (!quotedSrcLine) throw new Error("QUOTED_SPAN_SRC 를 app.js 에서 찾지 못했습니다.");
+const api = new Function("var processFetchCache = {}; var procTr = {}; var procTrB = {}; var procTrView = {};\n" + quotedSrcLine + "\n" + names.map(extractFunction).join("\n") +
   "\nreturn { summarizeProcess, shortenPathsForCwd, buildNarrationHtml, buildProcessRowsHtml, resolveProcessState, processFetchCache," +
-  " hasHangul, needsTranslation, applyProcessTranslation, procItemCount, procTrViewOf, procTrItemsFor, buildTranslateToolsHtml," +
+  " hasHangul, needsTranslationText, withoutQuotedSpans, needsTranslation, applyProcessTranslation, procItemCount, procTrViewOf, procTrItemsFor, buildTranslateToolsHtml," +
   " protectCodeSpans, restoreCodeSpans, codesSurvive, splitSentences, translateTextWithBrowser, translateStepsWithBrowser, browserTranslationMessage, procTr, procTrB, procTrView };")();
 
 let passed = 0, failed = 0;
@@ -276,6 +279,21 @@ ok("agy 로 번역할 수 없으면 그 버튼 없이 이유만(브라우저 번
 ok("서버가 준 문구는 HTML 이스케이프된다", (api.procTr.c1 = { state: "error", message: "<img src=x onerror=1>", items: {} }, api.buildTranslateToolsHtml("c1", eng).indexOf("<img") === -1));
 resetTr();
 delete globalThis.Translator;
+
+console.log("needsTranslationText: 인용문 안의 한글은 세지 않는다");
+const qd = api.needsTranslationText;
+ok("영어 문장 속 백틱 한글 인용문은 번역 대상이다", qd("Proceeding to analyze. Examined the `04_문진 이벤트 로그 - 조회.sql` file, identifying event names.") === true);
+ok("큰따옴표·둥근 큰따옴표·작은따옴표 안의 한글도 같다", qd('Open the "문진 로그" file now.') === true && qd("Open the \u201C문진 로그\u201D file now.") === true && qd("Open the '문진 로그' file now.") === true);
+ok("인용문 밖에 한글이 있으면 한글 글이다(번역 안 함)", qd("`a.sql` 파일을 읽는 중") === false && qd("Reading 파일") === false);
+ok("한글 문장 속 영어 인용문은 한글 글이다", qd("`Reading` 을 확인") === false);
+ok("영어만 있으면 대상", qd("Reading a.md") === true && qd("Checking `x.py`") === true);
+ok("번역할 영어가 없으면(인용문뿐·기호뿐·빈 글·null) 대상이 아니다", qd("`04_문진.sql`") === false && qd("\"문진 로그\"") === false && qd("---") === false && qd("") === false && qd(null) === false);
+ok("don't 같은 아포스트로피는 인용문이 아니다(그 뒤의 한글을 숨기지 않는다)", qd("I don't know 문진 it's") === false);
+ok("작은따옴표 인용문은 단어 경계에서만: it's a 'x' 파일", qd("it's a 'x' 파일") === false);
+eq("withoutQuotedSpans: 인용문을 공백으로 바꾼다", "Read   now", api.withoutQuotedSpans("Read `a.sql` now").replace(/ +/g, " ").replace("Read now", "Read   now"));
+const stepsQ = [S("write_to_file", { think: "Proceeding to analyze SQL queries. Examined the `04_문진 이벤트 로그 - 조회.sql` file." })];
+ok("needsTranslation(steps): 인용문에만 한글이 든 영어 생각은 번역이 필요하다", api.needsTranslation(stepsQ) === true);
+ok("protectCodeSpans: 따옴표 인용문도 번역에서 지킨다", api.protectCodeSpans('Open the "문진 로그" and `a.sql` files.').codes.join("|") === '"문진 로그"|`a.sql`');
 
 console.log("needsTranslation(steps, items): 이미 번역한 칸은 뺀다");
 ok("items 에 라벨이 있으면 그 칸은 필요 없다", api.needsTranslation([S("a", { label: "Reading" })], { "0": { label: "읽는 중" } }) === false);

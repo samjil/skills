@@ -2268,6 +2268,21 @@
 
   function hasHangul(s) { return /[\uAC00-\uD7A3]/.test(String(s == null ? "" : s)); }
 
+  // 인용한 말: `코드`, "큰따옴표", “둥근 큰따옴표”, '작은따옴표'(don't 같은 아포스트로피는 제외). 인용문은 고정된 말이라
+  // 한글이든 영어든 번역하지 않고 그대로 두고, "이미 한글인 글인가" 를 가를 때도 세지 않는다.
+  var QUOTED_SPAN_SRC = "`[^`\\n]+`|\"[^\"\\n]+\"|\u201C[^\u201D\\n]+\u201D|(?<![A-Za-z0-9])'[^'\\n]+'(?![A-Za-z0-9])";
+  function quotedSpanRe() { return new RegExp(QUOTED_SPAN_SRC, "g"); }
+
+  // 인용문을 뺀 나머지 글
+  function withoutQuotedSpans(s) { return String(s == null ? "" : s).replace(quotedSpanRe(), " "); }
+
+  // 번역해야 하는 글인가: 인용문 밖에 한글이 없고, 인용문 밖에 번역할 영어(알파벳)가 있어야 한다.
+  // 예) 영어 문장 안의 `04_문진 이벤트.sql` 은 한글이 있어도 번역 대상이고, 한글 문장은 아니다.
+  function needsTranslationText(s) {
+    var rest = withoutQuotedSpans(s);
+    return !hasHangul(rest) && /[A-Za-z]/.test(rest);
+  }
+
   // 번역할 글(한글이 아닌 라벨·생각·설명)이 하나라도 있는지. items 를 주면 그 안에 이미 번역된 칸은 뺀다.
   function needsTranslation(steps, items) {
     if (!steps) return false;
@@ -2276,7 +2291,7 @@
       var have = items ? items[String(i)] : null;
       for (var k = 0; k < names.length; k++) {
         var v = steps[i][names[k]];
-        if (v && !hasHangul(v) && !(have && have[names[k]])) return true;
+        if (v && needsTranslationText(v) && !(have && have[names[k]])) return true;
       }
     }
     return false;
@@ -2421,10 +2436,10 @@
   var BROWSER_TR_STORE = "samjil.processTranslation.browser.v1";
   var BROWSER_TR_KEEP = 40;   // 최근 대화 몇 개까지 기억할지
 
-  // 백틱으로 감싼 코드/이름을 XQ1X, XQ2X … 로 바꿔 둔다.
+  // 인용문(백틱·따옴표로 감싼 코드/이름/말)을 XQ1X, XQ2X … 로 바꿔 둔다.
   function protectCodeSpans(text) {
     var codes = [];
-    var out = String(text == null ? "" : text).replace(/`[^`\n]+`/g, function (m) { codes.push(m); return "XQ" + codes.length + "X"; });
+    var out = String(text == null ? "" : text).replace(quotedSpanRe(), function (m) { codes.push(m); return "XQ" + codes.length + "X"; });
     return { text: out, codes: codes };
   }
 
@@ -2441,8 +2456,8 @@
     return /XQ\s*\d+\s*X/i.test(s) ? null : s;
   }
 
-  // 백틱으로 감싼 코드 표기(`top_words` 같은 것)들. 번역 뒤에 이것들이 그대로 남아 있어야 번역을 쓴다.
-  function codeSpansOf(text) { return String(text == null ? "" : text).match(/`[^`\n]+`/g) || []; }
+  // 인용문(`top_words` 같은 코드 표기, 따옴표로 감싼 말)들. 번역 뒤에 이것들이 그대로 남아 있어야 번역을 쓴다.
+  function codeSpansOf(text) { return String(text == null ? "" : text).match(quotedSpanRe()) || []; }
 
   // 번역기가 백틱만 떼고 이름은 그대로 둔 경우(top_words)도 코드가 남은 것으로 본다.
   function codesSurvive(src, out) {
@@ -2510,7 +2525,7 @@
       fields.forEach(function (f) {
         var v = st[f];
         var have = existing && existing[String(i)] && existing[String(i)][f];
-        if (v && !hasHangul(v) && !have) jobs.push({ i: String(i), f: f, text: String(v) });
+        if (v && needsTranslationText(v) && !have) jobs.push({ i: String(i), f: f, text: String(v) });
       });
     });
     var items = {};
