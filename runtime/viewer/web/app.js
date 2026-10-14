@@ -1079,9 +1079,12 @@
     return best;
   }
 
-  function sortTreeNodes(nodes, mode) {
+  // opts.dateSource === "records" 이면 날짜 정렬이 위임 기록(agy 작업)의 최근 시각만 본다(Desktop 세션의 최근 활동은 무시하고,
+  // 시각이 같거나 기록이 없을 때만 보조 기준으로 쓴다). 기본은 기록과 Desktop 활동 중 늦은 쪽.
+  function sortTreeNodes(nodes, mode, opts) {
     if (!Array.isArray(nodes)) return [];
     var sortMode = normalizeTreeSortMode(mode);
+    var recordsOnly = Boolean(opts && opts.dateSource === "records");
 
     function maxTime(t1, t2) {
       var s1 = t1 || "";
@@ -1093,7 +1096,19 @@
 
     function sessionDateKey(s) {
       if (!s) return "";
-      return maxTime(s.latestTime, s.lastActivity);
+      return recordsOnly ? (s.latestTime || "") : maxTime(s.latestTime, s.lastActivity);
+    }
+
+    // 보조 기준(records 모드): Desktop 에서 마지막으로 쓴 시각
+    function sessionActivityKey(s) {
+      return (s && s.lastActivity) ? String(s.lastActivity) : "";
+    }
+    function projectActivityKey(p) {
+      var best = "";
+      if (p && Array.isArray(p.sessions)) {
+        for (var i = 0; i < p.sessions.length; i++) { best = maxTime(best, sessionActivityKey(p.sessions[i])); }
+      }
+      return best;
     }
 
     function projectDateKey(p) {
@@ -1104,7 +1119,7 @@
           var s = p.sessions[i];
           if (!s) continue;
           maxT = maxTime(maxT, s.latestTime);
-          maxT = maxTime(maxT, s.lastActivity);
+          if (!recordsOnly) { maxT = maxTime(maxT, s.lastActivity); }
         }
       }
       return maxT;
@@ -1139,6 +1154,10 @@
           var tB = sessionDateKey(b);
           var dDiff = compareDates(tA, tB, isDesc);
           if (dDiff !== 0) return dDiff;
+          if (recordsOnly) {
+            var aDiffS = compareDates(sessionActivityKey(a), sessionActivityKey(b), isDesc);
+            if (aDiffS !== 0) return aDiffS;
+          }
           var titleA = (a && a.title != null) ? String(a.title) : "";
           var titleB = (b && b.title != null) ? String(b.title) : "";
           var nameDiff = titleA.localeCompare(titleB, "ko", { numeric: true, sensitivity: "base" });
@@ -1218,6 +1237,10 @@
           var tB = projectDateKey(b);
           var dDiff = compareDates(tA, tB, isDesc);
           if (dDiff !== 0) return dDiff;
+          if (recordsOnly) {
+            var aDiffP = compareDates(projectActivityKey(a), projectActivityKey(b), isDesc);
+            if (aDiffP !== 0) return aDiffP;
+          }
           var nameA = (a && a.name != null) ? String(a.name) : "";
           var nameB = (b && b.name != null) ? String(b.name) : "";
           var nDiff = nameA.localeCompare(nameB, "ko", { numeric: true, sensitivity: "base" });
@@ -1692,13 +1715,20 @@
     } catch (e) {}
   }
 
+  // 위임 실행 기록 화면의 날짜 정렬은 agy 작업(위임 기록) 시각 기준이라 라벨도 그렇게 보인다
+  function qaSortLabel(m) {
+    if (m.value === "recent-desc") return "agy 최근 작업순";
+    if (m.value === "recent-asc") return "agy 오래된 작업순";
+    return m.label;
+  }
+
   function initTreeSortSelects() {
     if (els.qaTreeSort) {
       els.qaTreeSort.innerHTML = "";
       TREE_SORT_MODES.forEach(function (m) {
         var opt = document.createElement("option");
         opt.value = m.value;
-        opt.textContent = m.label;
+        opt.textContent = qaSortLabel(m);
         els.qaTreeSort.appendChild(opt);
       });
       els.qaTreeSort.value = getQaTreeSortMode();
@@ -1765,7 +1795,7 @@
 
     var q = (els.qaSessionSearch && els.qaSessionSearch.value || "").trim().toLowerCase();
     var filtered = qaFilterTree(allNodes, q);
-    var sorted = sortTreeNodes(filtered, getQaTreeSortMode());
+    var sorted = sortTreeNodes(filtered, getQaTreeSortMode(), { dateSource: "records" });
     var hasQuery = Boolean(q);
 
     var frag = document.createDocumentFragment();
@@ -1799,7 +1829,7 @@
       pItem.setAttribute("role", "treeitem");
       pItem.setAttribute("aria-expanded", isOpen ? "true" : "false");
 
-      var relTime = formatRelativeTime(treeNodeLatest(p));
+      var relTime = p.latestTime ? formatRelativeTime(p.latestTime) : "위임 없음";   // 위임 기록 화면은 agy 작업 시각 기준
       var errHtml = p.errors > 0 ? ' <span class="err-count">실패 ' + p.errors + '</span>' : '';
       var sessCount = p.sessions ? p.sessions.length : 0;
       var sessHtml = ' · 세션 ' + sessCount;
@@ -1858,7 +1888,7 @@
           sItem.dataset.session = s.id;
           sItem.setAttribute("role", "treeitem");
 
-          var sTime = formatRelativeTime(s.latestTime || s.lastActivity);
+          var sTime = s.latestTime ? formatRelativeTime(s.latestTime) : "위임 없음";
           var sErrHtml = s.errors > 0 ? ' <span class="err-count">실패 ' + s.errors + '</span>' : '';
           var sSubHtml = sTime + sErrHtml;
 

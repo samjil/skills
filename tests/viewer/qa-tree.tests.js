@@ -500,6 +500,22 @@ eq("빈 배열 정렬", [], api.sortTreeNodes([], "recent-desc"));
 eq("null 입력 정렬", [], api.sortTreeNodes(null, "recent-desc"));
 eq("배열 내 null 항목 안전 처리", [], api.sortTreeNodes([null], "recent-desc"));
 
+console.log("\nsortTreeNodes: dateSource=records (위임 실행 기록 화면: agy 작업 시각만 기준)");
+const recNodes = [
+  { id: "p-active", name: "활동만 있는 프로젝트", latestTime: "", sessions: [{ id: "s1", title: "진행중 세션", latestTime: "", lastActivity: "2026-10-14 20:00:00" }] },
+  { id: "p-old", name: "예전 위임", latestTime: "2026-10-10 09:00:00", sessions: [{ id: "s2", title: "예전", latestTime: "2026-10-10 09:00:00", lastActivity: "2026-10-10 09:30:00" }] },
+  { id: "p-new", name: "최근 위임", latestTime: "2026-10-14 10:00:00", sessions: [{ id: "s3", title: "최근", latestTime: "2026-10-14 10:00:00", lastActivity: "2026-10-14 10:05:00" }] },
+  { id: "p-idle", name: "기록도 활동도 없음", latestTime: "", sessions: [{ id: "s4", title: "빈 세션", latestTime: "", lastActivity: "" }] }
+];
+const idsOf = (list) => list.map((n) => n.id).join(",");
+eq("기본(Desktop 활동 포함): 최근 활동이 있는 프로젝트가 앞", "p-active,p-new,p-old,p-idle", idsOf(api.sortTreeNodes(recNodes, "recent-desc")));
+eq("records: 위임 기록이 최근인 프로젝트가 앞, 기록 없는 것은 Desktop 활동순으로 뒤", "p-new,p-old,p-active,p-idle", idsOf(api.sortTreeNodes(recNodes, "recent-desc", { dateSource: "records" })));
+eq("records 오래된순: 기록 없는 것이 앞(보조 기준도 오래된순)", "p-idle,p-active,p-old,p-new", idsOf(api.sortTreeNodes(recNodes, "recent-asc", { dateSource: "records" })));
+const recSessions = [{ id: "a", title: "A", latestTime: "", lastActivity: "2026-10-14 20:00:00" }, { id: "b", title: "B", latestTime: "2026-10-14 08:00:00", lastActivity: "2026-10-14 08:00:00" }, { id: "c", title: "C", latestTime: "2026-10-13 08:00:00", lastActivity: "2026-10-14 21:00:00" }];
+eq("records: 세션도 위임 시각 우선(기록 없는 세션은 뒤)", "b,c,a", api.sortTreeNodes([{ id: "p", name: "P", latestTime: "", sessions: recSessions }], "recent-desc", { dateSource: "records" })[0].sessions.map((x) => x.id).join(","));
+eq("옵션이 없으면 예전 동작과 같다(기록·Desktop 활동 중 늦은 쪽: c 21시 > a 20시 > b 8시)", "c,a,b", api.sortTreeNodes([{ id: "p", name: "P", latestTime: "", sessions: recSessions }], "recent-desc")[0].sessions.map((x) => x.id).join(","));
+eq("records 모드여도 이름순은 영향 없음", "p-idle,p-active,p-old,p-new".split(",").length, api.sortTreeNodes(recNodes, "name-asc", { dateSource: "records" }).length);
+
 console.log("\n통과 " + passed + " / 실패 " + failed);
 if (failed > 0) {
   process.exit(1);
