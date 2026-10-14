@@ -101,6 +101,16 @@ if (-not (Test-Path $WebDir)) {
 . (Join-Path $PSScriptRoot "watcher-health.ps1")
 $WatcherRuntimeDir = Get-WatcherRuntimeDir $DataDir
 
+# Claude Desktop 세션 및 링크 색인 헬퍼
+$claudeSessionsScript = Join-Path $PSScriptRoot "claude-sessions.ps1"
+if (Test-Path -LiteralPath $claudeSessionsScript) {
+    try {
+        . $claudeSessionsScript
+    } catch {
+        Write-Warning ("claude-sessions.ps1 로드 실패: {0}" -f $_.Exception.Message)
+    }
+}
+
 $RouteMap = [ordered]@{
 
     "/handoff/" = (Resolve-Path $HandoffDir).Path
@@ -459,19 +469,48 @@ function Start-ProcessTranslation([string]$ConversationId) {
     return $st
 }
 
-function Get-AgyProgress([string]$ConversationId, $StartedAt) {
+function Get-AgyProgress([string]$ConversationId, $StartedAt, [string]$TaskId = "", [string]$QuestionSnippet = "") {
     try {
         $agyHome = if ($env:AGY_HOME) { $env:AGY_HOME } else { Join-Path $env:USERPROFILE ".gemini\antigravity-cli" }
         if (-not $ConversationId) {
-            # 새 대화: 작업 시작 직후(약 7초 안)에 생긴 대화 DB가 딱 하나일 때만 이번 작업의 것으로 봅니다.
             if (-not $StartedAt) { return $null }
             $convDir = Join-Path $agyHome "conversations"
             if (-not (Test-Path -LiteralPath $convDir -PathType Container)) { return $null }
-            $from = $StartedAt.AddSeconds(-2); $to = $StartedAt.AddSeconds(120)
+            $from = $StartedAt.AddSeconds(-5); $to = $StartedAt.AddSeconds(180)
             $cands = @(Get-ChildItem -LiteralPath $convDir -Filter '*.db' -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.CreationTime -ge $from -and $_.CreationTime -le $to })
-            if ($cands.Count -ne 1) { return $null }
-            $ConversationId = $cands[0].BaseName
+                Where-Object { $_.CreationTime -ge $from -and $_.CreationTime -le $to } |
+                Sort-Object CreationTime)
+            if ($cands.Count -eq 0) { return $null }
+            if ($cands.Count -eq 1) {
+                $ConversationId = $cands[0].BaseName
+            } else {
+                $matchedId = ""
+                foreach ($c in $cands) {
+                    $candCId = $c.BaseName
+                    $candTf = Join-Path $agyHome ("brain\{0}\.system_generated\logs\transcript.jsonl" -f $candCId)
+                    if (Test-Path -LiteralPath $candTf) {
+                        try {
+                            $firstLine = [System.IO.File]::ReadLines($candTf) | Select-Object -First 1
+                            if ($firstLine) {
+                                if ($TaskId -and $firstLine -match [regex]::Escape($TaskId)) {
+                                    $matchedId = $candCId
+                                    break
+                                }
+                                if ($QuestionSnippet -and $firstLine.Contains($QuestionSnippet)) {
+                                    $matchedId = $candCId
+                                    break
+                                }
+                            }
+                        } catch {}
+                    }
+                }
+                if ($matchedId) {
+                    $ConversationId = $matchedId
+                } else {
+                    $best = $cands | Sort-Object { [Math]::Abs(($_.CreationTime - $StartedAt).TotalSeconds) } | Select-Object -First 1
+                    $ConversationId = $best.BaseName
+                }
+            }
         }
         $tf = Join-Path $agyHome ("brain\{0}\.system_generated\logs\transcript_full.jsonl" -f $ConversationId)
         $item = Get-Item -LiteralPath $tf -ErrorAction SilentlyContinue
@@ -520,6 +559,25 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt) {
         if ($thinking.Length -gt 500) { $thinking = $thinking.Substring(0, 500) + "…" }
         if ($say.Length -gt 300) { $say = $say.Substring(0, 300) + "…" }
         $last = $item.LastWriteTime
+
+        # 실시간 누적 토큰 집계 (transcript.jsonl 우선, 없으면 transcript_full.jsonl)
+        $tInSum = 0; $tOutSum = 0
+        $compactTf = Join-Path $agyHome ("brain\{0}\.system_generated\logs\transcript.jsonl" -f $ConversationId)
+        $targetTokenFile = if (Test-Path -LiteralPath $compactTf) { $compactTf } else { $tf }
+        if (Test-Path -LiteralPath $targetTokenFile) {
+            try {
+                $tStream = [System.IO.File]::Open($targetTokenFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                $tReader = New-Object System.IO.StreamReader($tStream, [System.Text.Encoding]::UTF8)
+                while (-not $tReader.EndOfStream) {
+                    $tLine = $tReader.ReadLine()
+                    if ($tLine -match '"input_tokens"\s*:\s*(\d+)') { $tInSum += [int64]$matches[1] }
+                    if ($tLine -match '"cache_read_tokens"\s*:\s*(\d+)') { $tInSum += [int64]$matches[1] }
+                    if ($tLine -match '"output_tokens"\s*:\s*(\d+)') { $tOutSum += [int64]$matches[1] }
+                }
+                $tReader.Dispose(); $tStream.Dispose()
+            } catch {}
+        }
+
         return [PSCustomObject]@{
             conversation_id = $ConversationId
             step            = $step
@@ -531,6 +589,11 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt) {
             steps           = @(Get-AgyProcessStepsCached $ConversationId)
             thinking        = $thinking
             say             = $say
+            tokens          = [PSCustomObject]@{
+                input  = $tInSum
+                output = $tOutSum
+                total  = ($tInSum + $tOutSum)
+            }
             last_activity   = $last.ToString("yyyy-MM-dd HH:mm:ss")
             last_activity_ms = [int64]([DateTimeOffset]$last).ToUnixTimeMilliseconds()
         }
@@ -676,6 +739,8 @@ if (-not $NoBrowser) {
 
 try {
 
+    $lastClaudeScanLaunchAt = $null
+    $lastClaudeScanProc = $null
     $pendingContext = $null
 
     while ($listener.IsListening) {
@@ -1066,6 +1131,11 @@ try {
                     } catch {}
                 }
 
+                # 작업마다 있는 표시 파일(logs\running\<작업 ID>.json): 동시에 도는 작업 각각의 작업자 PID·모델·시작 시각·대화 ID.
+                # 이 폴더가 아예 없으면 옛 워처(한 번에 하나만 처리)라서 예전 규칙(맨 앞 작업이 처리 중)을 쓴다.
+                $runningDir = Join-Path $runtimeDir "logs\running"
+                $legacyQueue = -not (Test-Path -LiteralPath $runningDir -PathType Container)
+
                 $pendingList = @()
                 if (Test-Path -LiteralPath $inboxDir -PathType Container) {
                     $inboxFiles = @(Get-ChildItem -LiteralPath $inboxDir -File -ErrorAction SilentlyContinue |
@@ -1149,11 +1219,6 @@ try {
                                 $resolvedModel = $modelVal
                             }
                             if (-not $resolvedModel) {
-                # 작업마다 있는 표시 파일(logs\running\<작업 ID>.json): 동시에 도는 작업 각각의 작업자 PID·모델·시작 시각·대화 ID.
-                # 이 폴더가 아예 없으면 옛 워처(한 번에 하나만 처리)라서 예전 규칙(맨 앞 작업이 처리 중)을 쓴다.
-                $runningDir = Join-Path $runtimeDir "logs\running"
-                $legacyQueue = -not (Test-Path -LiteralPath $runningDir -PathType Container)
-
                                 $resolvedModel = "gemini-3.8-flash-high"
                             }
 
@@ -1179,6 +1244,7 @@ try {
                             $pendingList += [PSCustomObject]@{
                                 task_id    = $f.BaseName
                                 created    = $f.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")
+                                started_at = $(if ($state -eq "processing" -and $startedText) { $startedText } else { "" })
                                 question   = $question
                                 cwd        = @(ConvertTo-CwdList $cwdLines.ToArray())
                                 session    = $sessionVal
@@ -1244,7 +1310,6 @@ try {
                     watcherAlive  = $watcherAlive
                     watcherSource = [string]$aliveInfo.Source
                     manualStop    = (Test-WatcherManualStop $WatcherRuntimeDir)
-                                started_at = $(if ($state -eq "processing" -and $startedText) { $startedText } else { "" })
                     canStart      = [bool]$watcherHealth
                     autoRestart   = $autoRestart
                     lastHeartbeat = $lastHeartbeat
@@ -1405,6 +1470,186 @@ try {
 
                     $response.OutputStream.Write($bytes, 0, $bytes.Length)
 
+                }
+
+            } elseif ($urlPath -eq "/api/claude/tree") {
+
+                try {
+                    $indexFile = Join-Path $DataDir "claude-links.json"
+                    $runningFile = "$indexFile.running"
+                    $errorFile = "$indexFile.error"
+
+                    $isScanning = $false
+
+                    if (Test-Path -LiteralPath $runningFile) {
+                        $runningRaw = $null
+                        try {
+                            $runningRaw = [System.IO.File]::ReadAllText($runningFile, [System.Text.Encoding]::UTF8)
+                        } catch {}
+
+                        $runningJson = $null
+                        if ($runningRaw) {
+                            try { $runningJson = ConvertFrom-Json -InputObject $runningRaw } catch {}
+                        }
+
+                        $rPid = 0
+                        if ($runningJson -and $runningJson.pid) {
+                            [int]::TryParse([string]$runningJson.pid, [ref]$rPid) | Out-Null
+                        }
+
+                        $rItem = Get-Item -LiteralPath $runningFile -ErrorAction SilentlyContinue
+                        $isStale = $false
+
+                        if (-not $rItem) {
+                            $isStale = $true
+                        } else {
+                            $ageSec = ((Get-Date) - $rItem.LastWriteTime).TotalSeconds
+                            if ($ageSec -ge 600) {
+                                $isStale = $true
+                            } elseif ($rPid -gt 0) {
+                                $proc = Get-Process -Id $rPid -ErrorAction SilentlyContinue
+                                if (-not $proc -or $proc.HasExited) {
+                                    $isStale = $true
+                                }
+                            } else {
+                                $isStale = $true
+                            }
+                        }
+
+                        if ($isStale) {
+                            Remove-Item -LiteralPath $runningFile -Force -ErrorAction SilentlyContinue
+                            $isScanning = $false
+                        } else {
+                            $isScanning = $true
+                        }
+                    }
+
+                    if (-not $isScanning -and $lastClaudeScanProc) {
+                        try {
+                            if (-not $lastClaudeScanProc.HasExited) {
+                                $isScanning = $true
+                            }
+                        } catch {}
+                    }
+
+                    $recentlyLaunched = ($lastClaudeScanLaunchAt -and (((Get-Date) - $lastClaudeScanLaunchAt).TotalSeconds -lt 5))
+
+                    $indexExists = Test-Path -LiteralPath $indexFile
+                    $indexStale = $false
+                    if ($indexExists) {
+                        $indexItem = Get-Item -LiteralPath $indexFile -ErrorAction SilentlyContinue
+                        if ($indexItem -and (((Get-Date) - $indexItem.LastWriteTime).TotalSeconds -gt 15)) {
+                            $indexStale = $true
+                        }
+                    }
+
+                    $needScan = (-not $indexExists) -or $indexStale
+
+                    if ($needScan -and (-not $isScanning) -and (-not $recentlyLaunched)) {
+                        $scannerScript = Join-Path $PSScriptRoot "scan-claude-links.ps1"
+                        if (Test-Path -LiteralPath $scannerScript) {
+                            $lastClaudeScanLaunchAt = Get-Date
+                            $isScanning = $true
+                            try {
+                                $psi = New-Object System.Diagnostics.ProcessStartInfo
+                                $psi.FileName = "powershell.exe"
+                                $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scannerScript`" -IndexFile `"$indexFile`""
+                                $psi.UseShellExecute = $false
+                                $psi.CreateNoWindow = $true
+                                $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+                                $lastClaudeScanProc = [System.Diagnostics.Process]::Start($psi)
+                            } catch {
+                                $isScanning = $false
+                            }
+                        }
+                    }
+
+                    $tree = $null
+                    if (Get-Command Get-ClaudeSessionTree -ErrorAction SilentlyContinue) {
+                        try {
+                            $tree = Get-ClaudeSessionTree
+                        } catch {}
+                    }
+
+                    $available = if ($tree -and $tree.Available) { [bool]$tree.Available } else { $false }
+
+                    $projectsList = @()
+                    if ($tree -and $tree.Projects) {
+                        foreach ($p in $tree.Projects) {
+                            $sessList = @()
+                            if ($p.sessions) {
+                                foreach ($s in $p.sessions) {
+                                    $sessList += $s
+                                }
+                            }
+                            $projectsList += [ordered]@{
+                                id       = [string]$p.id
+                                name     = [string]$p.name
+                                sessions = @($sessList)
+                            }
+                        }
+                    }
+
+                    $ungroupedList = @()
+                    if ($tree -and $tree.Ungrouped) {
+                        foreach ($s in $tree.Ungrouped) {
+                            $ungroupedList += $s
+                        }
+                    }
+
+                    $scanError = ""
+                    if (Test-Path -LiteralPath $errorFile) {
+                        try {
+                            $scanError = [System.IO.File]::ReadAllText($errorFile, [System.Text.Encoding]::UTF8).Trim()
+                        } catch {}
+                    }
+
+                    $linkInfo = $null
+                    if (Get-Command Read-ClaudeLinkIndex -ErrorAction SilentlyContinue) {
+                        try {
+                            $linkInfo = Read-ClaudeLinkIndex -IndexFile $indexFile
+                        } catch {}
+                    }
+
+                    $taskLinks = if ($linkInfo -and $linkInfo.Tasks) { $linkInfo.Tasks } else { @{} }
+                    $handoffLinks = if ($linkInfo -and $linkInfo.Msgs) { $linkInfo.Msgs } else { @{} }
+                    $updated = if ($linkInfo -and $linkInfo.Updated) { [string]$linkInfo.Updated } else { "" }
+
+                    $outObj = [ordered]@{
+                        available    = $available
+                        scanning     = $isScanning
+                        scanError    = $scanError
+                        updated      = $updated
+                        projects     = @($projectsList)
+                        ungrouped    = @($ungroupedList)
+                        taskLinks    = $taskLinks
+                        handoffLinks = $handoffLinks
+                    }
+
+                    $json = ConvertTo-Json -InputObject $outObj -Depth 6
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+                    $response.ContentType = "application/json; charset=utf-8"
+                    $response.ContentLength64 = $bytes.Length
+                    $response.Headers.Add("Cache-Control", "no-store")
+                    $response.OutputStream.Write($bytes, 0, $bytes.Length)
+
+                } catch {
+                    $errObj = [ordered]@{
+                        available    = $false
+                        scanning     = $false
+                        scanError    = [string]$_.Exception.Message
+                        updated      = ""
+                        projects     = @()
+                        ungrouped    = @()
+                        taskLinks    = @{}
+                        handoffLinks = @{}
+                    }
+                    $json = ConvertTo-Json -InputObject $errObj -Depth 6
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+                    $response.ContentType = "application/json; charset=utf-8"
+                    $response.ContentLength64 = $bytes.Length
+                    $response.Headers.Add("Cache-Control", "no-store")
+                    $response.OutputStream.Write($bytes, 0, $bytes.Length)
                 }
 
             } else {

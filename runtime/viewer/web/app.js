@@ -31,6 +31,7 @@
     qaSessionCount:       document.getElementById("qa-session-count"),
     qaSessionSearch:      document.getElementById("qa-session-search"),
     qaSessionList:        document.getElementById("qa-session-list"),
+    qaTreeSort:           document.getElementById("qa-tree-sort"),
     modelFilter:          document.getElementById("modelfilter"),
     statusFilter:         document.getElementById("statusfilter"),
 
@@ -38,6 +39,7 @@
     handoffProjectCount:  document.getElementById("handoff-project-count"),
     handoffProjectSearch: document.getElementById("handoff-project-search"),
     handoffProjectList:   document.getElementById("handoff-project-list"),
+    handoffTreeSort:      document.getElementById("handoff-tree-sort"),
     handoffDirFilter:     document.getElementById("handoff-dir-filter"),
     handoffStatusFilter:  document.getElementById("handoff-status-filter"),
 
@@ -79,8 +81,8 @@
     // QA 메인 뷰 내부
     qaCurrentSessionTitle: document.getElementById("qa-current-session-title"),
     qaCurrentSessionCount: document.getElementById("qa-current-session-count"),
-    qaSessionChips:       document.getElementById("qa-session-chips"),
     qaSearch:             document.getElementById("search"),
+    qaSessionChips:       document.getElementById("qa-session-chips"),
     chipQaModels:         document.getElementById("chip-qa-models"),
     chipQaStatus:         document.getElementById("chip-qa-status"),
     chipQaTime:           document.getElementById("chip-qa-time"),
@@ -99,9 +101,13 @@
 
   // 애플리케이션 상태
   var currentNav = "dashboard"; // "dashboard" | "qa" | "handoff"
-  var currentQaSession = "";    // ""(전체) | "__none__"(단발성) | 세션명
-  var currentQaProject = "";    // ""(전체 프로젝트) | "__none__"(프로젝트 없음) | 프로젝트 key
-  var currentHandoffProject = "";
+  var currentQaSession = "";    // ""(프로젝트 전체) | 세션 노드 id
+  var currentQaProject = "";    // ""(전체 프로젝트) | 프로젝트 노드 id
+  var currentQaAgy = "";        // ""(범위 안의 모든 agy 세션) | "__none__"(@session 없는 단발성) | agy 세션 이름
+  var claudeTree = null;        // 마지막으로 받은 /api/claude/tree 응답
+  var currentHandoffProject = ""; // ""(전체 프로젝트) | 프로젝트 노드 id
+  var currentHandoffSession = ""; // ""(프로젝트 전체) | 세션 노드 id
+  var handoffChannels = {};     // 채널 이름 -> /api/handoff/project 응답 ({name, brief, files, messages})
 
   var allItems = [];            // 전체 완료 QA 레코드
   var pendingItems = [];        // inbox 대기/진행 작업
@@ -272,11 +278,11 @@
     }
 
     if (path === "#/qa") {
-      return { nav: "qa", session: params.session || "", project: params.project || "" };
+      return { nav: "qa", session: params.session || "", project: params.project || "", agy: params.agy || "" };
     }
     var matchHandoff = path.match(/^#\/handoff$/);
     if (matchHandoff) {
-      return { nav: "handoff", session: "", project: params.project || "" };
+      return { nav: "handoff", session: params.session || "", project: params.project || "" };
     }
     return { nav: "dashboard", session: "", project: "" };
   }
@@ -291,11 +297,23 @@
       if (currentQaSession) {
         parts.push("session=" + encodeURIComponent(currentQaSession));
       }
+      if (currentQaAgy) {
+        parts.push("agy=" + encodeURIComponent(currentQaAgy));
+      }
       if (parts.length > 0) {
         newHash += "?" + parts.join("&");
       }
-    } else if (currentNav === "handoff" && currentHandoffProject) {
-      newHash += "?project=" + encodeURIComponent(currentHandoffProject);
+    } else if (currentNav === "handoff") {
+      var hParts = [];
+      if (currentHandoffProject) {
+        hParts.push("project=" + encodeURIComponent(currentHandoffProject));
+      }
+      if (currentHandoffSession) {
+        hParts.push("session=" + encodeURIComponent(currentHandoffSession));
+      }
+      if (hParts.length > 0) {
+        newHash += "?" + hParts.join("&");
+      }
     }
     if (window.location.hash !== newHash) {
       history.replaceState(null, "", newHash);
@@ -351,11 +369,7 @@
     } else if (nav === "qa") {
       applyQaFilters();
     } else if (nav === "handoff") {
-      if (!currentHandoffProject && handoffProjects.length > 0) {
-        selectHandoffProject(handoffProjects[0].name);
-      } else {
-        renderHandoffMessages();
-      }
+      renderHandoffView();
     }
   }
 
@@ -368,26 +382,29 @@
     } else if (currentNav === "qa") {
       els.topbarCategory.textContent = "위임 실행 기록";
       if (!currentQaProject) {
-        if (!currentQaSession) {
-          els.topbarCurrent.textContent = "전체 프로젝트 피드";
-        } else if (currentQaSession === "__none__") {
-          els.topbarCurrent.textContent = "단발성 작업 (세션 없음)";
-        } else {
-          els.topbarCurrent.textContent = currentQaSession;
-        }
+        els.topbarCurrent.textContent = "전체 프로젝트 피드";
       } else {
-        var pName = qaProjectDisplayName(currentQaProject);
+        var tree = buildQaTree(allItems, pendingItems, claudeTree);
+        var titles = findQaNodeTitles(tree, currentQaProject, currentQaSession);
         if (!currentQaSession) {
-          els.topbarCurrent.textContent = pName;
-        } else if (currentQaSession === "__none__") {
-          els.topbarCurrent.textContent = pName + " / 단발성";
+          els.topbarCurrent.textContent = titles.projectName;
         } else {
-          els.topbarCurrent.textContent = pName + " / " + currentQaSession;
+          els.topbarCurrent.textContent = titles.projectName + " / " + titles.sessionTitle;
         }
       }
     } else if (currentNav === "handoff") {
       els.topbarCategory.textContent = "에이전트 인수인계";
-      els.topbarCurrent.textContent = currentHandoffProject || "프로젝트 선택";
+      if (!currentHandoffProject) {
+        els.topbarCurrent.textContent = "전체 프로젝트";
+      } else {
+        var hTree = buildHandoffTree(handoffChannels, claudeTree);
+        var hTitles = findHandoffNodeTitles(hTree, currentHandoffProject, currentHandoffSession);
+        if (!currentHandoffSession) {
+          els.topbarCurrent.textContent = hTitles.projectName;
+        } else {
+          els.topbarCurrent.textContent = hTitles.projectName + " / " + hTitles.sessionTitle;
+        }
+      }
     }
   }
 
@@ -400,8 +417,8 @@
       var count = filteredQa.length + filteredPending.length;
       els.topbarCount.textContent = count + "건 표시 중 (전체 " + allItems.length + "건)";
     } else if (currentNav === "handoff") {
-      var msgs = (currentHandoffData && currentHandoffData.messages) ? currentHandoffData.messages.length : 0;
-      els.topbarCount.textContent = currentHandoffProject ? (msgs + "개 메시지") : (handoffProjects.length + "개 프로젝트");
+      var hMsgs = handoffMessagesOf(handoffChannels, claudeTree, currentHandoffProject, currentHandoffSession);
+      els.topbarCount.textContent = hMsgs.length + "개 메시지";
     }
 
     var t = new Date();
@@ -560,45 +577,57 @@
     });
   }
 
-  // 인수인계 프로젝트 목록 로드
+  // 인수인계 채널 목록 및 모든 채널 상세 로드
   function loadHandoffProjects(force) {
     return fetchJson("/api/handoff/projects").then(function (projects) {
       if (!Array.isArray(projects)) { projects = []; }
       handoffProjects = projects;
-      renderHandoffProjectList();
-      if (!currentHandoffProject && projects.length > 0) {
-        currentHandoffProject = projects[0].name;
-      }
-      if (currentHandoffProject) {
-        loadHandoffProject(currentHandoffProject);
-      }
-      return projects;
+
+      var loaders = projects.map(function (p) {
+        var cName = p.name;
+        var cached = handoffChannels[cName];
+        if (!force && cached && cached.updated === p.updated && Array.isArray(cached.messages) && cached.messages.length === (p.msgCount || 0)) {
+          return Promise.resolve(cached);
+        }
+        return fetchJson("/api/handoff/project?name=" + encodeURIComponent(cName))
+          .then(function (data) {
+            if (data && typeof data === "object") {
+              handoffChannels[cName] = data;
+              return data;
+            }
+            return cached || { name: cName, brief: "", files: [], messages: [] };
+          })
+          .catch(function (err) {
+            console.warn("Handoff channel load error (" + cName + "):", err);
+            return cached || { name: cName, brief: "", files: [], messages: [] };
+          });
+      });
+
+      return Promise.all(loaders).then(function () {
+        var validMap = {};
+        projects.forEach(function (p) { validMap[p.name] = true; });
+        for (var k in handoffChannels) {
+          if (!validMap[k]) delete handoffChannels[k];
+        }
+        if (currentHandoffProject && !currentHandoffSession && handoffChannels[currentHandoffProject]) {
+          var treeCheck = buildHandoffTree(handoffChannels, claudeTree);
+          var matchProj = treeCheck.some(function (p) { return p.id === currentHandoffProject; });
+          if (!matchProj) {
+            currentHandoffSession = "c:" + currentHandoffProject;
+            currentHandoffProject = QA_UNLINKED;
+          }
+        }
+
+        renderHandoffTree();
+        if (currentNav === "handoff") {
+          renderHandoffView();
+        }
+        return projects;
+      });
     }).catch(function (err) {
       console.warn("Handoff projects load error:", err);
       return [];
     });
-  }
-
-  // 인수인계 특정 프로젝트 상세 로드
-  function loadHandoffProject(projectName) {
-    if (!projectName) { return Promise.resolve(null); }
-    currentHandoffProject = projectName;
-    updateBreadcrumbs();
-    updateHash();
-
-    return fetchJson("/api/handoff/project?name=" + encodeURIComponent(projectName))
-      .then(function (data) {
-        currentHandoffData = data;
-        renderHandoffProjectList();
-        renderHandoffView();
-        return data;
-      })
-      .catch(function (err) {
-        if (els.handoffCards) {
-          els.handoffCards.innerHTML = '<p class="empty">프로젝트 로드 실패: ' + escapeHtml(err.message) + '</p>';
-        }
-        return null;
-      });
   }
 
   // ==========================================================================
@@ -646,216 +675,1105 @@
     return list;
   }
 
-  function qaProjectNameFromPath(p) {
-    if (p == null) return "";
-    var s = String(p).trim();
-    if (!s) return "";
-    s = s.replace(/[\\/]+$/, "");
-    if (!s) return "";
-    var lastSep = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
-    if (lastSep < 0) return s;
-    var name = s.slice(lastSep + 1);
-    return name || s;
+  var QA_UNGROUPED = "__ungrouped__";
+  var QA_UNLINKED = "__unlinked__";
+
+  function qaNodeOf(item, tree) {
+    var link = (tree && tree.taskLinks && item && item.task_id) ? tree.taskLinks[item.task_id] : null;
+    if (link) {
+      if (tree && Array.isArray(tree.projects)) {
+        for (var i = 0; i < tree.projects.length; i++) {
+          var p = tree.projects[i];
+          if (p && Array.isArray(p.sessions)) {
+            for (var j = 0; j < p.sessions.length; j++) {
+              var s = p.sessions[j];
+              if (s && s.id === link) {
+                return {
+                  projectId: p.id,
+                  projectName: p.name,
+                  sessionId: link,
+                  sessionTitle: s.title ? s.title : link.slice(0, 8)
+                };
+              }
+            }
+          }
+        }
+      }
+      if (tree && Array.isArray(tree.ungrouped)) {
+        for (var k = 0; k < tree.ungrouped.length; k++) {
+          var us = tree.ungrouped[k];
+          if (us && us.id === link) {
+            return {
+              projectId: QA_UNGROUPED,
+              projectName: "그룹 없음",
+              sessionId: link,
+              sessionTitle: us.title ? us.title : link.slice(0, 8)
+            };
+          }
+        }
+      }
+    }
+    var sName = (item && item.session != null && String(item.session).trim() !== "") ? String(item.session) : "";
+    return {
+      projectId: QA_UNLINKED,
+      projectName: "연결 안 됨",
+      sessionId: "u:" + (sName ? sName : "__none__"),
+      sessionTitle: sName ? sName : "단발성 (세션 없음)"
+    };
   }
 
-  function qaProjectOf(item) {
-    if (!item || typeof item !== "object") {
-      return { key: "__none__", name: "프로젝트 없음" };
-    }
-    if (item._qaProject) {
-      return item._qaProject;
-    }
-    var cwds = cwdListOf(item.cwd);
-    if (!cwds || cwds.length === 0) {
-      cwds = leadingCwds(item.question);
-    }
-    var first = (cwds && cwds.length > 0) ? cwds[0] : "";
-    var name = qaProjectNameFromPath(first);
-    var res;
-    if (!name) {
-      res = { key: "__none__", name: "프로젝트 없음" };
-    } else {
-      res = { key: name.toLowerCase(), name: name };
-    }
-    item._qaProject = res;
-    return res;
-  }
-
-  function groupQaProjects(records, pendings) {
-    var map = {};
+  function buildQaTree(records, pendings, tree) {
     var recs = Array.isArray(records) ? records : [];
     var pends = Array.isArray(pendings) ? pendings : [];
 
-    function processItem(item, isPending) {
-      if (!item || typeof item !== "object") return;
-      var proj = qaProjectOf(item);
-      var key = proj.key;
-      var name = proj.name;
-      var time = isPending ? (item.created || "") : (item.timestamp || "");
+    var projectList = [];
+    var sessionLookup = {};
 
-      if (!map[key]) {
-        map[key] = {
-          key: key,
-          name: name,
+    if (tree && Array.isArray(tree.projects)) {
+      for (var i = 0; i < tree.projects.length; i++) {
+        var p = tree.projects[i];
+        if (!p) continue;
+        var pNode = {
+          id: p.id,
+          name: p.name || "",
           total: 0,
           pending: 0,
           errors: 0,
-          latestTime: time
+          latestTime: "",
+          sessions: []
         };
+        if (Array.isArray(p.sessions)) {
+          for (var j = 0; j < p.sessions.length; j++) {
+            var s = p.sessions[j];
+            if (!s) continue;
+            var sNode = {
+              id: s.id,
+              title: s.title ? s.title : String(s.id || "").slice(0, 8),
+              cwd: s.cwd || "",
+              total: 0,
+              pending: 0,
+              errors: 0,
+              latestTime: "",
+              archived: Boolean(s.archived),
+              lastActivity: s.lastActivity || ""
+            };
+            pNode.sessions.push(sNode);
+            sessionLookup[s.id] = sNode;
+          }
+        }
+        projectList.push(pNode);
+      }
+    }
+
+    var ungroupedNode = null;
+    if (tree && Array.isArray(tree.ungrouped) && tree.ungrouped.length > 0) {
+      ungroupedNode = {
+        id: QA_UNGROUPED,
+        name: "그룹 없음",
+        total: 0,
+        pending: 0,
+        errors: 0,
+        latestTime: "",
+        sessions: []
+      };
+      for (var u = 0; u < tree.ungrouped.length; u++) {
+        var us = tree.ungrouped[u];
+        if (!us) continue;
+        var usNode = {
+          id: us.id,
+          title: us.title ? us.title : String(us.id || "").slice(0, 8),
+          cwd: us.cwd || "",
+          total: 0,
+          pending: 0,
+          errors: 0,
+          latestTime: "",
+          archived: Boolean(us.archived),
+          lastActivity: us.lastActivity || ""
+        };
+        ungroupedNode.sessions.push(usNode);
+        sessionLookup[us.id] = usNode;
+      }
+    }
+
+    var unlinkedNode = {
+      id: QA_UNLINKED,
+      name: "연결 안 됨",
+      total: 0,
+      pending: 0,
+      errors: 0,
+      latestTime: "",
+      sessions: []
+    };
+    var unlinkedSessionMap = {};
+
+    function processItem(item, isPending) {
+      if (!item || typeof item !== "object") return;
+      var nodeInfo = qaNodeOf(item, tree);
+      var time = isPending ? (item.created || "") : (item.timestamp || "");
+      var isErr = !isPending && item.status && String(item.status).trim() !== "OK";
+
+      var targetSession = null;
+      if (nodeInfo.projectId === QA_UNLINKED) {
+        targetSession = unlinkedSessionMap[nodeInfo.sessionId];
+        if (!targetSession) {
+          targetSession = {
+            id: nodeInfo.sessionId,
+            title: nodeInfo.sessionTitle,
+            cwd: "",
+            total: 0,
+            pending: 0,
+            errors: 0,
+            latestTime: "",
+            archived: false,
+            lastActivity: ""
+          };
+          unlinkedSessionMap[nodeInfo.sessionId] = targetSession;
+          unlinkedNode.sessions.push(targetSession);
+        }
       } else {
-        if (!map[key].latestTime || (time && time > map[key].latestTime)) {
-          map[key].latestTime = time;
-          map[key].name = name;
+        targetSession = sessionLookup[nodeInfo.sessionId];
+      }
+
+      if (targetSession) {
+        if (isPending) {
+          targetSession.pending++;
+        } else {
+          targetSession.total++;
+          if (isErr) {
+            targetSession.errors++;
+          }
+        }
+        if (time && (!targetSession.latestTime || time > targetSession.latestTime)) {
+          targetSession.latestTime = time;
+        }
+      }
+    }
+
+    for (var rIdx = 0; rIdx < recs.length; rIdx++) {
+      processItem(recs[rIdx], false);
+    }
+    for (var pIdx = 0; pIdx < pends.length; pIdx++) {
+      processItem(pends[pIdx], true);
+    }
+
+    function finalizeProject(p) {
+      var validSessions = [];
+      for (var i = 0; i < p.sessions.length; i++) {
+        var s = p.sessions[i];
+        if (s.archived && (s.total + s.pending === 0)) {
+          continue;
+        }
+        validSessions.push(s);
+      }
+
+      validSessions.sort(function (a, b) {
+        var aTime = a.latestTime || "";
+        if (a.lastActivity && (!aTime || a.lastActivity > aTime)) {
+          aTime = a.lastActivity;
+        }
+        var bTime = b.latestTime || "";
+        if (b.lastActivity && (!bTime || b.lastActivity > bTime)) {
+          bTime = b.lastActivity;
+        }
+        if (bTime !== aTime) {
+          return bTime > aTime ? 1 : -1;
+        }
+        return (a.title || "").localeCompare(b.title || "");
+      });
+
+      var pTotal = 0;
+      var pPending = 0;
+      var pErrors = 0;
+      var pLatest = "";
+
+      for (var j = 0; j < validSessions.length; j++) {
+        var vs = validSessions[j];
+        pTotal += vs.total;
+        pPending += vs.pending;
+        pErrors += vs.errors;
+        if (vs.latestTime && (!pLatest || vs.latestTime > pLatest)) {
+          pLatest = vs.latestTime;
         }
       }
 
+      p.sessions = validSessions;
+      p.total = pTotal;
+      p.pending = pPending;
+      p.errors = pErrors;
+      p.latestTime = pLatest;
+    }
+
+    var result = [];
+
+    for (var pI = 0; pI < projectList.length; pI++) {
+      finalizeProject(projectList[pI]);
+      result.push(projectList[pI]);
+    }
+
+    if (ungroupedNode) {
+      finalizeProject(ungroupedNode);
+      if (ungroupedNode.sessions.length > 0) {
+        result.push(ungroupedNode);
+      }
+    }
+
+    finalizeProject(unlinkedNode);
+    if (unlinkedNode.sessions.length > 0 && (unlinkedNode.total + unlinkedNode.pending > 0)) {
+      result.push(unlinkedNode);
+    }
+
+    return result;
+  }
+
+  function qaFilterTree(nodes, query) {
+    if (!Array.isArray(nodes)) return [];
+    var q = (query == null ? "" : String(query)).trim().toLowerCase();
+    if (!q) {
+      return nodes.slice();
+    }
+    var result = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var p = nodes[i];
+      if (!p) continue;
+      var pName = (p.name || "").toLowerCase();
+      if (pName.indexOf(q) !== -1) {
+        result.push({
+          id: p.id,
+          name: p.name,
+          total: p.total,
+          pending: p.pending,
+          errors: p.errors,
+          latestTime: p.latestTime,
+          sessions: Array.isArray(p.sessions) ? p.sessions.slice() : []
+        });
+      } else {
+        var matchingSessions = [];
+        if (Array.isArray(p.sessions)) {
+          for (var j = 0; j < p.sessions.length; j++) {
+            var s = p.sessions[j];
+            if (s && (s.title || "").toLowerCase().indexOf(q) !== -1) {
+              matchingSessions.push(s);
+            }
+          }
+        }
+        if (matchingSessions.length > 0) {
+          result.push({
+            id: p.id,
+            name: p.name,
+            total: p.total,
+            pending: p.pending,
+            errors: p.errors,
+            latestTime: p.latestTime,
+            sessions: matchingSessions
+          });
+        }
+      }
+    }
+    return result;
+  }
+
+  function qaItemMatchesSelection(item, tree, projectId, sessionId) {
+    if (!projectId) return true;
+    var node = qaNodeOf(item, tree);
+    if (node.projectId !== projectId) return false;
+    if (sessionId && node.sessionId !== sessionId) return false;
+    return true;
+  }
+
+  function qaItemMatchesAgy(item, agy) {
+    if (!agy) return true;
+    var s = (item && item.session != null) ? String(item.session).trim() : "";
+    if (agy === "__none__") {
+      return s === "";
+    }
+    return s === agy;
+  }
+
+  function qaAgySessionsOf(records, pendings, tree, projectId, sessionId) {
+    var recs = Array.isArray(records) ? records : [];
+    var pends = Array.isArray(pendings) ? pendings : [];
+    var map = {};
+
+    function processItem(item, isPending) {
+      if (!item || typeof item !== "object") return;
+      if (!qaItemMatchesSelection(item, tree, projectId, sessionId)) return;
+
+      var rawS = (item.session != null) ? String(item.session).trim() : "";
+      var sKey = rawS ? rawS : "__none__";
+
+      if (!map[sKey]) {
+        map[sKey] = {
+          name: sKey,
+          total: 0,
+          pending: 0,
+          errors: 0,
+          latestTime: ""
+        };
+      }
+
+      var entry = map[sKey];
+      var time = isPending ? (item.created || "") : (item.timestamp || "");
       if (isPending) {
-        map[key].pending++;
+        entry.pending++;
       } else {
-        map[key].total++;
+        entry.total++;
         if (item.status && String(item.status).trim() !== "OK") {
-          map[key].errors++;
+          entry.errors++;
         }
+      }
+      if (time && (!entry.latestTime || time > entry.latestTime)) {
+        entry.latestTime = time;
       }
     }
 
-    for (var i = 0; i < recs.length; i++) {
-      processItem(recs[i], false);
+    for (var r = 0; r < recs.length; r++) {
+      processItem(recs[r], false);
     }
-    for (var j = 0; j < pends.length; j++) {
-      processItem(pends[j], true);
+    for (var p = 0; p < pends.length; p++) {
+      processItem(pends[p], true);
     }
 
-    var list = Object.keys(map).map(function (k) { return map[k]; });
+    var list = [];
+    for (var k in map) {
+      if (Object.prototype.hasOwnProperty.call(map, k)) {
+        list.push(map[k]);
+      }
+    }
 
     list.sort(function (a, b) {
-      var at = a.latestTime || "";
-      var bt = b.latestTime || "";
-      if (bt !== at) {
-        return bt > at ? 1 : -1;
+      var tA = a.latestTime || "";
+      var tB = b.latestTime || "";
+      if (tA !== tB) {
+        return tB > tA ? 1 : -1;
       }
-      return (a.name || "").localeCompare(b.name || "");
+      if (a.name !== b.name) {
+        return a.name < b.name ? -1 : 1;
+      }
+      return 0;
     });
 
     return list;
   }
 
-  function groupQaSessionsOfProject(records, pendings, projectKey) {
-    var map = {};
-    var recs = Array.isArray(records) ? records : [];
-    var pends = Array.isArray(pendings) ? pendings : [];
+  var TREE_SORT_MODES = [{"value":"recent-desc","label":"날짜 최신순"},{"value":"recent-asc","label":"날짜 오래된순"},{"value":"name-asc","label":"이름순 (가나다)"},{"value":"name-desc","label":"이름 역순"},{"value":"desktop","label":"Desktop 순서"}];
+  var TREE_SORT_DEFAULT = "recent-desc";
 
-    function processItem(item, isPending) {
-      if (!item || typeof item !== "object") return;
-      if (qaProjectOf(item).key !== projectKey) return;
+  function normalizeTreeSortMode(v) {
+    if (!v || typeof v !== "string") return TREE_SORT_DEFAULT;
+    for (var i = 0; i < TREE_SORT_MODES.length; i++) {
+      if (TREE_SORT_MODES[i].value === v) return v;
+    }
+    return TREE_SORT_DEFAULT;
+  }
 
-      var sName = (item.session == null || String(item.session).trim() === "") ? "__none__" : String(item.session);
-      var time = isPending ? (item.created || "") : (item.timestamp || "");
+  // 프로젝트 행의 부제에 보일 "최근 시각": 기록의 최근 시각과 Desktop 세션의 최근 활동 중 늦은 것(기록이 없는 프로젝트도 "-" 대신 시각이 보인다)
+  function treeNodeLatest(node) {
+    var best = String((node && node.latestTime) || "");
+    var list = (node && Array.isArray(node.sessions)) ? node.sessions : [];
+    for (var i = 0; i < list.length; i++) {
+      var t = String(list[i].latestTime || "");
+      var a = String(list[i].lastActivity || "");
+      if (t > best) { best = t; }
+      if (a > best) { best = a; }
+    }
+    return best;
+  }
 
-      if (!map[sName]) {
-        map[sName] = {
-          name: sName,
+  function sortTreeNodes(nodes, mode) {
+    if (!Array.isArray(nodes)) return [];
+    var sortMode = normalizeTreeSortMode(mode);
+
+    function maxTime(t1, t2) {
+      var s1 = t1 || "";
+      var s2 = t2 || "";
+      if (!s1) return s2;
+      if (!s2) return s1;
+      return s1 > s2 ? s1 : s2;
+    }
+
+    function sessionDateKey(s) {
+      if (!s) return "";
+      return maxTime(s.latestTime, s.lastActivity);
+    }
+
+    function projectDateKey(p) {
+      if (!p) return "";
+      var maxT = p.latestTime || "";
+      if (Array.isArray(p.sessions)) {
+        for (var i = 0; i < p.sessions.length; i++) {
+          var s = p.sessions[i];
+          if (!s) continue;
+          maxT = maxTime(maxT, s.latestTime);
+          maxT = maxTime(maxT, s.lastActivity);
+        }
+      }
+      return maxT;
+    }
+
+    function compareDates(tA, tB, isDesc) {
+      var sA = tA || "";
+      var sB = tB || "";
+      if (sA === sB) return 0;
+      if (!sA) return isDesc ? 1 : -1;
+      if (!sB) return isDesc ? -1 : 1;
+      if (isDesc) {
+        return sB > sA ? 1 : -1;
+      } else {
+        return sA > sB ? 1 : -1;
+      }
+    }
+
+    function sortSessions(sessions, sm) {
+      if (!Array.isArray(sessions)) return [];
+      var sMode = (sm === "desktop") ? "recent-desc" : sm;
+      var list = sessions.map(function (s, idx) {
+        return { s: s, idx: idx };
+      });
+
+      list.sort(function (itemA, itemB) {
+        var a = itemA.s;
+        var b = itemB.s;
+        if (sMode === "recent-desc" || sMode === "recent-asc") {
+          var isDesc = (sMode === "recent-desc");
+          var tA = sessionDateKey(a);
+          var tB = sessionDateKey(b);
+          var dDiff = compareDates(tA, tB, isDesc);
+          if (dDiff !== 0) return dDiff;
+          var titleA = (a && a.title != null) ? String(a.title) : "";
+          var titleB = (b && b.title != null) ? String(b.title) : "";
+          var nameDiff = titleA.localeCompare(titleB, "ko", { numeric: true, sensitivity: "base" });
+          if (nameDiff !== 0) return nameDiff;
+          var idA = (a && a.id != null) ? String(a.id) : "";
+          var idB = (b && b.id != null) ? String(b.id) : "";
+          if (idA !== idB) return idA < idB ? -1 : 1;
+          return itemA.idx - itemB.idx;
+        } else if (sMode === "name-asc") {
+          var tA1 = (a && a.title != null) ? String(a.title) : "";
+          var tB1 = (b && b.title != null) ? String(b.title) : "";
+          var diff1 = tA1.localeCompare(tB1, "ko", { numeric: true, sensitivity: "base" });
+          if (diff1 !== 0) return diff1;
+          var idA1 = (a && a.id != null) ? String(a.id) : "";
+          var idB1 = (b && b.id != null) ? String(b.id) : "";
+          if (idA1 !== idB1) return idA1 < idB1 ? -1 : 1;
+          return itemA.idx - itemB.idx;
+        } else if (sMode === "name-desc") {
+          var tA2 = (a && a.title != null) ? String(a.title) : "";
+          var tB2 = (b && b.title != null) ? String(b.title) : "";
+          var diff2 = tB2.localeCompare(tA2, "ko", { numeric: true, sensitivity: "base" });
+          if (diff2 !== 0) return diff2;
+          var idA2 = (a && a.id != null) ? String(a.id) : "";
+          var idB2 = (b && b.id != null) ? String(b.id) : "";
+          if (idA2 !== idB2) return idA2 < idB2 ? -1 : 1;
+          return itemA.idx - itemB.idx;
+        }
+        return itemA.idx - itemB.idx;
+      });
+
+      return list.map(function (it) {
+        var copy = {};
+        for (var k in it.s) {
+          if (Object.prototype.hasOwnProperty.call(it.s, k)) {
+            copy[k] = it.s[k];
+          }
+        }
+        return copy;
+      });
+    }
+
+    function cloneNode(p, sm) {
+      if (!p) return p;
+      var copy = {};
+      for (var k in p) {
+        if (Object.prototype.hasOwnProperty.call(p, k)) {
+          copy[k] = p[k];
+        }
+      }
+      copy.sessions = sortSessions(p.sessions, sm);
+      return copy;
+    }
+
+    var normalList = [];
+    var ungroupedNode = null;
+    var unlinkedNode = null;
+
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (!node) continue;
+      if (node.id === QA_UNGROUPED) {
+        ungroupedNode = node;
+      } else if (node.id === QA_UNLINKED) {
+        unlinkedNode = node;
+      } else {
+        normalList.push({ node: node, idx: i });
+      }
+    }
+
+    if (sortMode !== "desktop") {
+      normalList.sort(function (itemA, itemB) {
+        var a = itemA.node;
+        var b = itemB.node;
+        if (sortMode === "recent-desc" || sortMode === "recent-asc") {
+          var isDesc = (sortMode === "recent-desc");
+          var tA = projectDateKey(a);
+          var tB = projectDateKey(b);
+          var dDiff = compareDates(tA, tB, isDesc);
+          if (dDiff !== 0) return dDiff;
+          var nameA = (a && a.name != null) ? String(a.name) : "";
+          var nameB = (b && b.name != null) ? String(b.name) : "";
+          var nDiff = nameA.localeCompare(nameB, "ko", { numeric: true, sensitivity: "base" });
+          if (nDiff !== 0) return nDiff;
+          var idA = (a && a.id != null) ? String(a.id) : "";
+          var idB = (b && b.id != null) ? String(b.id) : "";
+          if (idA !== idB) return idA < idB ? -1 : 1;
+          return itemA.idx - itemB.idx;
+        } else if (sortMode === "name-asc") {
+          var nA1 = (a && a.name != null) ? String(a.name) : "";
+          var nB1 = (b && b.name != null) ? String(b.name) : "";
+          var diff1 = nA1.localeCompare(nB1, "ko", { numeric: true, sensitivity: "base" });
+          if (diff1 !== 0) return diff1;
+          var idA1 = (a && a.id != null) ? String(a.id) : "";
+          var idB1 = (b && b.id != null) ? String(b.id) : "";
+          if (idA1 !== idB1) return idA1 < idB1 ? -1 : 1;
+          return itemA.idx - itemB.idx;
+        } else if (sortMode === "name-desc") {
+          var nA2 = (a && a.name != null) ? String(a.name) : "";
+          var nB2 = (b && b.name != null) ? String(b.name) : "";
+          var diff2 = nB2.localeCompare(nA2, "ko", { numeric: true, sensitivity: "base" });
+          if (diff2 !== 0) return diff2;
+          var idA2 = (a && a.id != null) ? String(a.id) : "";
+          var idB2 = (b && b.id != null) ? String(b.id) : "";
+          if (idA2 !== idB2) return idA2 < idB2 ? -1 : 1;
+          return itemA.idx - itemB.idx;
+        }
+        return itemA.idx - itemB.idx;
+      });
+    }
+
+    var result = [];
+    for (var j = 0; j < normalList.length; j++) {
+      result.push(cloneNode(normalList[j].node, sortMode));
+    }
+    if (ungroupedNode) {
+      result.push(cloneNode(ungroupedNode, sortMode));
+    }
+    if (unlinkedNode) {
+      result.push(cloneNode(unlinkedNode, sortMode));
+    }
+
+    return result;
+  }
+
+  function findQaNodeTitles(treeNodes, projectId, sessionId) {
+    var pName = "";
+    var sTitle = "";
+    if (!projectId) return { projectName: "", sessionTitle: "" };
+    var list = Array.isArray(treeNodes) ? treeNodes : [];
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      if (p && p.id === projectId) {
+        pName = p.name;
+        if (sessionId && Array.isArray(p.sessions)) {
+          for (var j = 0; j < p.sessions.length; j++) {
+            if (p.sessions[j] && p.sessions[j].id === sessionId) {
+              sTitle = p.sessions[j].title;
+              break;
+            }
+          }
+        }
+        break;
+      }
+    }
+    return {
+      projectName: pName || projectId,
+      sessionTitle: sTitle || sessionId
+    };
+  }
+
+  function handoffMsgFileOf(msg, channelData) {
+    if (!msg || msg.num == null || !channelData || !Array.isArray(channelData.files)) {
+      return "";
+    }
+    var prefix = String(msg.num) + "-";
+    for (var i = 0; i < channelData.files.length; i++) {
+      var f = channelData.files[i];
+      if (typeof f === "string" && f.indexOf(prefix) === 0) {
+        return f;
+      }
+    }
+    return "";
+  }
+
+  function handoffNodeOf(channelName, msg, channelData, tree) {
+    var file = handoffMsgFileOf(msg, channelData);
+    var link = (tree && tree.handoffLinks && file && tree.handoffLinks[file]) ? tree.handoffLinks[file] : null;
+    if (link) {
+      if (tree && Array.isArray(tree.projects)) {
+        for (var i = 0; i < tree.projects.length; i++) {
+          var p = tree.projects[i];
+          if (p && Array.isArray(p.sessions)) {
+            for (var j = 0; j < p.sessions.length; j++) {
+              var s = p.sessions[j];
+              if (s && s.id === link) {
+                return {
+                  projectId: p.id,
+                  projectName: p.name,
+                  sessionId: link,
+                  sessionTitle: s.title ? s.title : link.slice(0, 8)
+                };
+              }
+            }
+          }
+        }
+      }
+      if (tree && Array.isArray(tree.ungrouped)) {
+        for (var k = 0; k < tree.ungrouped.length; k++) {
+          var us = tree.ungrouped[k];
+          if (us && us.id === link) {
+            return {
+              projectId: QA_UNGROUPED,
+              projectName: "그룹 없음",
+              sessionId: link,
+              sessionTitle: us.title ? us.title : link.slice(0, 8)
+            };
+          }
+        }
+      }
+    }
+    var cName = (channelName != null && String(channelName).trim() !== "") ? String(channelName) : "";
+    return {
+      projectId: QA_UNLINKED,
+      projectName: "연결 안 됨",
+      sessionId: "c:" + cName,
+      sessionTitle: cName
+    };
+  }
+
+  function buildHandoffTree(channels, tree) {
+    var projectList = [];
+    var sessionLookup = {};
+
+    if (tree && Array.isArray(tree.projects)) {
+      for (var i = 0; i < tree.projects.length; i++) {
+        var p = tree.projects[i];
+        if (!p) continue;
+        var pNode = {
+          id: p.id,
+          name: p.name || "",
           total: 0,
-          pending: 0,
-          errors: 0,
-          latestTime: time
+          waiting: 0,
+          latestTime: "",
+          sessions: []
         };
-      } else {
-        if (!map[sName].latestTime || (time && time > map[sName].latestTime)) {
-          map[sName].latestTime = time;
+        if (Array.isArray(p.sessions)) {
+          for (var j = 0; j < p.sessions.length; j++) {
+            var s = p.sessions[j];
+            if (!s) continue;
+            var sNode = {
+              id: s.id,
+              title: s.title ? s.title : String(s.id || "").slice(0, 8),
+              cwd: s.cwd || "",
+              total: 0,
+              waiting: 0,
+              latestTime: "",
+              archived: Boolean(s.archived),
+              lastActivity: s.lastActivity || ""
+            };
+            pNode.sessions.push(sNode);
+            sessionLookup[s.id] = sNode;
+          }
+        }
+        projectList.push(pNode);
+      }
+    }
+
+    var ungroupedNode = null;
+    if (tree && Array.isArray(tree.ungrouped) && tree.ungrouped.length > 0) {
+      ungroupedNode = {
+        id: QA_UNGROUPED,
+        name: "그룹 없음",
+        total: 0,
+        waiting: 0,
+        latestTime: "",
+        sessions: []
+      };
+      for (var u = 0; u < tree.ungrouped.length; u++) {
+        var us = tree.ungrouped[u];
+        if (!us) continue;
+        var usNode = {
+          id: us.id,
+          title: us.title ? us.title : String(us.id || "").slice(0, 8),
+          cwd: us.cwd || "",
+          total: 0,
+          waiting: 0,
+          latestTime: "",
+          archived: Boolean(us.archived),
+          lastActivity: us.lastActivity || ""
+        };
+        ungroupedNode.sessions.push(usNode);
+        sessionLookup[us.id] = usNode;
+      }
+    }
+
+    var unlinkedNode = {
+      id: QA_UNLINKED,
+      name: "연결 안 됨",
+      total: 0,
+      waiting: 0,
+      latestTime: "",
+      sessions: []
+    };
+    var unlinkedSessionMap = {};
+
+    if (channels && typeof channels === "object") {
+      var channelNames = Object.keys(channels);
+      for (var cI = 0; cI < channelNames.length; cI++) {
+        var cName = channelNames[cI];
+        var cData = channels[cName];
+        if (!cData || !Array.isArray(cData.messages)) continue;
+
+        for (var mI = 0; mI < cData.messages.length; mI++) {
+          var msg = cData.messages[mI];
+          if (!msg || typeof msg !== "object") continue;
+
+          var nodeInfo = handoffNodeOf(cName, msg, cData, tree);
+          var time = msg.time || "";
+          var isWaiting = (msg.status === "보냄" || msg.status === "읽음");
+
+          var targetSession = null;
+          if (nodeInfo.projectId === QA_UNLINKED) {
+            targetSession = unlinkedSessionMap[nodeInfo.sessionId];
+            if (!targetSession) {
+              targetSession = {
+                id: nodeInfo.sessionId,
+                title: nodeInfo.sessionTitle,
+                cwd: "",
+                total: 0,
+                waiting: 0,
+                latestTime: "",
+                archived: false,
+                lastActivity: ""
+              };
+              unlinkedSessionMap[nodeInfo.sessionId] = targetSession;
+              unlinkedNode.sessions.push(targetSession);
+            }
+          } else {
+            targetSession = sessionLookup[nodeInfo.sessionId];
+          }
+
+          if (targetSession) {
+            targetSession.total++;
+            if (isWaiting) {
+              targetSession.waiting++;
+            }
+            if (time && (!targetSession.latestTime || time > targetSession.latestTime)) {
+              targetSession.latestTime = time;
+            }
+          }
+        }
+      }
+    }
+
+    function finalizeProject(p) {
+      var validSessions = [];
+      for (var i = 0; i < p.sessions.length; i++) {
+        var s = p.sessions[i];
+        if (s.archived && s.total === 0) {
+          continue;
+        }
+        validSessions.push(s);
+      }
+
+      validSessions.sort(function (a, b) {
+        var aTime = a.latestTime || "";
+        if (a.lastActivity && (!aTime || a.lastActivity > aTime)) {
+          aTime = a.lastActivity;
+        }
+        var bTime = b.latestTime || "";
+        if (b.lastActivity && (!bTime || b.lastActivity > bTime)) {
+          bTime = b.lastActivity;
+        }
+        if (bTime !== aTime) {
+          return bTime > aTime ? 1 : -1;
+        }
+        return (a.title || "").localeCompare(b.title || "");
+      });
+
+      var pTotal = 0;
+      var pWaiting = 0;
+      var pLatest = "";
+
+      for (var j = 0; j < validSessions.length; j++) {
+        var vs = validSessions[j];
+        pTotal += vs.total;
+        pWaiting += vs.waiting;
+        if (vs.latestTime && (!pLatest || vs.latestTime > pLatest)) {
+          pLatest = vs.latestTime;
         }
       }
 
-      if (isPending) {
-        map[sName].pending++;
+      p.sessions = validSessions;
+      p.total = pTotal;
+      p.waiting = pWaiting;
+      p.latestTime = pLatest;
+    }
+
+    var result = [];
+
+    for (var pIdx = 0; pIdx < projectList.length; pIdx++) {
+      finalizeProject(projectList[pIdx]);
+      result.push(projectList[pIdx]);
+    }
+
+    if (ungroupedNode) {
+      finalizeProject(ungroupedNode);
+      if (ungroupedNode.sessions.length > 0) {
+        result.push(ungroupedNode);
+      }
+    }
+
+    finalizeProject(unlinkedNode);
+    if (unlinkedNode.sessions.length > 0 && unlinkedNode.total > 0) {
+      result.push(unlinkedNode);
+    }
+
+    return result;
+  }
+
+  function handoffFilterTree(nodes, query) {
+    if (!Array.isArray(nodes)) return [];
+    var q = (query == null ? "" : String(query)).trim().toLowerCase();
+    if (!q) {
+      return nodes.slice();
+    }
+    var result = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var p = nodes[i];
+      if (!p) continue;
+      var pName = (p.name || "").toLowerCase();
+      if (pName.indexOf(q) !== -1) {
+        result.push({
+          id: p.id,
+          name: p.name,
+          total: p.total,
+          waiting: p.waiting,
+          latestTime: p.latestTime,
+          sessions: Array.isArray(p.sessions) ? p.sessions.slice() : []
+        });
       } else {
-        map[sName].total++;
-        if (item.status && String(item.status).trim() !== "OK") {
-          map[sName].errors++;
+        var matchingSessions = [];
+        if (Array.isArray(p.sessions)) {
+          for (var j = 0; j < p.sessions.length; j++) {
+            var s = p.sessions[j];
+            if (s && (s.title || "").toLowerCase().indexOf(q) !== -1) {
+              matchingSessions.push(s);
+            }
+          }
+        }
+        if (matchingSessions.length > 0) {
+          result.push({
+            id: p.id,
+            name: p.name,
+            total: p.total,
+            waiting: p.waiting,
+            latestTime: p.latestTime,
+            sessions: matchingSessions
+          });
         }
       }
     }
+    return result;
+  }
 
-    for (var i = 0; i < recs.length; i++) {
-      processItem(recs[i], false);
-    }
-    for (var j = 0; j < pends.length; j++) {
-      processItem(pends[j], true);
-    }
+  function handoffMessagesOf(channels, tree, projectId, sessionId) {
+    if (!channels || typeof channels !== "object") return [];
 
-    var list = Object.keys(map).map(function (k) { return map[k]; });
+    var list = [];
+    var channelMap = {};
+    var channelCount = 0;
 
-    list.sort(function (a, b) {
-      var at = a.latestTime || "";
-      var bt = b.latestTime || "";
-      if (bt !== at) {
-        return bt > at ? 1 : -1;
+    var cNames = Object.keys(channels);
+    for (var i = 0; i < cNames.length; i++) {
+      var cName = cNames[i];
+      var cData = channels[cName];
+      if (!cData || !Array.isArray(cData.messages)) continue;
+
+      for (var j = 0; j < cData.messages.length; j++) {
+        var msg = cData.messages[j];
+        if (!msg) continue;
+        var node = handoffNodeOf(cName, msg, cData, tree);
+        if (projectId && node.projectId !== projectId) continue;
+        if (sessionId && node.sessionId !== sessionId) continue;
+
+        var file = handoffMsgFileOf(msg, cData);
+        if (!channelMap[cName]) {
+          channelMap[cName] = true;
+          channelCount++;
+        }
+        list.push({
+          msg: msg,
+          channel: cName,
+          file: file,
+          _seq: list.length
+        });
       }
-      return (a.name || "").localeCompare(b.name || "");
+    }
+
+    if (channelCount > 1) {
+      list.sort(function (a, b) {
+        var tA = (a.msg && a.msg.time) || "";
+        var tB = (b.msg && b.msg.time) || "";
+        if (tA !== tB) {
+          return tA > tB ? 1 : -1;
+        }
+        return a._seq - b._seq;
+      });
+    }
+
+    return list.map(function (it) {
+      return {
+        msg: it.msg,
+        channel: it.channel,
+        file: it.file
+      };
     });
-
-    return list;
   }
 
-  function qaProjectKeyOfSession(records, pendings, session) {
-    if (!session) return "";
-    var recs = Array.isArray(records) ? records : [];
-    var pends = Array.isArray(pendings) ? pendings : [];
-    var bestKey = "";
-    var bestTime = null;
-
-    function check(item, isPending) {
-      if (!item || typeof item !== "object") return;
-      var s = (item.session == null) ? "" : String(item.session);
-      if (s !== session) return;
-      var t = (isPending ? item.created : item.timestamp) || "";
-      if (bestTime === null || t > bestTime) {
-        bestTime = t;
-        bestKey = qaProjectOf(item).key;
+  function findHandoffNodeTitles(treeNodes, projectId, sessionId) {
+    var pName = "";
+    var sTitle = "";
+    if (!projectId) return { projectName: "", sessionTitle: "" };
+    var list = Array.isArray(treeNodes) ? treeNodes : [];
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      if (p && p.id === projectId) {
+        pName = p.name;
+        if (sessionId && Array.isArray(p.sessions)) {
+          for (var j = 0; j < p.sessions.length; j++) {
+            if (p.sessions[j] && p.sessions[j].id === sessionId) {
+              sTitle = p.sessions[j].title;
+              break;
+            }
+          }
+        }
+        break;
       }
     }
-
-    for (var i = 0; i < recs.length; i++) {
-      check(recs[i], false);
-    }
-    for (var j = 0; j < pends.length; j++) {
-      check(pends[j], true);
-    }
-
-    return bestKey;
+    return {
+      projectName: pName || projectId,
+      sessionTitle: sTitle || sessionId
+    };
   }
 
-  function qaProjectDisplayName(key) {
-    if (!key) return "";
-    if (key === "__none__") return "프로젝트 없음";
-    var projects = groupQaProjects(allItems, pendingItems);
-    for (var i = 0; i < projects.length; i++) {
-      if (projects[i].key === key) return projects[i].name;
+  function getQaTreeSortMode() {
+    try {
+      return normalizeTreeSortMode(localStorage.getItem("samjil.treeSort.qa.v1"));
+    } catch (e) {
+      return TREE_SORT_DEFAULT;
     }
-    return key;
   }
 
-  function renderQaProjectList() {
+  function setQaTreeSortMode(mode) {
+    try {
+      localStorage.setItem("samjil.treeSort.qa.v1", normalizeTreeSortMode(mode));
+    } catch (e) {}
+  }
+
+  function getHandoffTreeSortMode() {
+    try {
+      return normalizeTreeSortMode(localStorage.getItem("samjil.treeSort.handoff.v1"));
+    } catch (e) {
+      return TREE_SORT_DEFAULT;
+    }
+  }
+
+  function setHandoffTreeSortMode(mode) {
+    try {
+      localStorage.setItem("samjil.treeSort.handoff.v1", normalizeTreeSortMode(mode));
+    } catch (e) {}
+  }
+
+  function initTreeSortSelects() {
+    if (els.qaTreeSort) {
+      els.qaTreeSort.innerHTML = "";
+      TREE_SORT_MODES.forEach(function (m) {
+        var opt = document.createElement("option");
+        opt.value = m.value;
+        opt.textContent = m.label;
+        els.qaTreeSort.appendChild(opt);
+      });
+      els.qaTreeSort.value = getQaTreeSortMode();
+      els.qaTreeSort.addEventListener("change", function () {
+        setQaTreeSortMode(this.value);
+        renderQaTree();
+      });
+    }
+    if (els.handoffTreeSort) {
+      els.handoffTreeSort.innerHTML = "";
+      TREE_SORT_MODES.forEach(function (m) {
+        var opt = document.createElement("option");
+        opt.value = m.value;
+        opt.textContent = m.label;
+        els.handoffTreeSort.appendChild(opt);
+      });
+      els.handoffTreeSort.value = getHandoffTreeSortMode();
+      els.handoffTreeSort.addEventListener("change", function () {
+        setHandoffTreeSortMode(this.value);
+        renderHandoffTree();
+      });
+    }
+  }
+
+  var QA_TREE_OPEN_KEY = "samjil.qaTreeOpen.v1";
+
+  function getQaTreeOpenMap() {
+    try {
+      var raw = localStorage.getItem(QA_TREE_OPEN_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") return parsed;
+      }
+    } catch (e) {}
+    return {};
+  }
+
+  function setQaTreeOpen(projectId, isOpen) {
+    if (!projectId) return;
+    try {
+      var map = getQaTreeOpenMap();
+      map[projectId] = Boolean(isOpen);
+      localStorage.setItem(QA_TREE_OPEN_KEY, JSON.stringify(map));
+    } catch (e) {}
+  }
+
+  function isQaProjectOpen(projectId, hasSearchQuery) {
+    if (hasSearchQuery) return true;
+    var map = getQaTreeOpenMap();
+    if (Object.prototype.hasOwnProperty.call(map, projectId)) {
+      return Boolean(map[projectId]);
+    }
+    if (currentQaProject === projectId) return true;
+    return false;
+  }
+
+  function renderQaTree() {
     if (!els.qaSessionList) return;
 
-    var projects = groupQaProjects(allItems, pendingItems);
-    var q = (els.qaSessionSearch && els.qaSessionSearch.value || "").trim().toLowerCase();
-
-    var filtered = projects.filter(function (p) {
-      if (p.key === "__none__") return true;
-      if (q && p.name.toLowerCase().indexOf(q) === -1) return false;
-      return true;
-    });
-
+    var allNodes = buildQaTree(allItems, pendingItems, claudeTree);
     if (els.qaSessionCount) {
-      els.qaSessionCount.textContent = projects.length;
+      els.qaSessionCount.textContent = allNodes.length;
     }
+
+    var q = (els.qaSessionSearch && els.qaSessionSearch.value || "").trim().toLowerCase();
+    var filtered = qaFilterTree(allNodes, q);
+    var sorted = sortTreeNodes(filtered, getQaTreeSortMode());
+    var hasQuery = Boolean(q);
 
     var frag = document.createDocumentFragment();
 
     // 1. [전체 프로젝트 피드] 항목
     var allItem = document.createElement("div");
-    allItem.className = "project-item" + (currentQaProject === "" ? " active" : "");
+    var isFeedActive = (currentQaProject === "" && currentQaSession === "");
+    allItem.className = "project-item" + (isFeedActive ? " active" : "");
     allItem.dataset.project = "";
     allItem.innerHTML = [
       '<span class="project-icon">' + icon("feed") + '</span>',
@@ -869,222 +1787,442 @@
     allItem.onclick = function () { selectQaProject(""); };
     frag.appendChild(allItem);
 
-    // 2. groupQaProjects 결과 항목들 (단, __none__ 은 제외하고 보관)
-    var noneProjectObj = null;
-    filtered.forEach(function (p) {
-      if (p.key === "__none__") {
-        noneProjectObj = p;
-        return;
-      }
+    // 2. 프로젝트 트리 목록
+    sorted.forEach(function (p) {
+      var isOpen = isQaProjectOpen(p.id, hasQuery);
+      var isProjectActive = (currentQaProject === p.id && currentQaSession === "");
 
-      var item = document.createElement("div");
-      var isActive = (currentQaProject === p.key);
-      item.className = "project-item" + (isActive ? " active" : "");
-      item.dataset.project = p.key;
+      var pItem = document.createElement("div");
+      var pClass = "project-item tree-project" + (isProjectActive ? " active" : "") + (isOpen ? " open" : "");
+      pItem.className = pClass;
+      pItem.dataset.project = p.id;
+      pItem.setAttribute("role", "treeitem");
+      pItem.setAttribute("aria-expanded", isOpen ? "true" : "false");
 
-      var subText = formatRelativeTime(p.latestTime);
+      var relTime = formatRelativeTime(treeNodeLatest(p));
       var errHtml = p.errors > 0 ? ' <span class="err-count">실패 ' + p.errors + '</span>' : '';
+      var sessCount = p.sessions ? p.sessions.length : 0;
+      var sessHtml = ' · 세션 ' + sessCount;
+      var subHtml = relTime + errHtml + sessHtml;
+
       var badgeHtml = '<span class="project-badge">' + (p.total + p.pending) + '</span>';
       if (p.pending > 0) {
         badgeHtml = '<span class="pending-pulse-dot" title="진행/대기 중 ' + p.pending + '건"></span> ' + badgeHtml;
       }
 
-      item.innerHTML = [
+      pItem.innerHTML = [
+        '<span class="tree-chevron" aria-hidden="true"></span>',
         '<span class="project-icon">' + icon("folder") + '</span>',
         '<div class="project-info">',
         '  <span class="project-name" title="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</span>',
-        '  <span class="project-sub session-sub">' + subText + errHtml + '</span>',
+        '  <span class="project-sub session-sub">' + subHtml + '</span>',
         '</div>',
         badgeHtml
       ].join("");
 
-      makeActivatable(item);
-      item.onclick = function () { selectQaProject(p.key); };
-      frag.appendChild(item);
-    });
+      makeActivatable(pItem);
 
-    // 3. __none__ 프로젝트는 맨 아래에 "프로젝트 없음" (아이콘 single)
-    if (noneProjectObj && (!q || "프로젝트 없음".indexOf(q) >= 0 || "없음".indexOf(q) >= 0)) {
-      var noneItem = document.createElement("div");
-      var isNoneActive = (currentQaProject === "__none__");
-      noneItem.className = "project-item" + (isNoneActive ? " active" : "");
-      noneItem.dataset.project = "__none__";
-
-      var noneSubText = formatRelativeTime(noneProjectObj.latestTime);
-      var noneErrHtml = noneProjectObj.errors > 0 ? ' <span class="err-count">실패 ' + noneProjectObj.errors + '</span>' : '';
-      var noneBadgeHtml = '<span class="project-badge">' + (noneProjectObj.total + noneProjectObj.pending) + '</span>';
-      if (noneProjectObj.pending > 0) {
-        noneBadgeHtml = '<span class="pending-pulse-dot" title="진행/대기 중 ' + noneProjectObj.pending + '건"></span> ' + noneBadgeHtml;
+      var chevron = pItem.querySelector(".tree-chevron");
+      if (chevron) {
+        chevron.onclick = function (e) {
+          e.stopPropagation();
+          var nextState = !isOpen;
+          setQaTreeOpen(p.id, nextState);
+          renderQaTree();
+        };
       }
 
-      noneItem.innerHTML = [
-        '<span class="project-icon">' + icon("single") + '</span>',
-        '<div class="project-info">',
-        '  <span class="project-name">프로젝트 없음</span>',
-        '  <span class="project-sub session-sub">' + noneSubText + noneErrHtml + '</span>',
-        '</div>',
-        noneBadgeHtml
-      ].join("");
+      pItem.onclick = function () {
+        var nextOpen = !isOpen;
+        currentQaProject = p.id;
+        currentQaSession = "";
+        setQaTreeOpen(p.id, nextOpen);
+        renderQaTree();
+        updateBreadcrumbs();
+        updateHash();
+        applyQaFilters();
+      };
 
-      makeActivatable(noneItem);
-      noneItem.onclick = function () { selectQaProject("__none__"); };
-      frag.appendChild(noneItem);
-    }
+      frag.appendChild(pItem);
 
+      // 세션 목록
+      if (isOpen && p.sessions && p.sessions.length > 0) {
+        var groupDiv = document.createElement("div");
+        groupDiv.className = "tree-children";
+        groupDiv.setAttribute("role", "group");
+
+        p.sessions.forEach(function (s) {
+          var isSessionActive = (currentQaProject === p.id && currentQaSession === s.id);
+          var sItem = document.createElement("div");
+          sItem.className = "session-item tree-session" + (isSessionActive ? " active" : "");
+          sItem.dataset.session = s.id;
+          sItem.setAttribute("role", "treeitem");
+
+          var sTime = formatRelativeTime(s.latestTime || s.lastActivity);
+          var sErrHtml = s.errors > 0 ? ' <span class="err-count">실패 ' + s.errors + '</span>' : '';
+          var sSubHtml = sTime + sErrHtml;
+
+          var sBadgeHtml = '<span class="session-badge">' + (s.total + s.pending) + '</span>';
+          if (s.pending > 0) {
+            sBadgeHtml = '<span class="pending-pulse-dot" title="진행/대기 중 ' + s.pending + '건"></span> ' + sBadgeHtml;
+          }
+
+          var archivedHtml = s.archived ? '<span class="tree-archived">(보관됨)</span>' : '';
+
+          sItem.innerHTML = [
+            '<span class="session-icon">' + icon("thread") + '</span>',
+            '<div class="session-info">',
+            '  <span class="session-name" title="' + escapeHtml(s.title) + '">' + escapeHtml(s.title) + archivedHtml + '</span>',
+            '  <span class="session-sub">' + sSubHtml + '</span>',
+            '</div>',
+            sBadgeHtml
+          ].join("");
+
+          makeActivatable(sItem);
+          sItem.onclick = function () {
+            selectQaSession(s.id, p.id);
+          };
+
+          groupDiv.appendChild(sItem);
+        });
+
+        frag.appendChild(groupDiv);
+      }
+    });
+
+    var prevScroll = els.qaSessionList.scrollTop;
     els.qaSessionList.innerHTML = "";
     els.qaSessionList.appendChild(frag);
+    els.qaSessionList.scrollTop = prevScroll;
   }
 
-  function selectQaProject(key) {
-    currentQaProject = key || "";
+  function selectQaAgy(agy) {
+    currentQaAgy = agy || "";
+    renderQaAgyChips();
+    updateHash();
+    applyQaFilters();
+  }
+
+  function selectQaProject(id, forceOpen) {
+    currentQaAgy = "";
+    currentQaProject = id || "";
     currentQaSession = "";
-    renderQaProjectList();
-    renderQaSessionChips();
+    if (currentQaProject && forceOpen !== false) {
+      setQaTreeOpen(currentQaProject, true);
+    }
+    renderQaTree();
     updateBreadcrumbs();
     updateHash();
     applyQaFilters();
   }
 
-  function selectQaSession(session, project) {
-    currentQaSession = session || "";
-    if (project !== undefined) {
-      currentQaProject = project || "";
+  function selectQaSession(sessionId, projectId) {
+    currentQaAgy = "";
+    currentQaSession = sessionId || "";
+    if (projectId !== undefined) {
+      currentQaProject = projectId || "";
     } else {
-      if (session && session !== "__none__") {
-        currentQaProject = qaProjectKeyOfSession(allItems, pendingItems, session);
+      if (sessionId) {
+        var tree = buildQaTree(allItems, pendingItems, claudeTree);
+        var foundProject = null;
+        for (var i = 0; i < tree.length; i++) {
+          var p = tree[i];
+          if (p && p.sessions) {
+            for (var j = 0; j < p.sessions.length; j++) {
+              if (p.sessions[j] && p.sessions[j].id === sessionId) {
+                foundProject = p.id;
+                break;
+              }
+            }
+          }
+          if (foundProject !== null) break;
+        }
+        if (foundProject !== null) {
+          currentQaProject = foundProject;
+        } else {
+          currentQaSession = "";
+          currentQaProject = "";
+        }
       } else {
         currentQaProject = "";
       }
     }
-    renderQaProjectList();
-    renderQaSessionChips();
+    if (currentQaProject) {
+      setQaTreeOpen(currentQaProject, true);
+    }
+    renderQaTree();
     updateBreadcrumbs();
     updateHash();
     applyQaFilters();
   }
 
-  function renderQaSessionChips() {
-    if (!els.qaSessionChips) return;
-    if (currentQaProject === "") {
-      els.qaSessionChips.hidden = true;
-      els.qaSessionChips.innerHTML = "";
-      return;
+  function findRepresentativeItemBySessionName(sName) {
+    var pends = Array.isArray(pendingItems) ? pendingItems : [];
+    for (var i = 0; i < pends.length; i++) {
+      var p = pends[i];
+      var s = (p && p.session != null && String(p.session).trim() !== "") ? String(p.session) : "__none__";
+      if (s === sName) return p;
     }
-
-    els.qaSessionChips.hidden = false;
-    var sessions = groupQaSessionsOfProject(allItems, pendingItems, currentQaProject);
-
-    var totalCount = 0;
-    var totalPending = 0;
-    var namedSessions = [];
-    var noneSession = null;
-
-    sessions.forEach(function (s) {
-      totalCount += (s.total + s.pending);
-      totalPending += s.pending;
-      if (s.name === "__none__") {
-        noneSession = s;
-      } else {
-        namedSessions.push(s);
-      }
-    });
-
-    var frag = document.createDocumentFragment();
-
-    // 1. 맨 앞 "전체"
-    var allBtn = document.createElement("button");
-    allBtn.type = "button";
-    allBtn.className = "qa-chip" + (currentQaSession === "" ? " active" : "");
-    allBtn.setAttribute("data-session", "");
-    var allPulse = totalPending > 0 ? '<span class="pending-pulse-dot"></span>' : '';
-    allBtn.innerHTML = allPulse + '<span class="qa-chip-name">전체</span><span class="qa-chip-count">' + totalCount + '</span>';
-    allBtn.onclick = function () { selectQaSession("", currentQaProject); };
-    frag.appendChild(allBtn);
-
-    // 2. 세션 이름이 있는 것들 (최신순)
-    namedSessions.forEach(function (s) {
-      var btn = document.createElement("button");
-      btn.type = "button";
-      var isActive = (currentQaSession === s.name);
-      btn.className = "qa-chip" + (isActive ? " active" : "");
-      btn.setAttribute("data-session", s.name);
-      var pulse = s.pending > 0 ? '<span class="pending-pulse-dot"></span>' : '';
-      btn.innerHTML = pulse + '<span class="qa-chip-name">' + escapeHtml(s.name) + '</span><span class="qa-chip-count">' + (s.total + s.pending) + '</span>';
-      btn.onclick = function () { selectQaSession(s.name, currentQaProject); };
-      frag.appendChild(btn);
-    });
-
-    // 3. 마지막에 단발성이 있으면 "단발성" (data-session="__none__")
-    if (noneSession) {
-      var noneBtn = document.createElement("button");
-      noneBtn.type = "button";
-      var isNoneActive = (currentQaSession === "__none__");
-      noneBtn.className = "qa-chip" + (isNoneActive ? " active" : "");
-      noneBtn.setAttribute("data-session", "__none__");
-      var nonePulse = noneSession.pending > 0 ? '<span class="pending-pulse-dot"></span>' : '';
-      noneBtn.innerHTML = nonePulse + '<span class="qa-chip-name">단발성</span><span class="qa-chip-count">' + (noneSession.total + noneSession.pending) + '</span>';
-      noneBtn.onclick = function () { selectQaSession("__none__", currentQaProject); };
-      frag.appendChild(noneBtn);
+    var recs = Array.isArray(allItems) ? allItems : [];
+    for (var j = 0; j < recs.length; j++) {
+      var r = recs[j];
+      var s2 = (r && r.session != null && String(r.session).trim() !== "") ? String(r.session) : "__none__";
+      if (s2 === sName) return r;
     }
-
-    els.qaSessionChips.innerHTML = "";
-    els.qaSessionChips.appendChild(frag);
+    return null;
   }
 
   // ==========================================================================
-  // Handoff Side-Panel List & Project Selection
+  // Handoff Tree & Selection Management
   // ==========================================================================
 
-  function renderHandoffProjectList() {
+  var HANDOFF_TREE_OPEN_KEY = "samjil.handoffTreeOpen.v1";
+
+  function getHandoffTreeOpenMap() {
+    try {
+      var raw = localStorage.getItem(HANDOFF_TREE_OPEN_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") return parsed;
+      }
+    } catch (e) {}
+    return {};
+  }
+
+  function setHandoffTreeOpen(projectId, isOpen) {
+    if (!projectId) return;
+    try {
+      var map = getHandoffTreeOpenMap();
+      map[projectId] = Boolean(isOpen);
+      localStorage.setItem(HANDOFF_TREE_OPEN_KEY, JSON.stringify(map));
+    } catch (e) {}
+  }
+
+  function isHandoffProjectOpen(projectId, hasSearchQuery) {
+    if (hasSearchQuery) return true;
+    var map = getHandoffTreeOpenMap();
+    if (Object.prototype.hasOwnProperty.call(map, projectId)) {
+      return Boolean(map[projectId]);
+    }
+    if (currentHandoffProject === projectId) return true;
+    return false;
+  }
+
+  function renderHandoffTree() {
     if (!els.handoffProjectList) return;
 
-    var q = (els.handoffProjectSearch.value || "").trim().toLowerCase();
-    var filtered = handoffProjects.filter(function (p) {
-      if (q && p.name.toLowerCase().indexOf(q) === -1) return false;
-      return true;
-    });
-
+    var allNodes = buildHandoffTree(handoffChannels, claudeTree);
     if (els.handoffProjectCount) {
-      els.handoffProjectCount.textContent = handoffProjects.length;
+      els.handoffProjectCount.textContent = allNodes.length;
     }
 
-    if (filtered.length === 0) {
-      els.handoffProjectList.innerHTML = '<p class="empty-hint">조건에 맞는 프로젝트가 없습니다.</p>';
-      return;
+    var q = (els.handoffProjectSearch && els.handoffProjectSearch.value || "").trim().toLowerCase();
+    var filtered = handoffFilterTree(allNodes, q);
+    var sorted = sortTreeNodes(filtered, getHandoffTreeSortMode());
+    var hasQuery = Boolean(q);
+
+    // 전체 메시지 수 계산
+    var totalAllMsgs = 0;
+    if (handoffChannels && typeof handoffChannels === "object") {
+      for (var cKey in handoffChannels) {
+        var cVal = handoffChannels[cKey];
+        if (cVal && Array.isArray(cVal.messages)) {
+          totalAllMsgs += cVal.messages.length;
+        }
+      }
     }
 
     var frag = document.createDocumentFragment();
-    filtered.forEach(function (p) {
-      var item = document.createElement("div");
-      var isActive = (currentHandoffProject === p.name);
-      item.className = "project-item" + (isActive ? " active" : "");
-      item.dataset.project = p.name;
 
-      var subText = formatRelativeTime(p.updated);
-      item.innerHTML = [
+    // 1. [전체 프로젝트] 항목
+    var allItem = document.createElement("div");
+    var isFeedActive = (currentHandoffProject === "" && currentHandoffSession === "");
+    allItem.className = "project-item" + (isFeedActive ? " active" : "");
+    allItem.dataset.project = "";
+    allItem.innerHTML = [
+      '<span class="project-icon">' + icon("feed") + '</span>',
+      '<div class="project-info">',
+      '  <span class="project-name">전체 프로젝트</span>',
+      '  <span class="project-sub session-sub">모든 인수인계를 시간순으로</span>',
+      '</div>',
+      '<span class="project-badge">' + totalAllMsgs + '</span>'
+    ].join("");
+    makeActivatable(allItem);
+    allItem.onclick = function () { selectHandoffProject(""); };
+    frag.appendChild(allItem);
+
+    // 2. 프로젝트 트리 목록
+    sorted.forEach(function (p) {
+      var isOpen = isHandoffProjectOpen(p.id, hasQuery);
+      var isProjectActive = (currentHandoffProject === p.id && currentHandoffSession === "");
+
+      var pItem = document.createElement("div");
+      var pClass = "project-item tree-project" + (isProjectActive ? " active" : "") + (isOpen ? " open" : "");
+      pItem.className = pClass;
+      pItem.dataset.project = p.id;
+      pItem.setAttribute("role", "treeitem");
+      pItem.setAttribute("aria-expanded", isOpen ? "true" : "false");
+
+      var relTime = formatRelativeTime(treeNodeLatest(p));
+      var sessCount = p.sessions ? p.sessions.length : 0;
+      var sessHtml = ' · 세션 ' + sessCount;
+      var waitHtml = p.waiting > 0 ? ' · <span class="who-agy">대기 중 ' + p.waiting + '</span>' : '';
+      var subHtml = relTime + sessHtml + waitHtml;
+
+      var badgeHtml = '<span class="project-badge">' + p.total + '</span>';
+      if (p.waiting > 0) {
+        badgeHtml = '<span class="pending-pulse-dot" title="대기 중 ' + p.waiting + '건"></span> ' + badgeHtml;
+      }
+
+      pItem.innerHTML = [
+        '<span class="tree-chevron" aria-hidden="true"></span>',
         '<span class="project-icon">' + icon("folder") + '</span>',
         '<div class="project-info">',
         '  <span class="project-name" title="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</span>',
-        '  <span class="project-sub">' + subText + '</span>',
+        '  <span class="project-sub session-sub">' + subHtml + '</span>',
         '</div>',
-        '<span class="project-badge">' + (p.msgCount || 0) + '</span>'
+        badgeHtml
       ].join("");
 
-      makeActivatable(item);
-      item.onclick = function () { selectHandoffProject(p.name); };
-      frag.appendChild(item);
+      makeActivatable(pItem);
+
+      var chevron = pItem.querySelector(".tree-chevron");
+      if (chevron) {
+        chevron.onclick = function (e) {
+          e.stopPropagation();
+          var nextState = !isOpen;
+          setHandoffTreeOpen(p.id, nextState);
+          renderHandoffTree();
+        };
+      }
+
+      pItem.onclick = function () {
+        var nextOpen = !isOpen;
+        currentHandoffProject = p.id;
+        currentHandoffSession = "";
+        setHandoffTreeOpen(p.id, nextOpen);
+        renderHandoffTree();
+        updateBreadcrumbs();
+        updateHash();
+        renderHandoffView();
+      };
+
+      frag.appendChild(pItem);
+
+      // 세션 목록
+      if (isOpen && p.sessions && p.sessions.length > 0) {
+        var groupDiv = document.createElement("div");
+        groupDiv.className = "tree-children";
+        groupDiv.setAttribute("role", "group");
+
+        p.sessions.forEach(function (s) {
+          var isSessionActive = (currentHandoffProject === p.id && currentHandoffSession === s.id);
+          var sItem = document.createElement("div");
+          sItem.className = "session-item tree-session" + (isSessionActive ? " active" : "");
+          sItem.dataset.session = s.id;
+          sItem.setAttribute("role", "treeitem");
+
+          var sTime = formatRelativeTime(s.latestTime || s.lastActivity);
+          var sWaitHtml = s.waiting > 0 ? ' · <span class="who-agy">대기 중 ' + s.waiting + '</span>' : '';
+          var sSubHtml = sTime + sWaitHtml;
+
+          var sBadgeHtml = '<span class="session-badge">' + s.total + '</span>';
+          if (s.waiting > 0) {
+            sBadgeHtml = '<span class="pending-pulse-dot" title="대기 중 ' + s.waiting + '건"></span> ' + sBadgeHtml;
+          }
+
+          var archivedHtml = s.archived ? '<span class="tree-archived">(보관됨)</span>' : '';
+
+          sItem.innerHTML = [
+            '<span class="session-icon">' + icon("thread") + '</span>',
+            '<div class="session-info">',
+            '  <span class="session-name" title="' + escapeHtml(s.title) + '">' + escapeHtml(s.title) + archivedHtml + '</span>',
+            '  <span class="session-sub">' + sSubHtml + '</span>',
+            '</div>',
+            sBadgeHtml
+          ].join("");
+
+          makeActivatable(sItem);
+          sItem.onclick = function () {
+            selectHandoffSession(s.id, p.id);
+          };
+
+          groupDiv.appendChild(sItem);
+        });
+
+        frag.appendChild(groupDiv);
+      }
     });
 
+    var prevScroll = els.handoffProjectList.scrollTop;
     els.handoffProjectList.innerHTML = "";
     els.handoffProjectList.appendChild(frag);
+    els.handoffProjectList.scrollTop = prevScroll;
   }
 
-  function selectHandoffProject(projectName) {
-    if (currentHandoffProject === projectName && currentHandoffData) {
-      renderHandoffProjectList();
-      return;
+  function selectHandoffProject(id, forceOpen) {
+    if (id && handoffChannels && handoffChannels[id]) {
+      var tree = buildHandoffTree(handoffChannels, claudeTree);
+      var isRealProject = false;
+      for (var pi = 0; pi < tree.length; pi++) {
+        if (tree[pi] && tree[pi].id === id) {
+          isRealProject = true;
+          break;
+        }
+      }
+      if (!isRealProject) {
+        selectHandoffSession("c:" + id, QA_UNLINKED);
+        return;
+      }
     }
-    loadHandoffProject(projectName);
+    currentHandoffProject = id || "";
+    currentHandoffSession = "";
+    if (currentHandoffProject && forceOpen !== false) {
+      setHandoffTreeOpen(currentHandoffProject, true);
+    }
+    renderHandoffTree();
+    updateBreadcrumbs();
+    updateHash();
+    renderHandoffView();
+  }
+
+  function selectHandoffSession(sessionId, projectId) {
+    currentHandoffSession = sessionId || "";
+    if (projectId !== undefined) {
+      currentHandoffProject = projectId || "";
+    } else {
+      if (sessionId) {
+        var tree = buildHandoffTree(handoffChannels, claudeTree);
+        var foundProject = null;
+        for (var i = 0; i < tree.length; i++) {
+          var p = tree[i];
+          if (p && p.sessions) {
+            for (var j = 0; j < p.sessions.length; j++) {
+              if (p.sessions[j] && p.sessions[j].id === sessionId) {
+                foundProject = p.id;
+                break;
+              }
+            }
+          }
+          if (foundProject !== null) break;
+        }
+        if (foundProject !== null) {
+          currentHandoffProject = foundProject;
+        } else {
+          currentHandoffSession = "";
+          currentHandoffProject = "";
+        }
+      } else {
+        currentHandoffProject = "";
+      }
+    }
+    if (currentHandoffProject) {
+      setHandoffTreeOpen(currentHandoffProject, true);
+    }
+    renderHandoffTree();
+    updateBreadcrumbs();
+    updateHash();
+    renderHandoffView();
   }
 
   // ==========================================================================
@@ -1113,7 +2251,8 @@
   setInterval(function () {
     var els2 = document.querySelectorAll(".live-elapsed[data-start]");
     for (var i = 0; i < els2.length; i++) {
-      els2[i].textContent = formatDuration((Date.now() - Number(els2[i].getAttribute("data-start"))) / 1000);
+      var pfx = els2[i].getAttribute("data-label-prefix") || "";
+      els2[i].textContent = pfx + formatDuration((Date.now() - Number(els2[i].getAttribute("data-start"))) / 1000);
     }
     var idles = document.querySelectorAll(".pg-idle[data-ms]");
     for (var j = 0; j < idles.length; j++) {
@@ -1133,15 +2272,16 @@
 
     var active = activePending();
     var running = null;
+    var runningCount = 0;    // 워처가 작업을 동시에 여러 개 돌릴 수 있다
     for (var i = 0; i < active.length; i++) {
-      if (active[i].state === "processing") { running = active[i]; break; }
+      if (active[i].state === "processing") { runningCount++; if (!running) { running = active[i]; } }
     }
-    var queued = active.length - (running ? 1 : 0);
+    var queued = active.length - runningCount;
 
     var state, statusText, title;
     var aside = "";
     var meta = [];
-    var clickSession = null;
+    var clickItem = null;
 
     if (!isServerOnline) {
       state = "offline";
@@ -1150,8 +2290,8 @@
       meta.push('<span><code>~/.samjil/viewer/serve-viewer.ps1</code>을 다시 실행하면 이 화면이 이어서 갱신됩니다.</span>');
     } else if (running) {
       state = "running";
-      statusText = "agy가 작업 중";
-      if (queued > 0) { aside = "뒤에 " + queued + "건 대기"; }
+      statusText = runningCount > 1 ? "agy가 " + runningCount + "건을 동시에 작업 중" : "agy가 작업 중";
+      if (queued > 0) { aside = "대기 " + queued + "건"; }
       title = extractQuestionKeyword(running.question) || "(질문 내용 없음)";
       if (running.model) { meta.push('<span>모델 <code>' + escapeHtml(running.model) + '</code></span>'); }
       meta.push('<span>' + (running.session ? "세션 " + escapeHtml(running.session) : "단발성 작업") + '</span>');
@@ -1165,7 +2305,7 @@
           el.textContent = formatDuration((Date.now() - created.getTime()) / 1000);
         }, 1000);
       }
-      clickSession = running.session || "__none__";
+      clickItem = running;
     } else if (systemStatus && systemStatus.watcherAlive) {
       state = "idle";
       statusText = "agy 워처 대기 중";
@@ -1175,7 +2315,7 @@
         meta.push('<span>' + formatRelativeTime(last.timestamp) + '</span>');
         meta.push('<span>' + (isOkStatus(last) ? "성공" : (last.status ? "실패 (" + escapeHtml(last.status) + ")" : "상태 미기록")) + '</span>');
         if (recordModel(last)) { meta.push('<span><code>' + escapeHtml(recordModel(last)) + '</code></span>'); }
-        clickSession = last.session || "__none__";
+        clickItem = last;
       } else {
         title = "아직 위임 기록이 없습니다";
       }
@@ -1208,11 +2348,12 @@
     els.nowTitle.textContent = title;
     els.nowMeta.innerHTML = meta.join("");
 
-    els.nowTitle.classList.toggle("is-link", clickSession !== null);
-    if (clickSession !== null) {
+    els.nowTitle.classList.toggle("is-link", clickItem !== null);
+    if (clickItem !== null) {
       makeActivatable(els.nowTitle);
       els.nowTitle.onclick = function () {
-        selectQaSession(clickSession);
+        var node = qaNodeOf(clickItem, claudeTree);
+        selectQaSession(node.sessionId, node.projectId);
         switchNav("qa");
       };
     } else {
@@ -1290,16 +2431,36 @@
     return li;
   }
 
-  function goQaSession(session) {
+  function goQaSession(arg) {
     return function () {
-      selectQaSession(session || "__none__");
+      if (arg && typeof arg === "object") {
+        var node = qaNodeOf(arg, claudeTree);
+        selectQaSession(node.sessionId, node.projectId);
+      } else if (typeof arg === "string" && arg) {
+        var rep = findRepresentativeItemBySessionName(arg);
+        if (rep) {
+          var node2 = qaNodeOf(rep, claudeTree);
+          selectQaSession(node2.sessionId, node2.projectId);
+        } else {
+          selectQaSession(arg);
+        }
+      } else {
+        selectQaProject("");
+      }
       switchNav("qa");
     };
   }
 
-  function goHandoffProject(name) {
+  function goHandoffProject(name, m) {
     return function () {
-      selectHandoffProject(name);
+      if (m && handoffChannels[name]) {
+        var node = handoffNodeOf(name, m, handoffChannels[name], claudeTree);
+        selectHandoffSession(node.sessionId, node.projectId);
+      } else if (name && handoffChannels[name]) {
+        selectHandoffSession("c:" + name, QA_UNLINKED);
+      } else {
+        selectHandoffProject("");
+      }
       switchNav("handoff");
     };
   }
@@ -1318,7 +2479,7 @@
         '<span>' + escapeHtml(projectName) + '</span>' +
         (waitText || '<span>' + dirLabelHtml(m.dir) + '</span>'),
       sideHtml: stepsHtml(m.status),
-      onClick: goHandoffProject(projectName)
+      onClick: goHandoffProject(projectName, m)
     });
   }
 
@@ -1349,7 +2510,7 @@
               (recordModel(r) ? '<span>' + escapeHtml(recordModel(r)) + '</span>' : "") +
               '<span>' + escapeHtml(r.session || "단발성") + '</span>',
             sideHtml: qaStatusBadge(r),
-            onClick: goQaSession(r.session)
+            onClick: goQaSession(r)
           });
         }
       });
@@ -1388,7 +2549,7 @@
               '<span>' + escapeHtml(p.session || "단발성") + '</span>',
             sideHtml: processing ? '<span class="badge status-pending-processing">진행 중</span>'
                                  : '<span class="badge status-pending-queued">대기 중</span>',
-            onClick: goQaSession(p.session)
+            onClick: goQaSession(p)
           });
         }
       });
@@ -1407,7 +2568,7 @@
               (recordModel(r) ? '<span>' + escapeHtml(recordModel(r)) + '</span>' : "") +
               '<span>' + escapeHtml(r.session || "단발성") + '</span>',
             sideHtml: qaStatusBadge(r),
-            onClick: goQaSession(r.session)
+            onClick: goQaSession(r)
           });
         }
       });
@@ -1466,7 +2627,7 @@
         ["오늘", todayCount + "건"],
         ["성공률", successRate],
         ["평균 소요", avgSec],
-        ["인수인계 프로젝트", handoffProjects.length + "개"],
+        ["인수인계 채널", handoffProjects.length + "개"],
         ["메시지", totalHandoffMsgs.toLocaleString() + "개"]
       ];
       els.dashStats.innerHTML = stats.map(function (s) {
@@ -1560,11 +2721,89 @@
     if (models.indexOf(current) !== -1) { els.modelFilter.value = current; }
   }
 
+  function renderQaAgyChips() {
+    if (!els.qaSessionChips) return;
+
+    var agySessions = qaAgySessionsOf(allItems, pendingItems, claudeTree, currentQaProject, currentQaSession);
+    var hasNamed = agySessions.some(function (s) { return s.name !== "__none__"; });
+
+    if (!hasNamed) {
+      els.qaSessionChips.hidden = true;
+      els.qaSessionChips.innerHTML = "";
+      currentQaAgy = "";
+      return;
+    }
+
+    els.qaSessionChips.hidden = false;
+
+    var totalCount = 0;
+    var totalPending = 0;
+    var totalErrors = 0;
+    var namedSessions = [];
+    var noneSession = null;
+
+    for (var i = 0; i < agySessions.length; i++) {
+      var s = agySessions[i];
+      totalCount += (s.total + s.pending);
+      totalPending += s.pending;
+      totalErrors += s.errors;
+      if (s.name === "__none__") {
+        noneSession = s;
+      } else {
+        namedSessions.push(s);
+      }
+    }
+
+    var validAgys = { "": true };
+    for (var n = 0; n < namedSessions.length; n++) {
+      validAgys[namedSessions[n].name] = true;
+    }
+    if (noneSession) {
+      validAgys["__none__"] = true;
+    }
+
+    if (currentQaAgy && !validAgys[currentQaAgy]) {
+      currentQaAgy = "";
+    }
+
+    function buildChipHtml(agyVal, displayName, count, pending, errors) {
+      var isActive = (currentQaAgy === agyVal);
+      var dotHtml = (pending > 0) ? '<span class="pending-pulse-dot"></span>' : '';
+      var errHtml = (errors > 0) ? '<span class="qa-chip-err">실패 ' + errors + '</span>' : '';
+      return [
+        '<button type="button" class="qa-chip' + (isActive ? ' active' : '') + '" data-agy="' + escapeHtml(agyVal) + '">',
+        dotHtml,
+        '<span class="qa-chip-name">' + escapeHtml(displayName) + '</span>',
+        '<span class="qa-chip-count">' + count + '</span>',
+        errHtml,
+        '</button>'
+      ].join("");
+    }
+
+    var htmlParts = [];
+    htmlParts.push(buildChipHtml("", "전체", totalCount, totalPending, totalErrors));
+    for (var sIdx = 0; sIdx < namedSessions.length; sIdx++) {
+      var ns = namedSessions[sIdx];
+      htmlParts.push(buildChipHtml(ns.name, ns.name, ns.total + ns.pending, ns.pending, ns.errors));
+    }
+    if (noneSession) {
+      htmlParts.push(buildChipHtml("__none__", "단발성", noneSession.total + noneSession.pending, noneSession.pending, noneSession.errors));
+    }
+
+    els.qaSessionChips.innerHTML = htmlParts.join("");
+
+    els.qaSessionChips.onclick = function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest(".qa-chip") : null;
+      if (!btn) return;
+      var agy = btn.getAttribute("data-agy") || "";
+      selectQaAgy(agy);
+    };
+  }
+
   function applyQaFilters() {
     var q = (els.qaSearch ? els.qaSearch.value : "").trim().toLowerCase();
     var model = els.modelFilter ? els.modelFilter.value : "";
     var status = els.statusFilter ? els.statusFilter.value : "";
-    var session = currentQaSession;
 
     // 1. 이미 완료된 task_id 집합
     var finishedTaskIds = {};
@@ -1579,13 +2818,9 @@
       filteredPending = pendingItems.filter(function (p) {
         if (!p || !p.task_id) return false;
         if (finishedTaskIds[p.task_id]) return false;
-        // 프로젝트 필터
-        if (currentQaProject && qaProjectOf(p).key !== currentQaProject) return false;
-        // 모델 필터
+        if (!qaItemMatchesSelection(p, claudeTree, currentQaProject, currentQaSession)) return false;
+        if (!qaItemMatchesAgy(p, currentQaAgy)) return false;
         if (model && p.model !== model) return false;
-        // 세션 필터
-        if (session === "__none__" && p.session) return false;
-        if (session && session !== "__none__" && p.session !== session) return false;
         if (q) {
           var qText = (p.question || "").toLowerCase();
           var mText = (p.model || "").toLowerCase();
@@ -1598,9 +2833,8 @@
 
     // 3. 완료 레코드 필터링
     filteredQa = allItems.filter(function (r) {
-      if (currentQaProject && qaProjectOf(r).key !== currentQaProject) return false;
-      if (session === "__none__" && r.session) return false;
-      if (session && session !== "__none__" && r.session !== session) return false;
+      if (!qaItemMatchesSelection(r, claudeTree, currentQaProject, currentQaSession)) return false;
+      if (!qaItemMatchesAgy(r, currentQaAgy)) return false;
       if (model && recordModel(r) !== model) return false;
       if (status) {
         var st = (r.status == null ? "" : String(r.status)).trim();
@@ -1616,10 +2850,11 @@
       return true;
     });
 
+    renderQaAgyChips();
+
     // 헤더 건수는 filteredQa/filteredPending 을 읽으므로 반드시 필터 계산 뒤에 갱신한다.
     // (앞에서 부르면 직전 값이 표시되어, 대시보드에서 막 넘어왔을 때 "0건"으로 보였다.)
-    updateQaHeader(session);
-    renderQaSessionChips();
+    updateQaHeader();
 
     shownQaCount = 0;
     if (els.cards) {
@@ -1667,19 +2902,19 @@
     }
   }
 
-  function updateQaHeader(session) {
+  function updateQaHeader() {
     if (!els.qaCurrentSessionTitle) return;
 
     if (!currentQaProject) {
-      if (!session) {
-        els.qaCurrentSessionTitle.textContent = "전체 프로젝트 피드";
-      } else if (session === "__none__") {
-        els.qaCurrentSessionTitle.textContent = "단발성 작업 (세션 없음)";
-      } else {
-        els.qaCurrentSessionTitle.textContent = session;
-      }
+      els.qaCurrentSessionTitle.textContent = "전체 프로젝트 피드";
     } else {
-      els.qaCurrentSessionTitle.textContent = qaProjectDisplayName(currentQaProject);
+      var tree = buildQaTree(allItems, pendingItems, claudeTree);
+      var titles = findQaNodeTitles(tree, currentQaProject, currentQaSession);
+      if (!currentQaSession) {
+        els.qaCurrentSessionTitle.textContent = titles.projectName;
+      } else {
+        els.qaCurrentSessionTitle.textContent = titles.sessionTitle;
+      }
     }
 
     var totalInSession = filteredQa.length + filteredPending.length;
@@ -3106,7 +4341,17 @@
     var modelName = recordModel(r) || null;
     var isSession = Boolean(r.session || r.session_id || r.model === "(session)");
     if (modelName) { meta.appendChild(metaItem(String(modelName), "model")); }
-    if (r.elapsed_sec) { meta.appendChild(metaItem(formatDuration(Number(r.elapsed_sec)), "elapsed", r.elapsed_sec + "초")); }
+    if (r.elapsed_sec) {
+      var elSec = Number(r.elapsed_sec);
+      var elText = formatDuration(elSec);
+      var tip = "실제 실행 시간: " + r.elapsed_sec + "초";
+      if (r.wait_sec && Number(r.wait_sec) >= 5) {
+        var wSec = Number(r.wait_sec);
+        elText += " (대기 " + formatDuration(wSec) + ")";
+        tip += " / 큐 대기 시간: " + r.wait_sec + "초";
+      }
+      meta.appendChild(metaItem(elText, "elapsed", tip));
+    }
     if (r.attempts && Number(r.attempts) > 1) { meta.appendChild(metaItem("시도 " + r.attempts + "회")); }
     meta.appendChild(metaItem((r.source || "bridge") === "mcp" ? "MCP" : "bridge", "", "위임 경로"));
     if (r.task_id) { meta.appendChild(metaItem(r.task_id, "mono", "작업 ID")); }
@@ -3242,6 +4487,13 @@
       parts.push('<span class="pg-idle" data-ms="' + escapeHtml(String(pg.last_activity_ms)) + '">' +
         formatDuration((Date.now() - pg.last_activity_ms) / 1000) + ' 전 활동</span>');
     }
+    if (pg.tokens && pg.tokens.total > 0) {
+      var tot = Number(pg.tokens.total);
+      var inTok = Number(pg.tokens.input || 0);
+      var outTok = Number(pg.tokens.output || 0);
+      var tokText = (tot >= 10000 ? (tot / 10000).toFixed(1) + '만' : tot.toLocaleString()) + ' 토큰';
+      parts.push('<span class="pg-tokens" style="color: var(--ink); font-weight: 500;" title="실시간 누적 토큰: ' + tot.toLocaleString() + ' (입력 ' + inTok.toLocaleString() + ' / 출력 ' + outTok.toLocaleString() + ')">⚡ 실시간 ' + tokText + '</span>');
+    }
     var action = buildProgressActionHtml(pg, cwd);
     return '<div class="pending-progress">' + (parts.length ? '<div class="pg-line">' + parts.join('<span class="pg-sep">·</span>') + '</div>' : "") + action + '</div>';
   }
@@ -3266,12 +4518,51 @@
     }
 
     if (p.model) { meta.appendChild(metaItem(String(p.model), "model")); }
-    var startedAt = isProcessing ? parseLocalTime(p.created) : null;
-    if (startedAt) {
-      var live = metaItem(formatDuration((Date.now() - startedAt.getTime()) / 1000), "elapsed live-elapsed", "접수 후 경과 시간");
-      live.setAttribute("data-start", String(startedAt.getTime()));
-      meta.appendChild(live);
+
+    if (isProcessing) {
+      var createdTime = parseLocalTime(p.created);
+      var actualStartTime = p.started_at ? parseLocalTime(p.started_at) : createdTime;
+      var startTime = actualStartTime || createdTime;
+
+      // 1. 실제 실행 시간 라이브 배지 (1초마다 자동 갱신)
+      if (startTime) {
+        var elapsedSec = Math.max(0, (Date.now() - startTime.getTime()) / 1000);
+        var live = metaItem("실행 " + formatDuration(elapsedSec), "elapsed live-elapsed", "실제 실행 경과 시간 (실행 시작: " + (p.started_at || p.created || "") + ")");
+        live.setAttribute("data-start", String(startTime.getTime()));
+        live.setAttribute("data-label-prefix", "실행 ");
+        meta.appendChild(live);
+      }
+
+      // 2. 대기 시간 배지 (5초 이상 대기열에 있었던 경우 함께 표시)
+      if (createdTime && actualStartTime) {
+        var waitSec = Math.max(0, Math.floor((actualStartTime.getTime() - createdTime.getTime()) / 1000));
+        if (waitSec >= 5) {
+          var totalSec = Math.floor((Date.now() - createdTime.getTime()) / 1000);
+          var waitBadge = metaItem("대기 " + formatDuration(waitSec), "wait-time", "대기열 대기: " + formatDuration(waitSec) + " (접수: " + (p.created || "") + " / 실행 시작: " + (p.started_at || "") + " / 총 경과: " + formatDuration(totalSec) + ")");
+          meta.appendChild(waitBadge);
+        }
+      }
+
+      // 3. 실시간 토큰 사용량 배지 (진행 중일 때 토큰 정보가 있으면 상단 메타에 표시)
+      if (p.progress && p.progress.tokens && p.progress.tokens.total > 0) {
+        var pTot = Number(p.progress.tokens.total);
+        var pIn = Number(p.progress.tokens.input || 0);
+        var pOut = Number(p.progress.tokens.output || 0);
+        var tokLabel = "⚡ " + (pTot >= 10000 ? (pTot / 10000).toFixed(1) + "만 토큰" : pTot.toLocaleString() + " 토큰");
+        meta.appendChild(metaItem(tokLabel, "live-tokens", "실시간 누적 토큰: " + pTot.toLocaleString() + " (입력 " + pIn.toLocaleString() + " / 출력 " + pOut.toLocaleString() + ")"));
+      }
+    } else {
+      // 대기 중인 카드는 대기 경과 시간 표시
+      var cTime = parseLocalTime(p.created);
+      if (cTime) {
+        var waitSec = Math.max(0, Math.floor((Date.now() - cTime.getTime()) / 1000));
+        var waitLive = metaItem("대기 중 " + formatDuration(waitSec), "elapsed live-elapsed", "대기열 대기 시간 (접수: " + (p.created || "") + ")");
+        waitLive.setAttribute("data-start", String(cTime.getTime()));
+        waitLive.setAttribute("data-label-prefix", "대기 중 ");
+        meta.appendChild(waitLive);
+      }
     }
+
     meta.appendChild(metaItem("bridge", "", "위임 경로"));
     if (p.task_id) { meta.appendChild(metaItem(p.task_id, "mono", "작업 ID")); }
     card.appendChild(meta);
@@ -3327,7 +4618,7 @@
     if (isProcessing) {
       aKwSpan.textContent = "응답을 만드는 중";
     } else {
-      aKwSpan.textContent = "앞에 " + queueIndex + "건이 끝나면 시작";
+      aKwSpan.textContent = "차례를 기다리는 중";
     }
     sa.appendChild(aKwSpan);
     da.appendChild(sa);
@@ -3338,7 +4629,7 @@
     ab.innerHTML = [
       '<div class="pending-status-wrap ' + escapeHtml(p.state) + '">',
       (isProcessing ? '  <span class="pending-spinner" aria-hidden="true"></span><span>agy가' + modelText + ' 응답을 만들고 있습니다. 끝나면 이 자리에 답변이 나옵니다.</span>' :
-                      '  <span>앞 작업이 끝나면' + modelText + ' 자동으로 실행됩니다.</span>'),
+                      '  <span>동시에 돌릴 수 있는 수(기본 3개)를 넘었거나, 같은 세션·폴더의 앞 작업이 있어 기다리고 있습니다. 조건이 풀리면' + modelText + ' 자동으로 실행됩니다.</span>'),
       '</div>',
       (isProcessing ? buildProgressHtml(p.progress, effCwds) : "")
     ].join("");
@@ -3353,24 +4644,30 @@
   // ==========================================================================
 
   function renderHandoffView() {
-    if (!currentHandoffData) {
-      if (els.handoffCards) els.handoffCards.innerHTML = '<p class="empty">프로젝트를 선택해 주세요.</p>';
-      return;
-    }
+    var tree = buildHandoffTree(handoffChannels, claudeTree);
+    var titles = findHandoffNodeTitles(tree, currentHandoffProject, currentHandoffSession);
 
+    var displayTitle = "전체 프로젝트";
+    if (currentHandoffProject) {
+      if (currentHandoffSession) {
+        displayTitle = titles.sessionTitle;
+      } else {
+        displayTitle = titles.projectName;
+      }
+    }
     if (els.handoffCurrentProjectTitle) {
-      els.handoffCurrentProjectTitle.textContent = currentHandoffData.name;
-    }
-    var msgCount = Array.isArray(currentHandoffData.messages) ? currentHandoffData.messages.length : 0;
-    if (els.handoffCurrentProjectCount) {
-      els.handoffCurrentProjectCount.textContent = "메시지 " + msgCount + "개";
+      els.handoffCurrentProjectTitle.textContent = displayTitle;
     }
 
-    // BRIEF.md 요약 아코디언 카드
+    // BRIEF.md 요약 아코디언 카드: 연결 안 됨 아래의 채널 세션(c:<채널>)을 골랐을 때만 그 채널의 brief를 보인다.
     if (els.handoffBriefCard && els.briefProjectName && els.handoffBriefContent) {
-      if (currentHandoffData.brief && currentHandoffData.brief.trim()) {
-        els.briefProjectName.textContent = currentHandoffData.name;
-        renderMarkdownBody(els.handoffBriefContent, currentHandoffData.brief);
+      var isChannelSession = (currentHandoffProject === QA_UNLINKED && currentHandoffSession && currentHandoffSession.indexOf("c:") === 0);
+      var briefChannelName = isChannelSession ? currentHandoffSession.slice(2) : "";
+      var briefChannelData = briefChannelName ? handoffChannels[briefChannelName] : null;
+
+      if (briefChannelData && briefChannelData.brief && briefChannelData.brief.trim()) {
+        els.briefProjectName.textContent = briefChannelData.name || briefChannelName;
+        renderMarkdownBody(els.handoffBriefContent, briefChannelData.brief);
         els.handoffBriefCard.style.display = "block";
       } else {
         els.handoffBriefCard.style.display = "none";
@@ -3380,44 +4677,37 @@
     renderHandoffMessages();
   }
 
-  function findHandoffFileForNum(num) {
-    if (!currentHandoffData || !Array.isArray(currentHandoffData.files)) return null;
-    var prefix = num + "-";
-    for (var i = 0; i < currentHandoffData.files.length; i++) {
-      if (currentHandoffData.files[i].indexOf(prefix) === 0) {
-        return currentHandoffData.files[i];
-      }
-    }
-    return null;
-  }
-
-  function toggleHandoffMessage(cardEl, num) {
+  function toggleHandoffMessage(cardEl, channel, msg, fileName) {
     var bodyEl = cardEl.querySelector(".handoff-card-body");
     if (!bodyEl) return;
     var headerEl = cardEl.querySelector(".handoff-card-header");
+    var num = msg && msg.num != null ? msg.num : "";
+    var openKey = channel + "/" + num;
     var isOpen = (bodyEl.style.display !== "none");
     if (isOpen) {
       bodyEl.style.display = "none";
       cardEl.classList.remove("is-open");
       if (headerEl) headerEl.setAttribute("aria-expanded", "false");
-      delete openHandoffNums[num];
+      delete openHandoffNums[openKey];
       return;
     }
     bodyEl.style.display = "block";
     cardEl.classList.add("is-open");
     if (headerEl) headerEl.setAttribute("aria-expanded", "true");
-    openHandoffNums[num] = true;
+    openHandoffNums[openKey] = true;
 
     if (bodyEl.dataset.loaded === "true") return;
 
-    var fileName = findHandoffFileForNum(num);
+    if (!fileName) {
+      fileName = handoffMsgFileOf(msg, handoffChannels[channel]);
+    }
     if (!fileName) {
       bodyEl.innerHTML = '<p class="empty">메시지 파일(msg/' + escapeHtml(num) + '-*.md)을 찾을 수 없습니다.</p>';
       bodyEl.dataset.loaded = "true";
       return;
     }
 
-    var cacheKey = currentHandoffProject + "/" + fileName;
+    var cacheKey = channel + "/" + fileName;
     if (handoffMessageCache[cacheKey]) {
       renderMarkdownBody(bodyEl, handoffMessageCache[cacheKey]);
       bodyEl.dataset.loaded = "true";
@@ -3425,11 +4715,13 @@
     }
 
     bodyEl.innerHTML = '<div class="handoff-card-body-loading">메시지 본문을 불러오는 중...</div>';
-    fetchText("/api/handoff/message?project=" + encodeURIComponent(currentHandoffProject) + "&file=" + encodeURIComponent(fileName))
+    fetchText("/api/handoff/message?project=" + encodeURIComponent(channel) + "&file=" + encodeURIComponent(fileName))
       .then(function (markdown) {
         handoffMessageCache[cacheKey] = markdown;
-        renderMarkdownBody(bodyEl, markdown);
-        bodyEl.dataset.loaded = "true";
+        if (openHandoffNums[openKey]) {
+          renderMarkdownBody(bodyEl, markdown);
+          bodyEl.dataset.loaded = "true";
+        }
       })
       .catch(function (err) {
         bodyEl.innerHTML = '<p class="empty">본문 로드 실패: ' + escapeHtml(err.message) + '</p>';
@@ -3450,21 +4742,20 @@
 
   function renderHandoffMessages() {
     if (!els.handoffCards) return;
-    if (!currentHandoffData || !Array.isArray(currentHandoffData.messages)) {
-      els.handoffCards.innerHTML = '<p class="empty">표시할 메시지가 없습니다.</p>';
-      return;
-    }
 
-    var msgs = currentHandoffData.messages;
+    var items = handoffMessagesOf(handoffChannels, claudeTree, currentHandoffProject, currentHandoffSession);
+
     var q = (els.handoffSearch ? els.handoffSearch.value : "").trim().toLowerCase();
     var dirFilter = els.handoffDirFilter ? els.handoffDirFilter.value : "";
     var statusFilter = els.handoffStatusFilter ? els.handoffStatusFilter.value : "";
 
-    var filteredMsgs = msgs.filter(function (m) {
+    var filteredItems = items.filter(function (it) {
+      var m = it.msg;
+      if (!m) return false;
       if (dirFilter && m.dir !== dirFilter) return false;
       if (statusFilter && m.status !== statusFilter) return false;
       if (q) {
-        var match = (m.num && m.num.toLowerCase().indexOf(q) >= 0) ||
+        var match = (m.num && String(m.num).toLowerCase().indexOf(q) >= 0) ||
                     (m.title && m.title.toLowerCase().indexOf(q) >= 0) ||
                     (m.time && m.time.indexOf(q) >= 0) ||
                     (m.status && m.status.indexOf(q) >= 0);
@@ -3473,19 +4764,34 @@
       return true;
     });
 
-    var sortedMsgs = filteredMsgs.slice().reverse();
+    if (els.handoffCurrentProjectCount) {
+      els.handoffCurrentProjectCount.textContent = "메시지 " + filteredItems.length + "개";
+    }
 
-    if (sortedMsgs.length === 0) {
-      els.handoffCards.innerHTML = '<p class="empty">조건에 일치하는 핸드오프 메시지가 없습니다.</p>';
+    var sortedItems = filteredItems.slice().reverse();
+
+    if (sortedItems.length === 0) {
+      if (items.length === 0) {
+        els.handoffCards.innerHTML = '<p class="empty">표시할 메시지가 없습니다.</p>';
+      } else {
+        els.handoffCards.innerHTML = '<p class="empty">조건에 일치하는 핸드오프 메시지가 없습니다.</p>';
+      }
+      updateTopbarMeta();
       return;
     }
 
     var frag = document.createDocumentFragment();
-    sortedMsgs.forEach(function (m) {
+    sortedItems.forEach(function (it) {
+      var m = it.msg;
+      var channel = it.channel;
+      var fileName = it.file;
+      var openKey = channel + "/" + m.num;
+
       var card = document.createElement("div");
       var party = dirParty(m.dir);
       card.className = "handoff-card" + (party ? " from-" + party : "");
       card.dataset.num = m.num;
+      card.dataset.channel = channel;
 
       // [#번호][제목 / 보낸 쪽 → 받는 쪽][시각, 상태 진행 표시]
       var header = document.createElement("div");
@@ -3493,7 +4799,7 @@
       header.innerHTML = [
         '<span class="handoff-num">#' + escapeHtml(m.num) + '</span>',
         '<div class="handoff-card-header-left">',
-        '  <span class="handoff-title" title="' + escapeHtml(m.title || "") + '">' + escapeHtml(m.title || "(제목 없음)") + '</span>',
+        '  <span class="handoff-title" title="' + escapeHtml(m.title || "") + '"><span class="handoff-channel">' + escapeHtml(channel) + '</span>' + escapeHtml(m.title || "(제목 없음)") + '</span>',
         '  <span class="handoff-dir">' + dirLabelHtml(m.dir) + '</span>',
         '</div>',
         '<div class="handoff-card-header-right">',
@@ -3502,26 +4808,25 @@
         '</div>'
       ].join("");
       makeActivatable(header);
-      header.setAttribute("aria-expanded", openHandoffNums[m.num] ? "true" : "false");
+      header.setAttribute("aria-expanded", openHandoffNums[openKey] ? "true" : "false");
 
       var body = document.createElement("div");
       body.className = "handoff-card-body md";
 
-      if (openHandoffNums[m.num]) {
+      if (openHandoffNums[openKey]) {
         body.style.display = "block";
         card.classList.add("is-open");
-        var fileName = findHandoffFileForNum(m.num);
         if (fileName) {
-          var cacheKey = currentHandoffProject + "/" + fileName;
+          var cacheKey = channel + "/" + fileName;
           if (handoffMessageCache[cacheKey]) {
             renderMarkdownBody(body, handoffMessageCache[cacheKey]);
             body.dataset.loaded = "true";
           } else {
             body.innerHTML = '<div class="handoff-card-body-loading">메시지 본문을 불러오는 중...</div>';
-            fetchText("/api/handoff/message?project=" + encodeURIComponent(currentHandoffProject) + "&file=" + encodeURIComponent(fileName))
+            fetchText("/api/handoff/message?project=" + encodeURIComponent(channel) + "&file=" + encodeURIComponent(fileName))
               .then(function (md) {
                 handoffMessageCache[cacheKey] = md;
-                if (openHandoffNums[m.num]) {
+                if (openHandoffNums[openKey]) {
                   renderMarkdownBody(body, md);
                   body.dataset.loaded = "true";
                 }
@@ -3530,13 +4835,16 @@
                 body.innerHTML = '<p class="empty">본문 로드 실패: ' + escapeHtml(err.message) + '</p>';
               });
           }
+        } else {
+          body.innerHTML = '<p class="empty">메시지 파일(msg/' + escapeHtml(m.num) + '-*.md)을 찾을 수 없습니다.</p>';
+          body.dataset.loaded = "true";
         }
       } else {
         body.style.display = "none";
       }
 
       header.addEventListener("click", function () {
-        toggleHandoffMessage(card, m.num);
+        toggleHandoffMessage(card, channel, m, fileName);
       });
 
       card.appendChild(header);
@@ -3553,12 +4861,24 @@
   // Full Refresh Cycle
   // ==========================================================================
 
+  function loadClaudeTree() {
+    return fetchJson("/api/claude/tree").then(function (data) {
+      if (data && typeof data === "object") {
+        claudeTree = data;
+      }
+      return claudeTree;
+    }).catch(function () {
+      return claudeTree;
+    });
+  }
+
   function refresh(force) {
     return Promise.all([
       loadSystemStatus(),
       loadAllQa(force),
       loadPending(),
-      loadHandoffProjects(force)
+      loadHandoffProjects(force),
+      loadClaudeTree()
     ]).then(function (results) {
       var qaRes = results[1];
       var pList = results[2];
@@ -3568,8 +4888,8 @@
       pendingItems = pList;
 
       populateModelFilter();
-      renderQaProjectList();
-      renderHandoffProjectList();
+      renderQaTree();
+      renderHandoffTree();
 
       if (currentNav === "dashboard") {
         renderDashboard();
@@ -3625,7 +4945,7 @@
     // 대시보드 내 "모두 보기" 링크
     if (els.btnViewAllQa) {
       els.btnViewAllQa.addEventListener("click", function () {
-        selectQaSession("");
+        selectQaProject("");
         switchNav("qa");
       });
     }
@@ -3636,14 +4956,14 @@
     }
 
     // QA 세션 사이드바 검색 및 필터
-    if (els.qaSessionSearch) els.qaSessionSearch.addEventListener("input", renderQaProjectList);
+    if (els.qaSessionSearch) els.qaSessionSearch.addEventListener("input", renderQaTree);
     if (els.modelFilter) els.modelFilter.addEventListener("change", applyQaFilters);
     if (els.statusFilter) els.statusFilter.addEventListener("change", applyQaFilters);
     if (els.qaSearch) els.qaSearch.addEventListener("input", applyQaFilters);
     if (els.loadMoreBtn) els.loadMoreBtn.addEventListener("click", renderMoreQa);
 
     // Handoff 사이드바 검색 및 필터
-    if (els.handoffProjectSearch) els.handoffProjectSearch.addEventListener("input", renderHandoffProjectList);
+    if (els.handoffProjectSearch) els.handoffProjectSearch.addEventListener("input", renderHandoffTree);
     if (els.handoffDirFilter) els.handoffDirFilter.addEventListener("change", renderHandoffMessages);
     if (els.handoffStatusFilter) els.handoffStatusFilter.addEventListener("change", renderHandoffMessages);
     if (els.handoffSearch) els.handoffSearch.addEventListener("input", renderHandoffMessages);
@@ -3680,16 +5000,27 @@
       if (parsed.nav !== currentNav) {
         switchNav(parsed.nav, false);
       }
-      if (parsed.nav === "qa" && (parsed.project !== currentQaProject || parsed.session !== currentQaSession)) {
-        selectQaSession(parsed.session, parsed.project);
-      } else if (parsed.nav === "handoff" && parsed.project && parsed.project !== currentHandoffProject) {
-        selectHandoffProject(parsed.project);
+      if (parsed.nav === "qa") {
+        var projChanged = (parsed.project !== currentQaProject);
+        var sessChanged = (parsed.session !== currentQaSession);
+        var agyChanged = (parsed.agy !== currentQaAgy);
+        if (projChanged || sessChanged || agyChanged) {
+          if (projChanged || sessChanged) {
+            selectQaSession(parsed.session, parsed.project);
+          }
+          currentQaAgy = parsed.agy || "";
+          renderQaAgyChips();
+          applyQaFilters();
+        }
+      } else if (parsed.nav === "handoff" && (parsed.project !== currentHandoffProject || parsed.session !== currentHandoffSession)) {
+        selectHandoffSession(parsed.session, parsed.project);
       }
     });
   }
 
   // 초기화 실행
   initImagePopups();
+  initTreeSortSelects();
   bindEvents();
 
   // 이전 사이드바 접힘 상태 복원
@@ -3704,7 +5035,9 @@
   if (initialRoute.nav === "qa") {
     if (initialRoute.session) { currentQaSession = initialRoute.session; }
     if (initialRoute.project) { currentQaProject = initialRoute.project; }
+    if (initialRoute.agy) { currentQaAgy = initialRoute.agy; }
   } else if (initialRoute.nav === "handoff") {
+    if (initialRoute.session) { currentHandoffSession = initialRoute.session; }
     if (initialRoute.project) { currentHandoffProject = initialRoute.project; }
   }
 
