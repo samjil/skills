@@ -1442,3 +1442,247 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
     transition: none !important;
   }
 }
+
+/* ==========================================================================
+   KaTeX 수식 렌더링 스타일
+   ========================================================================== */
+.katex-display-wrapper {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 8px 0;
+  margin: 10px 0;
+  text-align: center;
+}
+.katex-display-wrapper .katex-display {
+  margin: 0;
+}
+.katex {
+  font-size: 1.05em;
+  text-rendering: auto;
+}
+.katex-error {
+  color: #ff6b6b;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9em;
+}
+
+/* ==========================================================================
+   GFM 알림 콜아웃 (Alerts: Note, Tip, Important, Warning, Caution)
+   ========================================================================== */
+.markdown-alert {
+  padding: 12px 16px;
+  margin: 16px 0;
+  border-left: 4px solid var(--border-color, #30363d);
+  background: var(--bg-color, rgba(255, 255, 255, 0.03));
+  border-radius: 6px;
+  font-size: 0.95em;
+  line-height: 1.6;
+}
+.markdown-alert > :first-child { margin-top: 0; }
+.markdown-alert > :last-child { margin-bottom: 0; }
+.markdown-alert-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  text-transform: capitalize;
+}
+.markdown-alert-title svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  flex-shrink: 0;
+}
+.markdown-alert-note {
+  --border-color: #58a6ff;
+  --bg-color: rgba(56, 139, 253, 0.08);
+  color: #c9d1d9;
+}
+.markdown-alert-note .markdown-alert-title { color: #58a6ff; }
+.markdown-alert-tip {
+  --border-color: #3fb950;
+  --bg-color: rgba(46, 160, 67, 0.08);
+  color: #c9d1d9;
+}
+.markdown-alert-tip .markdown-alert-title { color: #3fb950; }
+.markdown-alert-important {
+  --border-color: #a371f7;
+  --bg-color: rgba(163, 113, 247, 0.08);
+  color: #c9d1d9;
+}
+.markdown-alert-important .markdown-alert-title { color: #a371f7; }
+.markdown-alert-warning {
+  --border-color: #d29922;
+  --bg-color: rgba(187, 128, 9, 0.08);
+  color: #c9d1d9;
+}
+.markdown-alert-warning .markdown-alert-title { color: #d29922; }
+.markdown-alert-caution {
+  --border-color: #f85149;
+  --bg-color: rgba(248, 81, 73, 0.08);
+  color: #c9d1d9;
+}
+.markdown-alert-caution .markdown-alert-title { color: #f85149; }
+
+/* ==========================================================================
+   코드 블록 구문 강조 & 상단 바 / 복사 버튼
+   ========================================================================== */
+.code-block-wrapper {
+  position: relative;
+  margin: 16px 0;
+  border-radius: var(--r-md, 8px);
+  border: 1px solid var(--line-strong, #30363d);
+  background: #0d1117;
+  overflow: hidden;
+}
+.code-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--line-strong, #30363d);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--ink-2, #8b949e);
+  user-select: none;
+}
+.code-block-lang {
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.code-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: var(--ink-2, #8b949e);
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+.code-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink, #c9d1d9);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.code-copy-btn.copied {
+  color: #3fb950;
+  border-color: #3fb950;
+}
+.code-block-wrapper pre {
+  margin: 0 !important;
+  padding: 14px 16px !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  overflow-x: auto;
+}
+.code-block-wrapper code.hljs {
+  padding: 0 !important;
+  background: transparent !important;
+  font-family: var(--font-mono, monospace);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+/* ==========================================================================
+   Mermaid 다이어그램 시각화 블록
+   ========================================================================== */
+.mermaid-block {
+  margin: 18px 0;
+  padding: 16px;
+  border-radius: var(--r-md, 8px);
+  border: 1px solid var(--line-strong, #30363d);
+  background: #0d1117;
+  overflow-x: auto;
+  text-align: center;
+}
+.mermaid-block svg {
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+.mermaid-error {
+  color: #ff6b6b;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+/* ==========================================================================
+   테이블 반응형 래퍼
+   ========================================================================== */
+.table-wrapper {
+  overflow-x: auto;
+  margin: 16px 0;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong, #30363d);
+}
+.table-wrapper table {
+  margin: 0 !important;
+  border: none !important;
+  width: 100%;
+  display: table !important;
+  border-collapse: collapse;
+}
+.table-wrapper th,
+.table-wrapper td {
+  padding: 8px 14px !important;
+  border: 1px solid var(--line, #21262d) !important;
+}
+.table-wrapper th {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink, #c9d1d9) !important;
+  font-weight: 600;
+}
+.table-wrapper tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+/* ==========================================================================
+   체크박스 (Task List) & KBD 키캡 스타일
+   ========================================================================== */
+.md ul:has(input[type="checkbox"]),
+.md ul.contains-task-list {
+  list-style: none;
+  padding-left: 0;
+}
+.md li:has(input[type="checkbox"]),
+.md li.task-list-item {
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 4px 0;
+}
+.md li:has(input[type="checkbox"]) input[type="checkbox"],
+.md li.task-list-item input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+  accent-color: #58a6ff;
+  transform: translateY(2px);
+}
+.md kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--ink, #c9d1d9);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line-strong, #30363d);
+  border-bottom: 2px solid var(--line-strong, #30363d);
+  border-radius: 4px;
+  box-shadow: inset 0 -1px 0 var(--line-strong, #30363d);
+}
+
+
+
