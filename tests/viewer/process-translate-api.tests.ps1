@@ -122,6 +122,19 @@ $final2 = Wait-State "conv-a" "running" 90
 Assert-Equal "  끝나면 done, 새 단계(2번째)도 번역" "done|KO:Finish up." ("{0}|{1}" -f $final2.state, $final2.items["2"].think)
 Assert-Equal "  agy 는 새 단계 때문에 한 번 더 불렀다" 2 @(Get-Content -LiteralPath $env:FAKE_ARGS_LOG).Count
 
+Write-Host "번역 규칙이 바뀌어 예전에 건너뛴 칸이 생기면(인용문 안의 한글은 한글로 세지 않는다)"
+[void](New-Transcript "conv-q" @("Examined the ``04_문진 이벤트 로그.sql`` file and compared the event names."))
+$cq = Get-ProcessTranslationPath "conv-q"
+# 예전 규칙으로 끝낸 캐시를 흉내 낸다: 단계 수는 다 덮었지만 그 칸은 한글이 있다고 건너뛰어 번역이 비어 있다
+Write-TranslationCache $cq "done" "" 1 @{} "m"
+$callsQ = @(Get-Content -LiteralPath $env:FAKE_ARGS_LOG).Count
+Assert-Equal "끝난 캐시여도 번역할 칸이 남아 있으면 none" "none" (Get-ProcessTranslationState "conv-q").state
+Assert-Equal "  Start 하면 running" "running" (Start-ProcessTranslation "conv-q").state
+$finalQ = Wait-State "conv-q" "running" 90
+Assert-Equal "  끝나면 done, 한글 인용문이 든 생각이 번역된다" "done|True" ("{0}|{1}" -f $finalQ.state, ($finalQ.items["0"].think -like "KO:Examined the*"))
+Assert-Equal "  agy 를 한 번 불렀다" ($callsQ + 1) @(Get-Content -LiteralPath $env:FAKE_ARGS_LOG).Count
+Assert-Equal "  번역을 마치면 더는 남은 칸이 없어 done 이 유지된다" "done" (Get-ProcessTranslationState "conv-q").state
+
 Write-Host "대화 기록이 정리된 뒤에도 번역은 남는다"
 Remove-Item -LiteralPath (Join-Path $agyHome "brain\conv-a") -Recurse -Force
 $script:ProcessCache = @{}
