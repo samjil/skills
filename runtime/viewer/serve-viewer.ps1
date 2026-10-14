@@ -371,6 +371,74 @@ function Get-AgyProcessStepsCached([string]$ConversationId) {
     return @($c.Steps.ToArray())
 }
 
+# ---- 과정 번역("한글로 번역"): 번역은 agy 호출이라 30초~1분 걸린다. 요청 처리 루프를 막지 않도록 숨김 창의 보조 스크립트
+# (sub\process-translate.ps1)가 하고, 여기서는 시작시키고 상태만 읽는다. 결과는 <데이터 폴더>\process-ko\<대화 id>.json 에 캐시된다.
+$script:TranslateStaleSeconds = 360   # 실행 표시 파일이 이만큼 오래되면 죽은 것으로 본다
+
+function Get-ProcessTranslationPath([string]$ConversationId) {
+    if ($ConversationId -notmatch '^[A-Za-z0-9-]{1,80}$') { return $null }
+    return (Join-Path $DataDir ("process-ko\{0}.json" -f $ConversationId))
+}
+
+# 상태: running(번역 중) | done(끝남) | none(아직 안 함·새 단계가 생김) | error | unavailable(대화 기록이 없어 번역할 수 없음)
+# 대화 id 가 올바르지 않으면 $null. items 는 번역해 둔 것(단계 순번 -> label/think/say)이라 상태와 상관없이 함께 준다.
+function Get-ProcessTranslationState([string]$ConversationId) {
+    $cachePath = Get-ProcessTranslationPath $ConversationId
+    if (-not $cachePath) { return $null }
+    $cache = @{ Status = ""; Message = ""; StepsCovered = 0; Items = @{}; Model = "" }
+    if (Get-Command Read-TranslationCache -ErrorAction SilentlyContinue) { $cache = Read-TranslationCache $cachePath }
+
+    $state = "none"; $message = ""
+    $run = Get-Item -LiteralPath "$cachePath.running" -ErrorAction SilentlyContinue
+    $transcript = $null
+    if (Get-Command Get-AgyTranscriptPath -ErrorAction SilentlyContinue) { $transcript = Get-AgyTranscriptPath (Get-AgyHomeDir) $ConversationId }
+    $hasTranscript = [bool]($transcript -and (Test-Path -LiteralPath $transcript -PathType Leaf))
+
+    if ($run -and ((Get-Date) - $run.LastWriteTime).TotalSeconds -lt $script:TranslateStaleSeconds) {
+        $state = "running"
+    } elseif ($cache.Items.Count -gt 0 -and -not $hasTranscript) {
+        $state = "done"      # 대화 기록은 정리됐지만 번역해 둔 것은 남아 있다
+    } elseif (-not $hasTranscript) {
+        $state = "unavailable"; $message = "agy 대화 기록이 남아 있지 않아 번역할 수 없습니다"
+    } elseif ($cache.Status -eq "unavailable") {
+        $state = "none"      # 그때는 없었지만 지금은 있다: 다시 시도할 수 있게 둔다
+    } elseif ($cache.Status -eq "done") {
+        $count = @(Get-AgyProcessStepsCached $ConversationId).Count
+        $state = if ($cache.StepsCovered -ge $count) { "done" } else { "none" }
+    } elseif ($cache.Status -eq "error") {
+        $state = "error"; $message = $cache.Message
+    } elseif ($cache.Status -eq "partial") {
+        $state = "error"; $message = "번역이 중간에 멈췄습니다. 다시 시도하면 이어서 합니다"
+    }
+    return [PSCustomObject]@{ id = $ConversationId; state = $state; message = $message; model = $cache.Model; items = $cache.Items }
+}
+
+# 번역을 시작한다(이미 하는 중이거나 끝났거나 할 수 없으면 시작하지 않고 상태만 돌려준다).
+function Start-ProcessTranslation([string]$ConversationId) {
+    $st = Get-ProcessTranslationState $ConversationId
+    if (-not $st -or $st.state -in @("running", "done", "unavailable")) { return $st }
+    $trScriptPath = Find-DelegateScript "sub\process-translate.ps1"
+    if (-not $trScriptPath) {
+        $st.state = "error"; $st.message = "번역 스크립트(process-translate.ps1)를 찾지 못했습니다. install.ps1 을 다시 실행해 주세요"
+        return $st
+    }
+    $cachePath = Get-ProcessTranslationPath $ConversationId
+    try {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cachePath) | Out-Null
+        # 보조 스크립트가 뜨기까지 1초쯤 걸려서, 그 사이 상태를 물으면 "안 함"으로 보이지 않게 표시 파일을 먼저 만든다
+        [System.IO.File]::WriteAllText("$cachePath.running", '{"pid":0}', (New-Object System.Text.UTF8Encoding($false)))
+        Start-Process -FilePath "powershell.exe" -WindowStyle Hidden -ArgumentList @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$trScriptPath`"",
+            "-ConversationId", $ConversationId, "-OutFile", "`"$cachePath`"") | Out-Null
+    } catch {
+        Remove-Item -LiteralPath "$cachePath.running" -Force -ErrorAction SilentlyContinue
+        $st.state = "error"; $st.message = "번역을 시작하지 못했습니다: " + $_.Exception.Message
+        return $st
+    }
+    $st.state = "running"; $st.message = ""
+    return $st
+}
+
 function Get-AgyProgress([string]$ConversationId, $StartedAt) {
     try {
         $agyHome = if ($env:AGY_HOME) { $env:AGY_HOME } else { Join-Path $env:USERPROFILE ".gemini\antigravity-cli" }
@@ -454,6 +522,9 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt) {
 # 워처와 같이 쓰는 도구 호출·과정 읽기 코드(agy-progress.ps1). 못 찾으면 진행 표시의 도구 설명과 과정 목록만 빠진다.
 $agyProgressLib = Find-DelegateScript "sub\agy-progress.ps1"
 if ($agyProgressLib) { . $agyProgressLib }
+# 번역 캐시 읽기 함수(Read-TranslationCache)도 같이 쓴다. 인자 없이 불러서 함수만 정의된다.
+$processTranslateLib = Find-DelegateScript "sub\process-translate.ps1"
+if ($processTranslateLib) { . $processTranslateLib }
 
 # HTTP 리스너 기동 (충돌 시 기존 뷰어 자동 정리 및 대체 포트 탐색)
 $listener = $null
@@ -1181,6 +1252,40 @@ try {
                     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
                     $response.ContentType = "application/json; charset=utf-8"
                     $response.Headers.Add("Cache-Control", "no-store")
+                }
+                $response.ContentLength64 = $bytes.Length
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
+
+            } elseif ($urlPath -eq "/api/delegate/translate") {
+
+                # 과정 창의 "한글로 번역". GET 은 상태와 번역해 둔 것을 읽고, POST 는 번역을 시작한다.
+                # 시작은 agy 를 부르는 동작이라 워처 켜기와 같이 POST + 전용 헤더만 받는다.
+                $params = Get-Utf8QueryParams $request.Url
+                $cid = [string]$params["id"]
+                if ($request.HttpMethod -eq "POST" -and $request.Headers["X-Samjil-Viewer"] -ne "1") {
+                    $response.StatusCode = 403
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes("Forbidden")
+                    $response.ContentType = "text/plain; charset=utf-8"
+                } elseif ($request.HttpMethod -ne "POST" -and $request.HttpMethod -ne "GET") {
+                    $response.StatusCode = 405
+                    $response.Headers.Add("Allow", "GET, POST")
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes("Method Not Allowed")
+                    $response.ContentType = "text/plain; charset=utf-8"
+                } else {
+                    $trState = if ($request.HttpMethod -eq "POST") { Start-ProcessTranslation $cid } else { Get-ProcessTranslationState $cid }
+                    if (-not $trState) {
+                        $response.StatusCode = 400
+                        $bytes = [System.Text.Encoding]::UTF8.GetBytes("Invalid id")
+                        $response.ContentType = "text/plain; charset=utf-8"
+                    } else {
+                        if ($request.HttpMethod -eq "POST") {
+                            Write-Host ("[{0}] 과정 번역 요청: {1} -> {2}" -f (Get-Date -Format 'HH:mm:ss'), $cid, $trState.state) -ForegroundColor Yellow
+                        }
+                        $json = $trState | ConvertTo-Json -Depth 6
+                        $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+                        $response.ContentType = "application/json; charset=utf-8"
+                        $response.Headers.Add("Cache-Control", "no-store")
+                    }
                 }
                 $response.ContentLength64 = $bytes.Length
                 $response.OutputStream.Write($bytes, 0, $bytes.Length)
