@@ -1574,36 +1574,317 @@
     return gallery;
   }
 
+  // ==========================================================================
+  // 마크다운, KaTeX, 구문 강조, Mermaid, GFM 콜아웃 공통 렌더링 헬퍼
+  // ==========================================================================
+  var mermaidInitialized = false;
+  var mermaidCounter = 0;
+
+  function ensureMermaidInit() {
+    if (mermaidInitialized) return;
+    if (window.mermaid && typeof window.mermaid.initialize === "function") {
+      try {
+        window.mermaid.initialize({
+          startOnLoad: false,
+          theme: "dark",
+          securityLevel: "loose",
+          fontFamily: "IBM Plex Sans KR, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+        });
+        mermaidInitialized = true;
+      } catch (e) {}
+    }
+  }
+
+  var ALERT_TYPES = {
+    note: {
+      label: "Note",
+      icon: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>'
+    },
+    tip: {
+      label: "Tip",
+      icon: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.619-.747-1.346-1.633-1.346-3.279C2.75 2.568 5.12 0 8 0s5.25 2.568 5.25 5.25c0 1.646-.727 2.532-1.346 3.28-.168.202-.35.419-.541.679-.208.3-.332.565-.372.847a.751.751 0 0 1-1.485-.21c.084-.595.338-1.08.621-1.49.204-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5Zm1 3h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1 0-1.5Z"/></svg>'
+    },
+    important: {
+      label: "Important",
+      icon: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H9.06l-2.573 2.573A1.458 1.458 0 0 1 4 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h3a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h5.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm6.47 2.97a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5a.75.75 0 0 1 .75-.75Zm0 7.03a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>'
+    },
+    warning: {
+      label: "Warning",
+      icon: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/></svg>'
+    },
+    caution: {
+      label: "Caution",
+      icon: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6c0 .199-.079.389-.22.53l-4.25 4.25a.749.749 0 0 1-.53.22H5a.749.749 0 0 1-.53-.22L.22 11.75A.749.749 0 0 1 0 11.22V5.25c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>'
+    }
+  };
+
+  var COPY_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+  var COPIED_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+
+  function renderMarkdownWithMath(text) {
+    if (!text) return "";
+    var hasMarked = window.marked && typeof window.marked.parse === "function";
+    if (!hasMarked) return escapeHtml(text);
+
+    var hasKatex = window.katex && typeof window.katex.renderToString === "function";
+    if (!hasKatex) {
+      var rawHtml = window.marked.parse(text);
+      return window.DOMPurify && typeof window.DOMPurify.sanitize === "function" ?
+        window.DOMPurify.sanitize(rawHtml, { ADD_TAGS: ["input"], ADD_ATTR: ["type", "checked", "disabled"] }) : rawHtml;
+    }
+
+    var mathList = [];
+
+    // 1. 코드 블록(```...```) 및 인라인 코드(`...`) 임시 보호
+    var codeBlocks = [];
+    var s = String(text).replace(/(```[\s\S]*?```|`[^`\n]*?`)/g, function (match) {
+      var ph = "%%%CBLOCK_" + codeBlocks.length + "%%%";
+      codeBlocks.push(match);
+      return ph;
+    });
+
+    // 2. 블록 수식 ($$...$$ 또는 \[...\]) 보호
+    s = s.replace(/(?:\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\])/g, function (match, m1, m2) {
+      var math = (m1 || m2 || "").trim();
+      var ph = "%%%MATH_B_" + mathList.length + "%%%";
+      mathList.push({ type: "block", math: math });
+      return "\n\n" + ph + "\n\n";
+    });
+
+    // 3. 인라인 수식 ($...$ 또는 \(...\)) 보호
+    s = s.replace(/(?:\$([^\$\n]+?)\$|\\\(([\s\S]*?)\\\))/g, function (match, m1, m2) {
+      var math = (m1 || m2 || "").trim();
+      if (!math) return match;
+      var ph = "%%%MATH_I_" + mathList.length + "%%%";
+      mathList.push({ type: "inline", math: math });
+      return ph;
+    });
+
+    // 4. 코드 블록 복원
+    codeBlocks.forEach(function (code, i) {
+      s = s.replace("%%%CBLOCK_" + i + "%%%", function () { return code; });
+    });
+
+    // 5. 마크다운 변환
+    var html = window.marked.parse(s);
+
+    // 6. DOMPurify 정제 (수식 플레이스홀더 및 task-list 체크박스 보존)
+    if (window.DOMPurify && typeof window.DOMPurify.sanitize === "function") {
+      html = window.DOMPurify.sanitize(html, { ADD_TAGS: ["input"], ADD_ATTR: ["type", "checked", "disabled"] });
+    }
+
+    // 7. KaTeX 수식 HTML 치환
+    mathList.forEach(function (item, i) {
+      var rendered = "";
+      try {
+        rendered = window.katex.renderToString(item.math, {
+          displayMode: item.type === "block",
+          throwOnError: false
+        });
+      } catch (err) {
+        rendered = '<span class="katex-error" title="' + escapeHtml(err.message) + '">' + escapeHtml(item.math) + '</span>';
+      }
+
+      var target = item.type === "block" ? "%%%MATH_B_" + i + "%%%" : "%%%MATH_I_" + i + "%%%";
+      if (item.type === "block") {
+        var pWrapped = new RegExp("<p>\\s*" + target + "\\s*<\\/p>", "g");
+        if (pWrapped.test(html)) {
+          html = html.replace(pWrapped, function () { return '<div class="katex-display-wrapper">' + rendered + '</div>'; });
+        } else {
+          html = html.replace(target, function () { return rendered; });
+        }
+      } else {
+        html = html.replace(target, function () { return rendered; });
+      }
+    });
+
+    return html;
+  }
+
+  function postProcessMarkdownElements(container, cwd) {
+    if (!container) return;
+
+    ensureMermaidInit();
+
+    // 1. GFM Alerts (> [!NOTE], > [!TIP], > [!IMPORTANT], > [!WARNING], > [!CAUTION])
+    var bqs = container.querySelectorAll("blockquote");
+    bqs.forEach(function (bq) {
+      if (bq.classList.contains("markdown-alert")) return;
+      var firstP = bq.querySelector("p");
+      if (!firstP) return;
+      var rawHtml = firstP.innerHTML;
+      var match = rawHtml.match(/^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](\s*<br\s*\/?>)?/i);
+      if (match) {
+        var type = match[1].toLowerCase();
+        var alertInfo = ALERT_TYPES[type];
+        if (alertInfo) {
+          bq.classList.add("markdown-alert", "markdown-alert-" + type);
+          var remaining = rawHtml.slice(match[0].length).trim();
+          if (remaining) {
+            firstP.innerHTML = remaining;
+          } else {
+            firstP.remove();
+          }
+          var titleEl = document.createElement("div");
+          titleEl.className = "markdown-alert-title";
+          titleEl.innerHTML = alertInfo.icon + "<span>" + alertInfo.label + "</span>";
+          bq.insertBefore(titleEl, bq.firstChild);
+        }
+      }
+    });
+
+    // 2. Code blocks (Mermaid / Highlight.js / Copy button)
+    var pres = container.querySelectorAll("pre");
+    pres.forEach(function (pre) {
+      if (pre.parentElement && pre.parentElement.classList.contains("code-block-wrapper")) return;
+      if (pre.classList.contains("code-handled")) return;
+
+      var code = pre.querySelector("code");
+      if (!code) return;
+
+      var lang = "";
+      var classNames = code.className ? String(code.className).split(/\s+/) : [];
+      for (var i = 0; i < classNames.length; i++) {
+        var cls = classNames[i];
+        if (cls.indexOf("language-") === 0) {
+          lang = cls.replace("language-", "").trim().toLowerCase();
+          break;
+        }
+      }
+
+      // 2-1. Mermaid 다이어그램
+      if (lang === "mermaid") {
+        pre.classList.add("code-handled");
+        var graphCode = (code.textContent || "").trim();
+        var mBlock = document.createElement("div");
+        mBlock.className = "mermaid-block";
+        var mId = "mermaid-svg-" + Date.now() + "-" + (++mermaidCounter);
+
+        if (window.mermaid && typeof window.mermaid.render === "function") {
+          try {
+            window.mermaid.render(mId, graphCode).then(function (res) {
+              mBlock.innerHTML = res.svg;
+            }).catch(function (err) {
+              mBlock.innerHTML = '<div class="mermaid-error">Mermaid 렌더링 실패: ' + escapeHtml(err.message || String(err)) + '</div>';
+            });
+          } catch (err) {
+            mBlock.innerHTML = '<div class="mermaid-error">Mermaid 에러: ' + escapeHtml(err.message || String(err)) + '</div>';
+          }
+        } else {
+          mBlock.innerHTML = '<pre>' + escapeHtml(graphCode) + '</pre>';
+        }
+
+        if (pre.parentNode) {
+          pre.parentNode.replaceChild(mBlock, pre);
+        }
+        return;
+      }
+
+      // 2-2. Syntax highlighting (highlight.js)
+      if (window.hljs && typeof window.hljs.highlightElement === "function") {
+        try {
+          window.hljs.highlightElement(code);
+        } catch (e) {}
+      }
+
+      // 2-3. Code block wrapper + 헤더 + 복사 버튼
+      var wrapper = document.createElement("div");
+      wrapper.className = "code-block-wrapper";
+
+      var header = document.createElement("div");
+      header.className = "code-block-header";
+
+      var langSpan = document.createElement("span");
+      langSpan.className = "code-block-lang";
+      langSpan.textContent = lang || "CODE";
+
+      var copyBtn = document.createElement("button");
+      copyBtn.className = "code-copy-btn";
+      copyBtn.type = "button";
+      copyBtn.title = "코드 클립보드에 복사";
+      copyBtn.innerHTML = COPY_ICON_SVG + "<span>복사</span>";
+
+      copyBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var codeText = code.innerText || code.textContent || "";
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          navigator.clipboard.writeText(codeText).then(function () {
+            copyBtn.classList.add("copied");
+            copyBtn.innerHTML = COPIED_ICON_SVG + "<span>복사됨!</span>";
+            setTimeout(function () {
+              copyBtn.classList.remove("copied");
+              copyBtn.innerHTML = COPY_ICON_SVG + "<span>복사</span>";
+            }, 2000);
+          }).catch(function () {
+            copyBtn.querySelector("span").textContent = "실패";
+          });
+        }
+      });
+
+      header.appendChild(langSpan);
+      header.appendChild(copyBtn);
+
+      if (pre.parentNode) {
+        pre.parentNode.insertBefore(wrapper, pre);
+        wrapper.appendChild(header);
+        wrapper.appendChild(pre);
+      }
+      pre.classList.add("code-handled");
+    });
+
+    // 3. 인라인 이미지 참조 (pre 바깥에 있는 code)
+    var inlineCodes = container.querySelectorAll("code");
+    inlineCodes.forEach(function (code) {
+      if (code.closest("pre")) return;
+      var str = (code.textContent || "").trim();
+      if (/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(str)) {
+        var imgUrl = makeImageUrl(str, cwd);
+        code.classList.add("inline-image-ref");
+        code.title = str + " (올려 두면 미리보기, 클릭하면 원본 보기)";
+        code.addEventListener("mouseenter", function (e) { showHoverPopup(e, imgUrl, str); });
+        code.addEventListener("mouseleave", hideHoverPopup);
+        code.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openLightbox(imgUrl, str);
+        });
+      }
+    });
+
+    // 4. 테이블 반응형 스크롤 래퍼
+    var tables = container.querySelectorAll("table");
+    tables.forEach(function (table) {
+      if (table.parentElement && table.parentElement.classList.contains("table-wrapper")) return;
+      var wrap = document.createElement("div");
+      wrap.className = "table-wrapper";
+      if (table.parentNode) {
+        table.parentNode.insertBefore(wrap, table);
+        wrap.appendChild(table);
+      }
+    });
+
+    // 5. 외부 링크 새 탭 열기
+    var links = container.querySelectorAll("a");
+    links.forEach(function (link) {
+      var href = link.getAttribute("href") || "";
+      if (/^https?:\/\//i.test(href)) {
+        link.setAttribute("target", "_blank");
+        link.setAttribute("rel", "noopener noreferrer");
+      }
+    });
+  }
+
   function renderBody(container, text, cwd) {
-    var canRenderMarkdown = window.marked && typeof window.marked.parse === "function" &&
-      window.DOMPurify && typeof window.DOMPurify.sanitize === "function";
+    var canRenderMarkdown = window.marked && typeof window.marked.parse === "function";
     if (canRenderMarkdown) {
       container.classList.add("md");
-      container.innerHTML = window.DOMPurify.sanitize(window.marked.parse(text || ""));
+      container.innerHTML = renderMarkdownWithMath(text || "");
+      postProcessMarkdownElements(container, cwd);
     } else {
       var pre = document.createElement("pre");
       pre.textContent = text || "";
       container.appendChild(pre);
     }
-
-    try {
-      var codeEls = container.querySelectorAll("code");
-      codeEls.forEach(function (code) {
-        var str = (code.textContent || "").trim();
-        if (/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(str)) {
-          var imgUrl = makeImageUrl(str, cwd);
-          code.classList.add("inline-image-ref");
-          code.title = str + " (올려 두면 미리보기, 클릭하면 원본 보기)";
-          code.addEventListener("mouseenter", function (e) { showHoverPopup(e, imgUrl, str); });
-          code.addEventListener("mouseleave", hideHoverPopup);
-          code.addEventListener("click", function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            openLightbox(imgUrl, str);
-          });
-        }
-      });
-    } catch (err) {}
   }
 
   function badge(cls, text) {
@@ -2363,8 +2644,8 @@
       // 메시지 머리말(--- 번호/방향/시각/제목 ---)은 카드 머리에 이미 표시하므로 본문에서 뺀다.
       // 그대로 두면 marked 가 구분선과 큰 제목으로 그려 버린다.
       var body = String(markdown || "").replace(/^﻿?---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
-      var cleanHtml = DOMPurify.sanitize(marked.parse(body));
-      targetEl.innerHTML = cleanHtml;
+      targetEl.innerHTML = renderMarkdownWithMath(body);
+      postProcessMarkdownElements(targetEl);
     } catch (e) {
       targetEl.innerHTML = "<pre>" + escapeHtml(markdown) + "</pre>";
     }
