@@ -91,6 +91,12 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
   ~\.samjil\viewer\serve-viewer.bat
   ```
   실행 시 로컬 브라우저(`http://127.0.0.1:8787`, `127.0.0.1` 전용)가 열리고, 왼쪽 메뉴로 세 화면을 오갑니다. 5초마다 자동으로 갱신됩니다.
+  - **창 없이 백그라운드로 켜기** (직접 실행할 때): `serve-viewer.bat`/`serve-viewer.ps1`은 콘솔 창을 띄우고 브라우저 탭도 엽니다(그 창을 닫으면 뷰어가 꺼집니다). 창도 탭도 없이 켜려면 아래 중 하나를 씁니다. 뷰어는 켜질 때 워처도 창 없이 함께 켜므로 **뷰어와 워처가 둘 다 꺼져 있어도 한 번이면 둘 다 백그라운드로 켜집니다.**
+    - **이미 열려 있는 터미널에서:** `~\.samjil\viewer\ensure-viewer-running.ps1` — 새 창이 뜨지 않고 `STARTED`(방금 켬) 또는 `ALIVE`(이미 떠 있음)가 출력됩니다. 이미 떠 있으면 아무것도 하지 않습니다. `-CheckOnly`는 켜지 않고 `ALIVE`/`DEAD`만 알려 주고, `-Port 9000`으로 포트를 바꿀 수 있습니다.
+    - **더블클릭 / 바로 가기 / 시작 프로그램:** `~\.samjil\viewer\start-viewer-hidden.vbs` — `wscript.exe`(창이 없는 프로그램)가 위 스크립트를 숨김 실행하므로 깜빡임도 없습니다. 윈도우 시작 때 자동으로 켜려면 이 파일의 바로 가기를 `shell:startup` 폴더에 넣으면 됩니다. 켜진 뒤에는 브라우저에서 `http://127.0.0.1:8787`을 직접 여세요.
+    - **워처만:** `~\.samjil\delegate-agy\scripts\start-agy.ps1 -Hidden`(옵션이 없으면 `-NoExit` 콘솔 창이 뜹니다).
+    - **끄기:** 창이 없어서 Ctrl+C 로 끌 수 없으므로 뷰어는 `ensure-viewer-running.ps1 -Stop`(`-Port`로 지정한 포트의 뷰어만 끕니다), 워처는 `stop-agy.ps1`을 씁니다.
+    - 원리: 숨김 실행(`WScript.Shell.Run(명령, 0)`, 실패하면 `Start-Process -WindowStyle Hidden`)을 쓰고, 뷰어가 시작할 때 꺼진 워처를 켜는 것도 `start-agy.ps1 -Hidden`입니다. Windows Terminal 이 기본 터미널일 때는 파워셸 프로세스의 `MainWindowHandle`이 0 으로 나와서 창이 떠 있어도 "창 없음"으로 보이므로, 시험은 보이는 터미널/콘솔 창을 `EnumWindows`로 직접 셉니다.
   - **대시보드**: 지금 `agy`가 무엇을 하는지(작업 중 / 대기 / 워처 꺼짐 / 서버 연결 끊김. 작업 중이면 모델과 경과 시간)와 최근 위임 결과 띠, **확인 필요**(처리 대기 중인 인수인계 메시지, 최근 24시간 안에 실패한 위임), 위임과 인수인계를 합친 시간순 최근 활동, 누적 통계와 모델별 분포
   - **위임 실행 기록**: 세션별 목록, 모델·상태 필터와 검색. 카드 맨 윗줄에서 모델명과 소요 시간을 강조하고, 실패한 작업도 시도한 모델을 표시
     - 카드 본문은 **질문 / 답변** 두 줄입니다. **과정**은 `agy`가 질문과 답변 사이에 한 일, 즉 부른 도구 목록인데, 카드 맨 윗줄 오른쪽의 **`과정 13` 버튼**(숫자는 단계 수)으로 뺐습니다. 버튼을 **누르면 창(모달)**이 열려 단계 목록을 보여 줍니다(단계 번호 · 시각 · 한글 도구 설명 · 실제 대상 · 영어 라벨, 그리고 그 단계에서 `agy`가 적은 **생각**과 진행 **설명**). 창은 `Esc`, 바깥 클릭, `닫기`로 닫습니다. 단계 목록은 창을 열 때 처음 그리므로 카드가 수십 개여도 화면에는 버튼만 올라옵니다. 마우스를 올리면 `도구 호출 23번 · 명령 실행 9 · 파일 읽기 6 …` 요약이 보입니다. 볼 내용이 없으면(대기 중, 과정 미기록, 도구를 쓰지 않은 위임, `agy` 대화 기록 정리됨) 버튼이 비활성이고 이유가 마우스를 올리면 나옵니다.
@@ -145,6 +151,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\delegate-agy\invoke-ag
 - `invoke-agy-once.tests.ps1`: 가짜 `agy`로 기다리는 루프를 끝까지 돌리는 통합 테스트 (약 1~2분). 임시 폴더에 `agy.exe`로 복사한 `powershell.exe`를 쓰므로 실제 `agy`는 건드리지 않습니다.
 - `model-select.tests.ps1`: `@model:` 지시어 해석, 모델 검증(허용 목록·이어가는 세션), 가짜 `agy`로 후보 선택과 폴백 없음 확인 (약 20초)
 - `watch-agy-model.e2e.tests.ps1`: 임시 런타임으로 `watch-agy.ps1`을 실제로 띄워 `@model:`이 메인 루프 끝까지 이어지는지(처리 결과·`usage.csv`·`agy` 호출 기록) 확인합니다 (약 1분). 실제 워처는 건드리지 않습니다.
+- `ensure-viewer.tests.ps1`: `ensure-viewer-running.ps1`(창·탭 없이 뷰어 켜기) — 명령줄 구성, 포트별 뷰어 구분, 꺼져 있을 때 DEAD/NONE, 같은 포트의 다른 프로그램은 뷰어로 보지 않기, 임시 포트에 `-NoAgent` 뷰어를 숨김 실행해 `STARTED`·새로 보이는 터미널/콘솔 창 0개(`EnumWindows`로 셈)·cmd 창 없음, 두 번째는 `ALIVE`이고 또 켜지 않음, `-Stop`이 그 포트의 뷰어만 끄고 진짜 뷰어(8787)는 건드리지 않음, **뷰어와 워처가 둘 다 꺼진 임시 런타임에서 한 번에 켜면 워처까지 켜지고 새 창이 0개이며 `-NoExit` 워처가 없음**(뷰어가 `start-agy.ps1`을 `-Hidden` 없이 부르던 때는 이 시험이 실패함을 확인), `start-agy.ps1 -Hidden`, `start-viewer-hidden.vbs` (약 40초)
 - `ensure-check-only.tests.ps1`: `ensure-agy-running.ps1 -CheckOnly`의 `ALIVE`/`DEAD`/`MANUAL_STOP` 판정
 - `process-translate.tests.ps1`: 과정 번역 보조 스크립트(`process-translate.ps1`) — 한글이 이미 든 칸·이미 번역한 칸 건너뛰기, 덩어리 나누기, 답에서 JSON 꺼내기와 검증, 캐시 읽기·쓰기, 가짜 `agy`로 끝까지(읽기 전용 호출, 캐시 재사용, 새 단계만 번역, 대화 기록 없음, 깨진 답, 시간 초과) (몇 초)
 - `agy-process.tests.ps1`: `agy` 대화 기록에서 과정(도구 호출 목록)을 읽는 `Read-AgyProcessSteps` 테스트 — 도구별 대상, 생각·진행 설명(`think`/`say`)과 글자 수 상한, 시각 변환, 이어 읽기(쓰는 중인 마지막 줄·파일이 바뀐 경우), 상한, BOM, 깨진 줄, 경로 문자가 든 대화 ID 거절 (몇 초)

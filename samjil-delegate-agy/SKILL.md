@@ -177,14 +177,14 @@ echo "exit=$?"
 
 - 질문: `agy 워처가 꺼져 있습니다(직접 끈 상태입니다 / 꺼진 것으로 보입니다). 이 작업을 위임하려면 워처가 필요합니다. 켜도 될까요?`
 - 머리말(header): `워처 켜기`
-- 선택지 1 `창 없이 켜기` — 이 PC에서 agy가 위임 작업을 처리하는 프로세스가 계속 떠 있게 됩니다. 끄려면 `stop-agy.ps1`을 실행하세요.
+- 선택지 1 `창 없이 켜기` — 이 PC에서 agy가 위임 작업을 처리하는 프로세스(워처)와 대시보드 뷰어(127.0.0.1:8787)가 콘솔 창 없이 백그라운드로 계속 떠 있게 됩니다. 끄려면 워처는 `stop-agy.ps1`, 뷰어는 `ensure-viewer-running.ps1 -Stop`을 실행하세요.
 - 선택지 2 `켜지 않고 직접 처리` — 워처를 켜지 않고 이 작업은 Claude가 직접 처리합니다(Claude quota를 씁니다).
 - 사용자가 "기타"로 직접 쓴 답은 내용대로 따른다. 켜라는 뜻이 분명하지 않으면 켜지 않는다.
 
 도구가 없는 환경(선택 팝업을 못 쓰는 세션)에서는 같은 내용을 글로 묻는다:
 
 > agy 워처가 꺼져 있습니다(직접 끈 상태입니다 / 꺼진 것으로 보입니다). 이 작업을 agy에 위임하려면 워처가 필요합니다.
-> 지금 창 없이 켤까요? 켜면 이 PC에서 agy가 위임 작업을 처리하는 프로세스가 계속 떠 있게 되며, 끄려면 `stop-agy.ps1`을 실행하면 됩니다.
+> 지금 창 없이 켤까요? 켜면 이 PC에서 agy가 위임 작업을 처리하는 프로세스(워처)와 대시보드 뷰어가 콘솔 창 없이 백그라운드로 계속 떠 있게 되며, 끄려면 워처는 `stop-agy.ps1`, 뷰어는 `ensure-viewer-running.ps1 -Stop`을 실행하면 됩니다.
 > (켜지 않으면 이 작업은 Claude가 직접 처리합니다.)
 
 사용자가 이 대화에서 **미리 명시적으로 허락**했다면("워처 꺼져 있으면 알아서 켜 줘" 등) 묻지 않고 켠다. 허락한 적이 없으면 묻는다 — 그럴 것 같다는 짐작은 허락이 아니다.
@@ -195,12 +195,16 @@ echo "exit=$?"
 ```bash
 rm -f "$BASE/logs/manual_stop.flag"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -ConfirmDelaySeconds 0 -StaleThresholdSeconds 0
+# 대시보드 뷰어도 창·브라우저 탭 없이 켠다(이미 떠 있으면 그대로 둔다. 뷰어는 켜질 때 워처도 창 없이 함께 켠다)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjiliewer\ensure-viewer-running.ps1"
 for i in $(seq 1 10); do
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -CheckOnly -StaleThresholdSeconds 0 | grep -q ALIVE && echo "켜짐" && break
   sleep 3
 done
 ```
 
+- **콘솔 창이 뜨는 방식으로 켜지 않는다.** `start-agy.ps1`(기본은 새 콘솔 창을 띄움), `serve-viewer.bat`, `Start-Process cmd.exe ...` 로 켜지 말고 위 두 `ensure-*` 스크립트를 쓴다(둘 다 창을 아예 만들지 않는 숨김 실행). 사용자가 직접 `start-agy.ps1`을 쓸 때 창이 싫으면 `-Hidden`을 붙이면 된다.
+- 뷰어를 끄려면(창이 없어서 Ctrl+C 로 끌 수 없다) `ensure-viewer-running.ps1 -Stop`, 워처를 끄려면 `stop-agy.ps1`.
 - 30초 안에 `ALIVE`가 되면 위임을 이어간다.
 - 안 켜지면 **위임하지 않고 직접 처리**하면서, `~/.samjil/delegate-agy/runtime/logs/watchdog.log`와 `watcher.log`를 확인하라고 한 줄로 알린다. 켜졌다고 추측하지 않는다.
 

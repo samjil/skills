@@ -395,7 +395,9 @@ Write-Host "    - Antigravity Skills : ~/.agents/skills/ (skills.json 연동)" -
 Write-Host "  [도구 및 웹 파일 (~/.samjil)]" -ForegroundColor White
 Write-Host "    - 통합 웹 뷰어 실행 : ~/.samjil/viewer/serve-viewer.bat (또는 .ps1)" -ForegroundColor Cyan
 Write-Host "      (브라우저에서 Delegate QA / Handoff 탭 선택 열람)" -ForegroundColor Gray
+Write-Host "      (창·브라우저 탭 없이 백그라운드로 켜기: ~/.samjil/viewer/ensure-viewer-running.ps1 또는 더블클릭 start-viewer-hidden.vbs — 워처도 함께 켜짐, 끄기는 -Stop)" -ForegroundColor Gray
 Write-Host "    - 위임 워처 시작/재시작 : ~/.samjil/delegate-agy/scripts/start-agy.ps1" -ForegroundColor Gray
+Write-Host "      (창 없이 시작하려면 -Hidden)" -ForegroundColor Gray
 Write-Host "    - 위임 워처 안전 중지   : ~/.samjil/delegate-agy/scripts/stop-agy.ps1" -ForegroundColor Gray
 Write-Host "    - 대화 저장소         : ~/.samjil/handoff/" -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Cyan

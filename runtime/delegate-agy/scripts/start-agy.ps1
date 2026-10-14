@@ -4,18 +4,20 @@
 # 순서:
 #   1. 스크립트 문법 검사 (오류 시 기동 중단 및 syntax-check.log 기록)
 #   2. 기존 워처가 살아있으면 정상 종료 신호 전송 및 대기
-#   3. 새 콘솔 창에서 watch-agy.ps1 실행
+#   3. 새 콘솔 창에서 watch-agy.ps1 실행(-Hidden 이면 창 없이 백그라운드로)
 #
 # 사용법:
 #   .\start-agy.ps1                         # 워처 안전 시작/재시작 (PowerShell)
 #   .\start-agy.ps1 -CheckOnly              # 문법 검사만 수행 (워처 미실행)
 #   .\start-agy.ps1 -WaitSeconds 60         # 기존 워처 종료 대기 시간 연장
+#   .\start-agy.ps1 -Hidden                 # 콘솔 창 없이 백그라운드로 시작(로그는 logs\watcher.log)
 
 param(
     [string]$RepoRoot    = (Split-Path -Path $PSScriptRoot -Parent),
     [string]$RuntimeDir  = "",
     [int]$WaitSeconds    = 30,
-    [switch]$CheckOnly   = $false
+    [switch]$CheckOnly   = $false,
+    [switch]$Hidden      = $false
 )
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -288,18 +290,34 @@ if (Test-WatcherAlive) {
 
 
 # -----------------------------------------------------------------------------
-# 3. 새 콘솔 창에서 워처 기동
+# 3. 워처 기동 (기본: 새 콘솔 창 / -Hidden: 창 없이 백그라운드)
 # -----------------------------------------------------------------------------
-$procParams = @{
-    FilePath         = "powershell.exe"
-    ArgumentList     = @("-NoExit", "-ExecutionPolicy", "Bypass", "-File", "`"$WatcherScript`"", "-RuntimeDir", "`"$RuntimeDir`"")
-    WorkingDirectory = $RuntimeDir
+if ($Hidden) {
+    # ensure-agy-running.ps1 과 같은 방식: WScript.Shell.Run(명령, 0)은 콘솔 창을 아예 만들지 않는다.
+    $launched = $false
+    try {
+        $q   = [char]34
+        $cmd = "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $q$WatcherScript$q -RuntimeDir $q$RuntimeDir$q"
+        $sh  = New-Object -ComObject WScript.Shell
+        try { $sh.CurrentDirectory = $RuntimeDir } catch {}
+        [void]$sh.Run($cmd, 0, $false)
+        $launched = $true
+    } catch {
+        Write-Host "숨김 실행(WScript.Shell)에 실패해 Start-Process 로 대체합니다: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    if (-not $launched) {
+        Start-Process -FilePath "powershell.exe" -WindowStyle Hidden -WorkingDirectory $RuntimeDir -ArgumentList @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$WatcherScript`"", "-RuntimeDir", "`"$RuntimeDir`"")
+    }
+    Write-Host "새 워처를 창 없이 백그라운드로 실행했습니다." -ForegroundColor Green
+} else {
+    $procParams = @{
+        FilePath         = "powershell.exe"
+        ArgumentList     = @("-NoExit", "-ExecutionPolicy", "Bypass", "-File", "`"$WatcherScript`"", "-RuntimeDir", "`"$RuntimeDir`"")
+        WorkingDirectory = $RuntimeDir
+    }
+    Start-Process @procParams
+    Write-Host "새 워처 창을 실행했습니다." -ForegroundColor Green
 }
-Start-Process @procParams
-
-
-
-Write-Host "새 워처 창을 실행했습니다." -ForegroundColor Green
 
 Write-Host "logs\watcher.log 에서 '===== 워처 시작' 로그로 확인할 수 있습니다." -ForegroundColor Gray
 
