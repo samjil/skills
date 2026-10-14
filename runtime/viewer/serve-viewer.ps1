@@ -421,8 +421,10 @@ function Get-ProcessTranslationState([string]$ConversationId) {
     } elseif ($cache.Status -eq "unavailable") {
         $state = "none"      # 그때는 없었지만 지금은 있다: 다시 시도할 수 있게 둔다
     } elseif ($cache.Status -eq "done") {
-        $count = @(Get-AgyProcessStepsCached $ConversationId).Count
-        $state = if ($cache.StepsCovered -ge $count) { "done" } else { "none" }
+        $stepList = @(Get-AgyProcessStepsCached $ConversationId)
+        $state = if ($cache.StepsCovered -ge $stepList.Count) { "done" } else { "none" }
+        # 번역 규칙이 바뀌어(예: 인용문 안의 한글은 한글로 세지 않는다) 예전에 건너뛴 칸이 새로 번역 대상이 되면 이어서 번역할 수 있게 한다
+        if ($state -eq "done" -and (Get-Command Get-TranslationTodo -ErrorAction SilentlyContinue) -and @(Get-TranslationTodo $stepList $cache.Items).Count -gt 0) { $state = "none" }
     } elseif ($cache.Status -eq "error") {
         $state = "error"; $message = $cache.Message
     } elseif ($cache.Status -eq "partial") {
