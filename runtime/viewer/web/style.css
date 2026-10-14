@@ -861,6 +861,52 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .meta-chip { white-space: nowrap; }
 .party-legend { display: inline-flex; align-items: center; gap: 6px; }
 
+.qa-session-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.qa-session-chips[hidden] { display: none; }
+.qa-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.qa-chip:hover {
+  background: var(--raised);
+  color: var(--ink);
+}
+.qa-chip:focus-visible {
+  outline: 2px solid var(--agy);
+  outline-offset: 2px;
+}
+.qa-chip.active {
+  background: var(--raised);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.qa-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+.qa-chip-count {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.qa-chip.active .qa-chip-count { color: var(--ink-2); }
+
 /* ==========================================================================
    위임 실행 기록 카드
    ========================================================================== */
