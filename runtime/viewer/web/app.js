@@ -79,6 +79,7 @@
     // QA 메인 뷰 내부
     qaCurrentSessionTitle: document.getElementById("qa-current-session-title"),
     qaCurrentSessionCount: document.getElementById("qa-current-session-count"),
+    qaSessionChips:       document.getElementById("qa-session-chips"),
     qaSearch:             document.getElementById("search"),
     chipQaModels:         document.getElementById("chip-qa-models"),
     chipQaStatus:         document.getElementById("chip-qa-status"),
@@ -99,6 +100,7 @@
   // 애플리케이션 상태
   var currentNav = "dashboard"; // "dashboard" | "qa" | "handoff"
   var currentQaSession = "";    // ""(전체) | "__none__"(단발성) | 세션명
+  var currentQaProject = "";    // ""(전체 프로젝트) | "__none__"(프로젝트 없음) | 프로젝트 key
   var currentHandoffProject = "";
 
   var allItems = [];            // 전체 완료 QA 레코드
@@ -251,23 +253,47 @@
 
   function parseHash() {
     var hash = window.location.hash || "#/dashboard";
-    var matchQa = hash.match(/^#\/qa(?:\?session=(.*))?$/);
-    if (matchQa) {
-      var sess = matchQa[1] ? decodeURIComponent(matchQa[1]) : "";
-      return { nav: "qa", session: sess, project: "" };
+    var qIdx = hash.indexOf("?");
+    var path = qIdx >= 0 ? hash.slice(0, qIdx) : hash;
+    var qs = qIdx >= 0 ? hash.slice(qIdx + 1) : "";
+    var params = {};
+    if (qs) {
+      qs.split("&").forEach(function (part) {
+        if (!part) return;
+        var eqIdx = part.indexOf("=");
+        var k = eqIdx >= 0 ? part.slice(0, eqIdx) : part;
+        var v = eqIdx >= 0 ? part.slice(eqIdx + 1) : "";
+        try {
+          params[decodeURIComponent(k)] = decodeURIComponent(v);
+        } catch (e) {
+          params[k] = v;
+        }
+      });
     }
-    var matchHandoff = hash.match(/^#\/handoff(?:\?project=(.*))?$/);
+
+    if (path === "#/qa") {
+      return { nav: "qa", session: params.session || "", project: params.project || "" };
+    }
+    var matchHandoff = path.match(/^#\/handoff$/);
     if (matchHandoff) {
-      var proj = matchHandoff[1] ? decodeURIComponent(matchHandoff[1]) : "";
-      return { nav: "handoff", session: "", project: proj };
+      return { nav: "handoff", session: "", project: params.project || "" };
     }
     return { nav: "dashboard", session: "", project: "" };
   }
 
   function updateHash() {
     var newHash = "#/" + currentNav;
-    if (currentNav === "qa" && currentQaSession) {
-      newHash += "?session=" + encodeURIComponent(currentQaSession);
+    if (currentNav === "qa") {
+      var parts = [];
+      if (currentQaProject) {
+        parts.push("project=" + encodeURIComponent(currentQaProject));
+      }
+      if (currentQaSession) {
+        parts.push("session=" + encodeURIComponent(currentQaSession));
+      }
+      if (parts.length > 0) {
+        newHash += "?" + parts.join("&");
+      }
     } else if (currentNav === "handoff" && currentHandoffProject) {
       newHash += "?project=" + encodeURIComponent(currentHandoffProject);
     }
@@ -341,12 +367,23 @@
       els.topbarCurrent.textContent = "대시보드";
     } else if (currentNav === "qa") {
       els.topbarCategory.textContent = "위임 실행 기록";
-      if (!currentQaSession) {
-        els.topbarCurrent.textContent = "전체 세션 피드";
-      } else if (currentQaSession === "__none__") {
-        els.topbarCurrent.textContent = "단발성 작업 (세션 없음)";
+      if (!currentQaProject) {
+        if (!currentQaSession) {
+          els.topbarCurrent.textContent = "전체 프로젝트 피드";
+        } else if (currentQaSession === "__none__") {
+          els.topbarCurrent.textContent = "단발성 작업 (세션 없음)";
+        } else {
+          els.topbarCurrent.textContent = currentQaSession;
+        }
       } else {
-        els.topbarCurrent.textContent = currentQaSession;
+        var pName = qaProjectDisplayName(currentQaProject);
+        if (!currentQaSession) {
+          els.topbarCurrent.textContent = pName;
+        } else if (currentQaSession === "__none__") {
+          els.topbarCurrent.textContent = pName + " / 단발성";
+        } else {
+          els.topbarCurrent.textContent = pName + " / " + currentQaSession;
+        }
       }
     } else if (currentNav === "handoff") {
       els.topbarCategory.textContent = "에이전트 인수인계";
@@ -609,88 +646,288 @@
     return list;
   }
 
-  function renderQaSessionList() {
+  function qaProjectNameFromPath(p) {
+    if (p == null) return "";
+    var s = String(p).trim();
+    if (!s) return "";
+    s = s.replace(/[\\/]+$/, "");
+    if (!s) return "";
+    var lastSep = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/"));
+    if (lastSep < 0) return s;
+    var name = s.slice(lastSep + 1);
+    return name || s;
+  }
+
+  function qaProjectOf(item) {
+    if (!item || typeof item !== "object") {
+      return { key: "__none__", name: "프로젝트 없음" };
+    }
+    if (item._qaProject) {
+      return item._qaProject;
+    }
+    var cwds = cwdListOf(item.cwd);
+    if (!cwds || cwds.length === 0) {
+      cwds = leadingCwds(item.question);
+    }
+    var first = (cwds && cwds.length > 0) ? cwds[0] : "";
+    var name = qaProjectNameFromPath(first);
+    var res;
+    if (!name) {
+      res = { key: "__none__", name: "프로젝트 없음" };
+    } else {
+      res = { key: name.toLowerCase(), name: name };
+    }
+    item._qaProject = res;
+    return res;
+  }
+
+  function groupQaProjects(records, pendings) {
+    var map = {};
+    var recs = Array.isArray(records) ? records : [];
+    var pends = Array.isArray(pendings) ? pendings : [];
+
+    function processItem(item, isPending) {
+      if (!item || typeof item !== "object") return;
+      var proj = qaProjectOf(item);
+      var key = proj.key;
+      var name = proj.name;
+      var time = isPending ? (item.created || "") : (item.timestamp || "");
+
+      if (!map[key]) {
+        map[key] = {
+          key: key,
+          name: name,
+          total: 0,
+          pending: 0,
+          errors: 0,
+          latestTime: time
+        };
+      } else {
+        if (!map[key].latestTime || (time && time > map[key].latestTime)) {
+          map[key].latestTime = time;
+          map[key].name = name;
+        }
+      }
+
+      if (isPending) {
+        map[key].pending++;
+      } else {
+        map[key].total++;
+        if (item.status && String(item.status).trim() !== "OK") {
+          map[key].errors++;
+        }
+      }
+    }
+
+    for (var i = 0; i < recs.length; i++) {
+      processItem(recs[i], false);
+    }
+    for (var j = 0; j < pends.length; j++) {
+      processItem(pends[j], true);
+    }
+
+    var list = Object.keys(map).map(function (k) { return map[k]; });
+
+    list.sort(function (a, b) {
+      var at = a.latestTime || "";
+      var bt = b.latestTime || "";
+      if (bt !== at) {
+        return bt > at ? 1 : -1;
+      }
+      return (a.name || "").localeCompare(b.name || "");
+    });
+
+    return list;
+  }
+
+  function groupQaSessionsOfProject(records, pendings, projectKey) {
+    var map = {};
+    var recs = Array.isArray(records) ? records : [];
+    var pends = Array.isArray(pendings) ? pendings : [];
+
+    function processItem(item, isPending) {
+      if (!item || typeof item !== "object") return;
+      if (qaProjectOf(item).key !== projectKey) return;
+
+      var sName = (item.session == null || String(item.session).trim() === "") ? "__none__" : String(item.session);
+      var time = isPending ? (item.created || "") : (item.timestamp || "");
+
+      if (!map[sName]) {
+        map[sName] = {
+          name: sName,
+          total: 0,
+          pending: 0,
+          errors: 0,
+          latestTime: time
+        };
+      } else {
+        if (!map[sName].latestTime || (time && time > map[sName].latestTime)) {
+          map[sName].latestTime = time;
+        }
+      }
+
+      if (isPending) {
+        map[sName].pending++;
+      } else {
+        map[sName].total++;
+        if (item.status && String(item.status).trim() !== "OK") {
+          map[sName].errors++;
+        }
+      }
+    }
+
+    for (var i = 0; i < recs.length; i++) {
+      processItem(recs[i], false);
+    }
+    for (var j = 0; j < pends.length; j++) {
+      processItem(pends[j], true);
+    }
+
+    var list = Object.keys(map).map(function (k) { return map[k]; });
+
+    list.sort(function (a, b) {
+      var at = a.latestTime || "";
+      var bt = b.latestTime || "";
+      if (bt !== at) {
+        return bt > at ? 1 : -1;
+      }
+      return (a.name || "").localeCompare(b.name || "");
+    });
+
+    return list;
+  }
+
+  function qaProjectKeyOfSession(records, pendings, session) {
+    if (!session) return "";
+    var recs = Array.isArray(records) ? records : [];
+    var pends = Array.isArray(pendings) ? pendings : [];
+    var bestKey = "";
+    var bestTime = null;
+
+    function check(item, isPending) {
+      if (!item || typeof item !== "object") return;
+      var s = (item.session == null) ? "" : String(item.session);
+      if (s !== session) return;
+      var t = (isPending ? item.created : item.timestamp) || "";
+      if (bestTime === null || t > bestTime) {
+        bestTime = t;
+        bestKey = qaProjectOf(item).key;
+      }
+    }
+
+    for (var i = 0; i < recs.length; i++) {
+      check(recs[i], false);
+    }
+    for (var j = 0; j < pends.length; j++) {
+      check(pends[j], true);
+    }
+
+    return bestKey;
+  }
+
+  function qaProjectDisplayName(key) {
+    if (!key) return "";
+    if (key === "__none__") return "프로젝트 없음";
+    var projects = groupQaProjects(allItems, pendingItems);
+    for (var i = 0; i < projects.length; i++) {
+      if (projects[i].key === key) return projects[i].name;
+    }
+    return key;
+  }
+
+  function renderQaProjectList() {
     if (!els.qaSessionList) return;
 
-    var sessions = groupQaSessions();
-    var q = (els.qaSessionSearch.value || "").trim().toLowerCase();
+    var projects = groupQaProjects(allItems, pendingItems);
+    var q = (els.qaSessionSearch && els.qaSessionSearch.value || "").trim().toLowerCase();
 
-    var filteredSessions = sessions.filter(function (s) {
-      if (s.name === "__none__") return true;
-      if (q && s.name.toLowerCase().indexOf(q) === -1) return false;
+    var filtered = projects.filter(function (p) {
+      if (p.key === "__none__") return true;
+      if (q && p.name.toLowerCase().indexOf(q) === -1) return false;
       return true;
     });
 
     if (els.qaSessionCount) {
-      els.qaSessionCount.textContent = sessions.length;
+      els.qaSessionCount.textContent = projects.length;
     }
 
     var frag = document.createDocumentFragment();
 
-    // 1. [전체 세션 피드] 항목
+    // 1. [전체 프로젝트 피드] 항목
     var allItem = document.createElement("div");
-    allItem.className = "session-item" + (currentQaSession === "" ? " active" : "");
-    allItem.dataset.session = "";
+    allItem.className = "project-item" + (currentQaProject === "" ? " active" : "");
+    allItem.dataset.project = "";
     allItem.innerHTML = [
-      '<span class="session-icon">' + icon("feed") + '</span>',
-      '<div class="session-info">',
-      '  <span class="session-name">전체 세션 피드</span>',
-      '  <span class="session-sub">모든 위임을 시간순으로</span>',
+      '<span class="project-icon">' + icon("feed") + '</span>',
+      '<div class="project-info">',
+      '  <span class="project-name">전체 프로젝트 피드</span>',
+      '  <span class="project-sub session-sub">모든 위임을 시간순으로</span>',
       '</div>',
-      '<span class="session-badge">' + (allItems.length + pendingItems.length) + '</span>'
+      '<span class="project-badge">' + (allItems.length + pendingItems.length) + '</span>'
     ].join("");
     makeActivatable(allItem);
-    allItem.onclick = function () { selectQaSession(""); };
+    allItem.onclick = function () { selectQaProject(""); };
     frag.appendChild(allItem);
 
-    // 2. 개별 세션 항목들
-    var noneSessionObj = null;
-    filteredSessions.forEach(function (s) {
-      if (s.name === "__none__") {
-        noneSessionObj = s;
+    // 2. groupQaProjects 결과 항목들 (단, __none__ 은 제외하고 보관)
+    var noneProjectObj = null;
+    filtered.forEach(function (p) {
+      if (p.key === "__none__") {
+        noneProjectObj = p;
         return;
       }
 
       var item = document.createElement("div");
-      var isActive = (currentQaSession === s.name);
-      item.className = "session-item" + (isActive ? " active" : "");
-      item.dataset.session = s.name;
+      var isActive = (currentQaProject === p.key);
+      item.className = "project-item" + (isActive ? " active" : "");
+      item.dataset.project = p.key;
 
-      var subText = formatRelativeTime(s.latestTime);
-      var badgeHtml = '<span class="session-badge">' + (s.total + s.pending) + '</span>';
-      if (s.pending > 0) {
-        badgeHtml = '<span class="pending-pulse-dot" title="진행/대기 중 ' + s.pending + '건"></span> ' + badgeHtml;
+      var subText = formatRelativeTime(p.latestTime);
+      var errHtml = p.errors > 0 ? ' <span class="err-count">실패 ' + p.errors + '</span>' : '';
+      var badgeHtml = '<span class="project-badge">' + (p.total + p.pending) + '</span>';
+      if (p.pending > 0) {
+        badgeHtml = '<span class="pending-pulse-dot" title="진행/대기 중 ' + p.pending + '건"></span> ' + badgeHtml;
       }
 
       item.innerHTML = [
-        '<span class="session-icon">' + icon("thread") + '</span>',
-        '<div class="session-info">',
-        '  <span class="session-name" title="' + escapeHtml(s.name) + '">' + escapeHtml(s.name) + '</span>',
-        '  <span class="session-sub">' + subText + (s.errors > 0 ? '  <span class="err-count">실패 ' + s.errors + '</span>' : '') + '</span>',
+        '<span class="project-icon">' + icon("folder") + '</span>',
+        '<div class="project-info">',
+        '  <span class="project-name" title="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</span>',
+        '  <span class="project-sub session-sub">' + subText + errHtml + '</span>',
         '</div>',
         badgeHtml
       ].join("");
 
       makeActivatable(item);
-      item.onclick = function () { selectQaSession(s.name); };
+      item.onclick = function () { selectQaProject(p.key); };
       frag.appendChild(item);
     });
 
-    // 3. [단발성 작업 - 세션 없음] 항목 (있을 경우)
-    if (noneSessionObj && (!q || "단발성".indexOf(q) >= 0 || "세션 없음".indexOf(q) >= 0)) {
+    // 3. __none__ 프로젝트는 맨 아래에 "프로젝트 없음" (아이콘 single)
+    if (noneProjectObj && (!q || "프로젝트 없음".indexOf(q) >= 0 || "없음".indexOf(q) >= 0)) {
       var noneItem = document.createElement("div");
-      noneItem.className = "session-item" + (currentQaSession === "__none__" ? " active" : "");
-      noneItem.dataset.session = "__none__";
+      var isNoneActive = (currentQaProject === "__none__");
+      noneItem.className = "project-item" + (isNoneActive ? " active" : "");
+      noneItem.dataset.project = "__none__";
+
+      var noneSubText = formatRelativeTime(noneProjectObj.latestTime);
+      var noneErrHtml = noneProjectObj.errors > 0 ? ' <span class="err-count">실패 ' + noneProjectObj.errors + '</span>' : '';
+      var noneBadgeHtml = '<span class="project-badge">' + (noneProjectObj.total + noneProjectObj.pending) + '</span>';
+      if (noneProjectObj.pending > 0) {
+        noneBadgeHtml = '<span class="pending-pulse-dot" title="진행/대기 중 ' + noneProjectObj.pending + '건"></span> ' + noneBadgeHtml;
+      }
+
       noneItem.innerHTML = [
-        '<span class="session-icon">' + icon("single") + '</span>',
-        '<div class="session-info">',
-        '  <span class="session-name">단발성 작업 (세션 없음)</span>',
-        '  <span class="session-sub">' + formatRelativeTime(noneSessionObj.latestTime) + '</span>',
+        '<span class="project-icon">' + icon("single") + '</span>',
+        '<div class="project-info">',
+        '  <span class="project-name">프로젝트 없음</span>',
+        '  <span class="project-sub session-sub">' + noneSubText + noneErrHtml + '</span>',
         '</div>',
-        '<span class="session-badge">' + (noneSessionObj.total + noneSessionObj.pending) + '</span>'
+        noneBadgeHtml
       ].join("");
+
       makeActivatable(noneItem);
-      noneItem.onclick = function () { selectQaSession("__none__"); };
+      noneItem.onclick = function () { selectQaProject("__none__"); };
       frag.appendChild(noneItem);
     }
 
@@ -698,12 +935,100 @@
     els.qaSessionList.appendChild(frag);
   }
 
-  function selectQaSession(sessionName) {
-    currentQaSession = sessionName || "";
-    renderQaSessionList();
+  function selectQaProject(key) {
+    currentQaProject = key || "";
+    currentQaSession = "";
+    renderQaProjectList();
+    renderQaSessionChips();
     updateBreadcrumbs();
     updateHash();
     applyQaFilters();
+  }
+
+  function selectQaSession(session, project) {
+    currentQaSession = session || "";
+    if (project !== undefined) {
+      currentQaProject = project || "";
+    } else {
+      if (session && session !== "__none__") {
+        currentQaProject = qaProjectKeyOfSession(allItems, pendingItems, session);
+      } else {
+        currentQaProject = "";
+      }
+    }
+    renderQaProjectList();
+    renderQaSessionChips();
+    updateBreadcrumbs();
+    updateHash();
+    applyQaFilters();
+  }
+
+  function renderQaSessionChips() {
+    if (!els.qaSessionChips) return;
+    if (currentQaProject === "") {
+      els.qaSessionChips.hidden = true;
+      els.qaSessionChips.innerHTML = "";
+      return;
+    }
+
+    els.qaSessionChips.hidden = false;
+    var sessions = groupQaSessionsOfProject(allItems, pendingItems, currentQaProject);
+
+    var totalCount = 0;
+    var totalPending = 0;
+    var namedSessions = [];
+    var noneSession = null;
+
+    sessions.forEach(function (s) {
+      totalCount += (s.total + s.pending);
+      totalPending += s.pending;
+      if (s.name === "__none__") {
+        noneSession = s;
+      } else {
+        namedSessions.push(s);
+      }
+    });
+
+    var frag = document.createDocumentFragment();
+
+    // 1. 맨 앞 "전체"
+    var allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.className = "qa-chip" + (currentQaSession === "" ? " active" : "");
+    allBtn.setAttribute("data-session", "");
+    var allPulse = totalPending > 0 ? '<span class="pending-pulse-dot"></span>' : '';
+    allBtn.innerHTML = allPulse + '<span class="qa-chip-name">전체</span><span class="qa-chip-count">' + totalCount + '</span>';
+    allBtn.onclick = function () { selectQaSession("", currentQaProject); };
+    frag.appendChild(allBtn);
+
+    // 2. 세션 이름이 있는 것들 (최신순)
+    namedSessions.forEach(function (s) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      var isActive = (currentQaSession === s.name);
+      btn.className = "qa-chip" + (isActive ? " active" : "");
+      btn.setAttribute("data-session", s.name);
+      var pulse = s.pending > 0 ? '<span class="pending-pulse-dot"></span>' : '';
+      btn.innerHTML = pulse + '<span class="qa-chip-name">' + escapeHtml(s.name) + '</span><span class="qa-chip-count">' + (s.total + s.pending) + '</span>';
+      btn.onclick = function () { selectQaSession(s.name, currentQaProject); };
+      frag.appendChild(btn);
+    });
+
+    // 3. 마지막에 단발성이 있으면 "단발성" (data-session="__none__")
+    if (noneSession) {
+      var noneBtn = document.createElement("button");
+      noneBtn.type = "button";
+      var isNoneActive = (currentQaSession === "__none__");
+      noneBtn.className = "qa-chip" + (isNoneActive ? " active" : "");
+      noneBtn.setAttribute("data-session", "__none__");
+      var nonePulse = noneSession.pending > 0 ? '<span class="pending-pulse-dot"></span>' : '';
+      noneBtn.innerHTML = nonePulse + '<span class="qa-chip-name">단발성</span><span class="qa-chip-count">' + (noneSession.total + noneSession.pending) + '</span>';
+      noneBtn.onclick = function () { selectQaSession("__none__", currentQaProject); };
+      frag.appendChild(noneBtn);
+    }
+
+    els.qaSessionChips.innerHTML = "";
+    els.qaSessionChips.appendChild(frag);
   }
 
   // ==========================================================================
@@ -1254,6 +1579,8 @@
       filteredPending = pendingItems.filter(function (p) {
         if (!p || !p.task_id) return false;
         if (finishedTaskIds[p.task_id]) return false;
+        // 프로젝트 필터
+        if (currentQaProject && qaProjectOf(p).key !== currentQaProject) return false;
         // 모델 필터
         if (model && p.model !== model) return false;
         // 세션 필터
@@ -1271,6 +1598,7 @@
 
     // 3. 완료 레코드 필터링
     filteredQa = allItems.filter(function (r) {
+      if (currentQaProject && qaProjectOf(r).key !== currentQaProject) return false;
       if (session === "__none__" && r.session) return false;
       if (session && session !== "__none__" && r.session !== session) return false;
       if (model && recordModel(r) !== model) return false;
@@ -1291,6 +1619,7 @@
     // 헤더 건수는 filteredQa/filteredPending 을 읽으므로 반드시 필터 계산 뒤에 갱신한다.
     // (앞에서 부르면 직전 값이 표시되어, 대시보드에서 막 넘어왔을 때 "0건"으로 보였다.)
     updateQaHeader(session);
+    renderQaSessionChips();
 
     shownQaCount = 0;
     if (els.cards) {
@@ -1341,12 +1670,16 @@
   function updateQaHeader(session) {
     if (!els.qaCurrentSessionTitle) return;
 
-    if (!session) {
-      els.qaCurrentSessionTitle.textContent = "전체 세션 피드";
-    } else if (session === "__none__") {
-      els.qaCurrentSessionTitle.textContent = "단발성 작업 (세션 없음)";
+    if (!currentQaProject) {
+      if (!session) {
+        els.qaCurrentSessionTitle.textContent = "전체 프로젝트 피드";
+      } else if (session === "__none__") {
+        els.qaCurrentSessionTitle.textContent = "단발성 작업 (세션 없음)";
+      } else {
+        els.qaCurrentSessionTitle.textContent = session;
+      }
     } else {
-      els.qaCurrentSessionTitle.textContent = session;
+      els.qaCurrentSessionTitle.textContent = qaProjectDisplayName(currentQaProject);
     }
 
     var totalInSession = filteredQa.length + filteredPending.length;
@@ -3235,7 +3568,7 @@
       pendingItems = pList;
 
       populateModelFilter();
-      renderQaSessionList();
+      renderQaProjectList();
       renderHandoffProjectList();
 
       if (currentNav === "dashboard") {
@@ -3303,7 +3636,7 @@
     }
 
     // QA 세션 사이드바 검색 및 필터
-    if (els.qaSessionSearch) els.qaSessionSearch.addEventListener("input", renderQaSessionList);
+    if (els.qaSessionSearch) els.qaSessionSearch.addEventListener("input", renderQaProjectList);
     if (els.modelFilter) els.modelFilter.addEventListener("change", applyQaFilters);
     if (els.statusFilter) els.statusFilter.addEventListener("change", applyQaFilters);
     if (els.qaSearch) els.qaSearch.addEventListener("input", applyQaFilters);
@@ -3347,8 +3680,8 @@
       if (parsed.nav !== currentNav) {
         switchNav(parsed.nav, false);
       }
-      if (parsed.nav === "qa" && parsed.session !== currentQaSession) {
-        selectQaSession(parsed.session);
+      if (parsed.nav === "qa" && (parsed.project !== currentQaProject || parsed.session !== currentQaSession)) {
+        selectQaSession(parsed.session, parsed.project);
       } else if (parsed.nav === "handoff" && parsed.project && parsed.project !== currentHandoffProject) {
         selectHandoffProject(parsed.project);
       }
@@ -3368,8 +3701,12 @@
 
   // 초기 라우트 파싱
   var initialRoute = parseHash();
-  if (initialRoute.session) { currentQaSession = initialRoute.session; }
-  if (initialRoute.project) { currentHandoffProject = initialRoute.project; }
+  if (initialRoute.nav === "qa") {
+    if (initialRoute.session) { currentQaSession = initialRoute.session; }
+    if (initialRoute.project) { currentQaProject = initialRoute.project; }
+  } else if (initialRoute.nav === "handoff") {
+    if (initialRoute.project) { currentHandoffProject = initialRoute.project; }
+  }
 
   // 최초 네비게이션 적용
   switchNav(initialRoute.nav, false);
