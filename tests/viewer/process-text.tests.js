@@ -22,13 +22,14 @@ function extractFunction(name) {
 
 const names = ["escapeHtml", "progressToolLabel", "summarizeProcess", "shortenPathsForCwd", "buildNarrationHtml", "buildProcessRowsHtml", "resolveProcessState",
   "hasHangul", "needsTranslation", "applyProcessTranslation", "procItemCount", "procTrViewOf", "procTrItemsFor", "buildTranslateToolsHtml",
-  "browserTranslatorSupported", "protectCodeSpans", "restoreCodeSpans", "translateStepsWithBrowser"];
+  "browserTranslatorSupported", "protectCodeSpans", "restoreCodeSpans", "codeSpansOf", "codesSurvive", "splitSentences",
+  "translateChunkKeepingCode", "translateTextWithBrowser", "translateStepsWithBrowser", "browserTranslationMessage"];
 // resolveProcessState 는 옛 위임을 읽어 온 결과(processFetchCache)를 본다. 테스트에서는 이 객체를 직접 채운다.
 // 상태 변수(옛 위임을 읽어 온 결과, agy 번역·브라우저 번역 결과, 보기 선택)는 테스트에서 직접 채운다.
 const api = new Function("var processFetchCache = {}; var procTr = {}; var procTrB = {}; var procTrView = {};\n" + names.map(extractFunction).join("\n") +
   "\nreturn { summarizeProcess, shortenPathsForCwd, buildNarrationHtml, buildProcessRowsHtml, resolveProcessState, processFetchCache," +
   " hasHangul, needsTranslation, applyProcessTranslation, procItemCount, procTrViewOf, procTrItemsFor, buildTranslateToolsHtml," +
-  " protectCodeSpans, restoreCodeSpans, translateStepsWithBrowser, procTr, procTrB, procTrView };")();
+  " protectCodeSpans, restoreCodeSpans, codesSurvive, splitSentences, translateTextWithBrowser, translateStepsWithBrowser, browserTranslationMessage, procTr, procTrB, procTrView };")();
 
 let passed = 0, failed = 0;
 function eq(name, expected, actual) {
@@ -263,6 +264,9 @@ delete api.procTrB.c1;
 api.procTr.c1 = { state: "none", message: "", items: { "0": { label: "a.md 읽는 중" } }, model: "m" };
 th = api.buildTranslateToolsHtml("c1", [S("view_file", { label: "Reading a.md" }), S("run_command", { label: "Running tests" })]);
 ok("새 단계가 생겨 일부만 번역됐으면 'agy로 새 단계 번역'", btn(th, "translate") === "agy로 새 단계 번역");
+api.procTrB.c1 = { state: "done", message: "", items: { "0": { label: "읽는 중" } }, progress: null };
+ok("브라우저로 일부만 번역한 상태면 버튼 이름은 '브라우저로 이어서 번역'", btn(api.buildTranslateToolsHtml("c1", [S("view_file", { label: "Reading a.md" }), S("run_command", { label: "Running tests" })]), "translate-browser") === "브라우저로 이어서 번역");
+delete api.procTrB.c1;
 api.procTr.c1 = { state: "error", message: "agy 번역 호출이 170 초를 넘겨 중단했습니다", items: {}, model: "" };
 th = api.buildTranslateToolsHtml("c1", eng);
 ok("agy 번역 실패: 이유와 'agy로 다시 시도'", th.indexOf("agy 번역 실패: agy 번역 호출이 170 초") >= 0 && btn(th, "translate") === "agy로 다시 시도");
@@ -286,10 +290,16 @@ eq("번역 뒤 되돌리면 원래 코드가 들어간다(어순이 바뀌어도
 eq("자리표시자가 하나라도 없으면 null(번역을 쓰지 않는다)", null, api.restoreCodeSpans("지금 XQ1X 만 만든다.", pr.codes));
 eq("모델이 만든 적 없는 자리표시자가 있으면 null", null, api.restoreCodeSpans("XQ1X XQ2X XQ3X", pr.codes));
 eq("코드가 없는 글은 그대로", "코드 없음", api.restoreCodeSpans("코드 없음", []));
+eq("자리표시자의 대소문자·공백이 흐트러져도 되돌린다(xq 1 x, XQ2 X)", "지금 `a` 와 `b` 를 만든다.", api.restoreCodeSpans("지금 xq 1 x 와 XQ2 X 를 만든다.", ["`a`", "`b`"]));
+eq("XQ1X 와 XQ10X 를 헷갈리지 않는다(열 개를 모두 되돌린다)", "c1 c2 c3 c4 c5 c6 c7 c8 c9 c10", (function () { const cs = []; const txt = []; for (let i = 1; i <= 10; i++) { cs.push("c" + i); txt.push("XQ" + i + "X"); } return api.restoreCodeSpans(txt.join(" "), cs); })());
 eq("코드 안에 $ 가 있어도 그대로 되돌린다", "값은 `$&` 이다", api.restoreCodeSpans("값은 XQ1X 이다", ["`$&`"]));
 eq("백틱이 없는 글은 보호할 것이 없다", "plain text", api.protectCodeSpans("plain text").text);
 eq("null 도 오류 없이 빈 글", "", api.protectCodeSpans(null).text);
 eq("줄바꿈이 낀 백틱은 코드로 보지 않는다", "a `b\nc` d", api.protectCodeSpans("a `b\nc` d").text);
+
+ok("코드가 백틱째 남았거나 백틱만 떨어지고 이름은 남았으면 '남았다'", api.codesSurvive("Open `a.py` now.", "열기 `a.py`") === true && api.codesSurvive("Open `a.py` now.", "a.py 를 연다") === true);
+ok("이름까지 사라지면 '사라졌다'", api.codesSurvive("Open `a.py` now.", "파일을 연다") === false);
+ok("코드가 없는 글은 항상 남은 것으로 본다", api.codesSurvive("No code.", "코드 없음") === true);
 
 console.log("translateStepsWithBrowser: 가짜 번역기로");
 
@@ -325,15 +335,41 @@ eq("빈 목록은 빈 <ol>", '<ol class="proc-list"></ol>', api.buildProcessRows
   eq("  넘겨 준 existing 객체는 바뀌지 않는다", "이미 번역함|undefined", existing["0"].label + "|" + existing["0"].think);
   eq("  새로 번역한 칸이 합쳐진다", "KO:Open `a.md` first.", res.items["0"].think);
 
-  const lossy = { translate: async (t) => (t.indexOf("XQ") >= 0 ? "코드를 잃어버린 번역" : "KO:" + t) };
+  // 번역기가 백틱 코드를 지워 버리는 경우: 글을 그대로 번역하면 코드가 사라지고, 자리표시자로 바꾼 글도 모델이 지운다
+  const lossy = { translate: async (t) => (t.indexOf("XQ") >= 0 ? "코드를 잃어버린 번역" : t.replace(/`[^`\n]+`/g, "코드").replace(/^/, "KO:")) };
   res = await api.translateStepsWithBrowser(steps, {}, lossy, null);
-  eq("코드가 사라진 번역은 쓰지 않는다(2칸 실패, 코드 없는 설명 1칸은 성공)", "2/3", res.failed + "/" + res.total);
+  eq("코드가 사라진 번역은 쓰지 않는다(코드 든 2칸 실패, 코드 없는 설명 1칸은 성공)", "2/3", res.failed + "/" + res.total);
+  eq("  실패 이유는 '코드 표기 사라짐' 2칸", "2|0|0", res.reasons.code + "|" + res.reasons.empty + "|" + res.reasons.error);
   eq("  쓰지 못한 칸은 items 에 없다(원문으로 남는다)", false, Boolean(res.items["0"]));
   eq("  성공한 칸은 들어간다", "KO:Done.", res.items["2"].say);
+  ok("  안내 문구에 이유와 번역기가 돌려준 글 예가 들어 있다", api.browserTranslationMessage(res).indexOf("코드 표기가 사라진 칸 2") >= 0 && api.browserTranslationMessage(res).indexOf("코드를 잃어버린 번역") >= 0);
+  ok("  일부 실패 안내", api.browserTranslationMessage(res).indexOf("2칸은 번역을 쓸 수 없어 원문으로 두었습니다") === 0);
+
+  // 번역기가 코드를 그대로 둔 채 번역하면(대부분의 경우) 자리표시자 없이 바로 쓴다
+  const seenInputs = [];
+  const keeps = { translate: async (t) => { seenInputs.push(t); return "번역: " + t; } };
+  res = await api.translateStepsWithBrowser([S("a", { think: "Open `wordfreq.py` and `top_words` now." })], {}, keeps, null);
+  eq("코드가 그대로 남으면 통째로 번역한 글을 쓴다", "번역: Open `wordfreq.py` and `top_words` now.", res.items["0"].think);
+  eq("  번역기는 한 번만 불렀고 자리표시자를 쓰지 않았다", "1|false", seenInputs.length + "|" + (seenInputs[0].indexOf("XQ") >= 0));
+
+  // 통째로는 코드가 사라지지만 자리표시자로 바꾸면 되는 번역기
+  const needsHolder = { translate: async (t) => (t.indexOf("XQ") >= 0 ? "KO " + t : t.replace(/`[^`\n]+`/g, "코드")) };
+  res = await api.translateStepsWithBrowser([S("a", { think: "Open `wordfreq.py` now." })], {}, needsHolder, null);
+  eq("통째 번역이 코드를 잃으면 자리표시자로 다시 번역해 되돌린다", "KO Open `wordfreq.py` now.", res.items["0"].think);
+
+  // 문장별 다시 시도: 한 문장은 코드를 잃고 다른 문장은 된다
+  const bySentence = { translate: async (t) => (t.indexOf("BAD") >= 0 ? "코드 없는 번역" : (t.split(" ").length > 6 ? "코드 없는 번역" : "KO:" + t)) };
+  res = await api.translateStepsWithBrowser([S("a", { think: "Fine one `x` here. This is a long second sentence with `y` and BAD code." })], {}, bySentence, null);
+  eq("통째로는 안 되지만 문장별로는 되는 문장만 번역하고 나머지는 원문으로 둔다(일부 번역 1칸)", "1|0", res.partial + "|" + res.failed);
+  ok("  번역된 문장과 원문 문장이 한 칸에 섞인다", res.items["0"].think.indexOf("KO:Fine one `x` here.") === 0 && res.items["0"].think.indexOf("BAD code.") >= 0);
+  eq("  안내: 일부 문장만 번역", "1칸은 일부 문장만 번역했습니다", api.browserTranslationMessage(res));
+  eq("문장 나누기", 2, api.splitSentences("One two. Three four? Five!").length - 1);
 
   const boom = { translate: async () => { throw new Error("번역기 오류"); } };
   res = await api.translateStepsWithBrowser(steps, {}, boom, null);
   eq("번역기가 계속 오류를 내면 전부 실패로 센다", "3/3", res.failed + "/" + res.total);
+  eq("  이유는 '번역기 오류' 3칸과 첫 오류 메시지", "3|번역기 오류", res.reasons.error + "|" + res.firstError);
+  ok("  전부 실패하면 안내 문구가 '모든 글에서 실패'로 시작하고 오류 메시지를 담는다", api.browserTranslationMessage(res).indexOf("브라우저 번역이 모든 글에서 실패했습니다") === 0 && api.browserTranslationMessage(res).indexOf("번역기 오류 3 (번역기 오류)") >= 0);
   eq("  items 는 비어 있다", 0, Object.keys(res.items).length);
 
   const empty = { translate: async () => "   " };
