@@ -284,6 +284,24 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .sub-filters-row { display: flex; gap: 6px; }
 .sub-filters-row select { flex: 1; min-width: 0; color: var(--ink-2); cursor: pointer; padding: 0 6px; }
 
+.sub-sort-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.sub-sort-row label { font-size: var(--fs-xs); color: var(--ink-3); flex-shrink: 0; }
+.sub-sort-row select {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: 32px;
+  padding: 0 6px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--sunken);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  outline: none;
+  cursor: pointer;
+}
+.sub-sort-row select:focus { border-color: var(--line-strong); }
+
 /* 세션/프로젝트/최근 세션 목록 */
 .quick-links-list,
 .session-list-wrap,
@@ -355,6 +373,49 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 @keyframes soft-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(92, 200, 194, 0.55); }
   50% { box-shadow: 0 0 0 5px rgba(92, 200, 194, 0); }
+}
+
+/* 트리 사이드바 */
+.tree-chevron {
+  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-3);
+  flex-shrink: 0;
+  transition: transform 0.12s;
+}
+.tree-chevron::before {
+  content: "▸";
+  font-size: var(--fs-xs);
+  line-height: 1;
+}
+.tree-project.open .tree-chevron {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tree-chevron {
+    transition: none;
+  }
+}
+
+.tree-children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 1px 0 6px 12px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+}
+
+.session-item.tree-session {
+  padding: 6px 8px;
+}
+
+.tree-archived {
+  color: var(--ink-3);
+  font-weight: 400;
+  margin-left: 4px;
 }
 
 /* 사이드바 하단 */
@@ -861,51 +922,16 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .meta-chip { white-space: nowrap; }
 .party-legend { display: inline-flex; align-items: center; gap: 6px; }
 
-.qa-session-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
-}
+.qa-session-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .qa-session-chips[hidden] { display: none; }
-.qa-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--ink-2);
-  font: inherit;
-  font-size: var(--fs-xs);
-  cursor: pointer;
-}
-.qa-chip:hover {
-  background: var(--raised);
-  color: var(--ink);
-}
-.qa-chip:focus-visible {
-  outline: 2px solid var(--agy);
-  outline-offset: 2px;
-}
-.qa-chip.active {
-  background: var(--raised);
-  border-color: var(--line-strong);
-  color: var(--ink);
-}
-.qa-chip-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 220px;
-}
-.qa-chip-count {
-  color: var(--ink-3);
-  font-variant-numeric: tabular-nums;
-}
+.qa-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--ink-2); font: inherit; font-size: var(--fs-xs); cursor: pointer; }
+.qa-chip:hover { background: var(--raised); color: var(--ink); }
+.qa-chip:focus-visible { outline: 2px solid var(--agy); outline-offset: 2px; }
+.qa-chip.active { background: var(--raised); border-color: var(--line-strong); color: var(--ink); }
+.qa-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.qa-chip-count { color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .qa-chip.active .qa-chip-count { color: var(--ink-2); }
+.qa-chip-err { color: var(--err); }
 
 /* ==========================================================================
    위임 실행 기록 카드
@@ -938,6 +964,15 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .meta-item.model,
 .meta-item.elapsed {
   color: var(--ink);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.meta-item.wait-time {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.meta-item.live-tokens {
+  color: #58a6ff;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
@@ -1307,6 +1342,11 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.handoff-channel {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  margin-right: 6px;
 }
 .handoff-dir { display: block; font-size: var(--fs-xs); color: var(--ink-3); margin-top: 1px; }
 .handoff-dir .who-claude { color: var(--claude); }
