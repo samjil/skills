@@ -2307,7 +2307,7 @@
           (pg.download >= 0 ? "언어 팩 내려받는 중 " + pg.download + "%" : "브라우저 번역 중… " + (pg.total ? pg.done + "/" + pg.total : "")) + '</button>');
       } else if (needB) {
         out.push('<button type="button" class="proc-tr-btn" data-act="translate-browser" title="이 브라우저의 내장 번역을 씁니다. 무료이고 빠르지만 품질이 낮을 수 있습니다. 처음에는 언어 팩을 내려받을 수 있습니다.">' +
-          (nB > 0 ? "브라우저로 새 단계 번역" : (bState === "error" ? "브라우저로 다시 시도" : "브라우저로 번역")) + '</button>');
+          (nB > 0 ? "브라우저로 이어서 번역" : (bState === "error" ? "브라우저로 다시 시도" : "브라우저로 번역")) + '</button>');
       }
     }
 
@@ -2376,19 +2376,81 @@
     return { text: out, codes: codes };
   }
 
-  // 번역된 글의 자리표시자를 원래 코드로 되돌린다. 하나라도 없거나, 만든 적 없는 자리표시자가 있으면 null(쓰지 않는다).
+  // 번역된 글의 자리표시자를 원래 코드로 되돌린다. 모델이 대소문자나 공백을 흐트러뜨려도(xq 1 x) 받아 준다.
+  // 하나라도 없거나, 만든 적 없는 자리표시자가 있으면 null(쓰지 않는다).
   function restoreCodeSpans(text, codes) {
     var s = String(text == null ? "" : text);
     for (var i = 0; i < codes.length; i++) {
-      var tok = "XQ" + (i + 1) + "X";
-      if (s.indexOf(tok) < 0) return null;
-      s = s.split(tok).join(codes[i]);
+      var re = new RegExp("XQ\\s*" + (i + 1) + "\\s*X", "gi");
+      if (!re.test(s)) return null;
+      re.lastIndex = 0;
+      (function (code) { s = s.replace(re, function () { return code; }); })(codes[i]);
     }
-    return /XQ\d+X/.test(s) ? null : s;
+    return /XQ\s*\d+\s*X/i.test(s) ? null : s;
+  }
+
+  // 백틱으로 감싼 코드 표기(`top_words` 같은 것)들. 번역 뒤에 이것들이 그대로 남아 있어야 번역을 쓴다.
+  function codeSpansOf(text) { return String(text == null ? "" : text).match(/`[^`\n]+`/g) || []; }
+
+  // 번역기가 백틱만 떼고 이름은 그대로 둔 경우(top_words)도 코드가 남은 것으로 본다.
+  function codesSurvive(src, out) {
+    var codes = codeSpansOf(src);
+    for (var i = 0; i < codes.length; i++) {
+      var inner = codes[i].slice(1, -1);
+      if (String(out).indexOf(codes[i]) < 0 && String(out).indexOf(inner) < 0) return false;
+    }
+    return true;
+  }
+
+  // 글을 문장 단위로 나눈다(마침표·물음표·느낌표 뒤의 공백). 한 문장이면 길이 1.
+  function splitSentences(text) {
+    return String(text == null ? "" : text).split(/(?<=[.!?])\s+/).filter(function (p) { return p.trim(); });
+  }
+
+  // 한 덩어리를 번역하고 코드 표기를 지킨다. 두 가지를 차례로 시도한다.
+  //   1) 글을 그대로 번역한다. 모델이 백틱 안의 코드를 그대로 두는 일이 많아서, 코드 표기가 모두 남아 있으면 그것을 쓴다.
+  //   2) 안 남았으면 코드를 자리표시자(XQ1X)로 바꿔 번역한 뒤 되돌린다(자리표시자가 흐트러지면 쓰지 않는다).
+  // 반환: Promise<{ text: 번역 또는 null, reason: "" | "code"(코드 표기가 사라짐) | "empty"(빈 번역) | "error", message, sample }>
+  function translateChunkKeepingCode(translator, text) {
+    var raw = String(text);
+    var sample = "";
+    return Promise.resolve().then(function () { return translator.translate(raw); }).then(function (ko) {
+      ko = String(ko == null ? "" : ko).trim();
+      sample = ko;
+      if (ko && codesSurvive(raw, ko)) return { text: ko, reason: "" };
+      var pr = protectCodeSpans(raw);
+      if (!pr.codes.length) return { text: null, reason: ko ? "code" : "empty", sample: sample };
+      return Promise.resolve(translator.translate(pr.text)).then(function (ko2) {
+        var restored = restoreCodeSpans(ko2, pr.codes);
+        if (restored && restored.trim()) return { text: restored.trim(), reason: "" };
+        return { text: null, reason: "code", sample: String(ko2 == null ? "" : ko2).trim() || sample };
+      });
+    }).catch(function (err) {
+      return { text: null, reason: "error", message: (err && err.message) ? err.message : String(err), sample: sample };
+    });
+  }
+
+  // 한 칸의 글을 번역한다. 통째로 안 되면 문장별로 나눠 되는 문장만 번역하고 나머지 문장은 원문으로 둔다(칸 하나에 한글과 영어가 섞인다).
+  function translateTextWithBrowser(translator, text) {
+    return translateChunkKeepingCode(translator, text).then(function (r) {
+      if (r.text) return r;
+      var parts = splitSentences(text);
+      if (parts.length < 2) return r;
+      var out = [], got = 0, chain = Promise.resolve();
+      parts.forEach(function (p) {
+        chain = chain.then(function () {
+          return translateChunkKeepingCode(translator, p).then(function (q) {
+            if (q.text) { got++; out.push(q.text); } else { out.push(p); }
+          });
+        });
+      });
+      return chain.then(function () { return got ? { text: out.join(" "), reason: "", partial: true } : r; });
+    });
   }
 
   // 번역기(translator.translate(글) -> Promise<글>)로 단계 목록의 한글 아닌 칸을 번역한다. existing 에 이미 있는 칸은 건너뛴다.
-  // 반환: Promise<{ items, failed, total }>. 한 칸이 실패해도 나머지는 계속한다.
+  // 반환: Promise<{ items, failed, total, partial(문장 일부만 번역한 칸 수), reasons: { code, empty, error }, firstError, sample }>.
+  // 한 칸이 실패해도 나머지는 계속한다.
   function translateStepsWithBrowser(steps, existing, translator, onProgress) {
     var jobs = [];
     var fields = ["label", "think", "say"];
@@ -2401,24 +2463,42 @@
     });
     var items = {};
     Object.keys(existing || {}).forEach(function (k) { items[k] = {}; Object.keys(existing[k]).forEach(function (f) { items[k][f] = existing[k][f]; }); });
-    var failed = 0, done = 0;
+    var res = { items: items, failed: 0, total: jobs.length, partial: 0, reasons: { code: 0, empty: 0, error: 0 }, firstError: "", sample: "" };
+    var done = 0;
     var chain = Promise.resolve();
     jobs.forEach(function (j) {
       chain = chain.then(function () {
-        var pr = protectCodeSpans(j.text);
-        return Promise.resolve(translator.translate(pr.text)).then(function (ko) {
-          var restored = restoreCodeSpans(ko, pr.codes);
-          if (restored && restored.trim()) {
+        return translateTextWithBrowser(translator, j.text).then(function (r) {
+          if (r.text) {
             if (!items[j.i]) items[j.i] = {};
-            items[j.i][j.f] = restored.trim();
-          } else { failed++; }
-        }).catch(function () { failed++; }).then(function () {
+            items[j.i][j.f] = r.text;
+            if (r.partial) res.partial++;
+          } else {
+            res.failed++;
+            res.reasons[r.reason] = (res.reasons[r.reason] || 0) + 1;
+            if (r.reason === "error" && !res.firstError) res.firstError = r.message || "";
+            if (r.reason === "code" && !res.sample) res.sample = (r.sample || "").slice(0, 80);
+          }
+        }).then(function () {
           done++;
           if (onProgress) onProgress(done, jobs.length);
         });
       });
     });
-    return chain.then(function () { return { items: items, failed: failed, total: jobs.length }; });
+    return chain.then(function () { return res; });
+  }
+
+  // 번역이 끝난 뒤 사용자에게 보일 안내(실패한 칸이 있을 때 이유를 함께). 실패한 칸이 없으면 빈 글.
+  function browserTranslationMessage(res) {
+    var bits = [];
+    if (res.reasons.code) bits.push("번역에서 코드 표기가 사라진 칸 " + res.reasons.code + (res.sample ? " (번역기가 돌려준 글 예: \"" + res.sample + "\")" : ""));
+    if (res.reasons.empty) bits.push("빈 번역 " + res.reasons.empty);
+    if (res.reasons.error) bits.push("번역기 오류 " + res.reasons.error + (res.firstError ? " (" + res.firstError + ")" : ""));
+    var detail = bits.length ? " — " + bits.join(", ") : "";
+    if (res.total > 0 && res.failed === res.total) return "브라우저 번역이 모든 글에서 실패했습니다" + detail;
+    if (res.failed) return res.failed + "칸은 번역을 쓸 수 없어 원문으로 두었습니다" + detail;
+    if (res.partial) return res.partial + "칸은 일부 문장만 번역했습니다";
+    return "";
   }
 
   function withTimeout(promise, ms, message) {
@@ -2484,11 +2564,7 @@
       })
       .then(function (res) {
         var allFailed = res.total > 0 && res.failed === res.total;
-        procTrB[convId] = {
-          state: allFailed ? "error" : "done",
-          message: allFailed ? "브라우저 번역이 모든 글에서 실패했습니다" : (res.failed ? res.failed + "칸은 번역을 쓸 수 없어 원문으로 두었습니다" : ""),
-          items: res.items, progress: null
-        };
+        procTrB[convId] = { state: allFailed ? "error" : "done", message: browserTranslationMessage(res), items: res.items, progress: null };
         if (!allFailed) saveBrowserTranslation(convId, res.items);
       })
       .catch(function (err) {
