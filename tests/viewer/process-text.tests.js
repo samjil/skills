@@ -20,7 +20,7 @@ function extractFunction(name) {
   throw new Error(name + " 의 끝을 찾지 못했습니다.");
 }
 
-const names = ["escapeHtml", "progressToolLabel", "summarizeProcess", "shortenPathsForCwd", "buildNarrationHtml", "buildProcessRowsHtml", "resolveProcessState",
+const names = ["escapeHtml", "progressToolLabel", "summarizeProcess", "cwdListOf", "shortenPathsForCwd", "buildNarrationHtml", "buildProcessRowsHtml", "resolveProcessState",
   "hasHangul", "needsTranslation", "applyProcessTranslation", "procItemCount", "procTrViewOf", "procTrItemsFor", "buildTranslateToolsHtml",
   "browserTranslatorSupported", "protectCodeSpans", "restoreCodeSpans", "codeSpansOf", "codesSurvive", "splitSentences",
   "translateChunkKeepingCode", "translateTextWithBrowser", "translateStepsWithBrowser", "browserTranslationMessage"];

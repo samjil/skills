@@ -1483,10 +1483,47 @@
     document.body.style.overflow = "";
   }
 
+  // @cwd 값(문자열 하나, 폴더 배열, 없음)을 폴더 문자열 배열로 만든다. 빈 값과 중복(대소문자, 끝의 \ 또는 / 무시)은 뺀다.
+  // 서버가 예전에는 문자열 하나를, 지금은 폴더 배열을 주므로 둘 다 받는다(예전 기록·옛 서버도 그대로 보인다).
+  function cwdListOf(value) {
+    var src = Array.isArray(value) ? value : (value == null ? [] : [value]);
+    var out = [], seen = {};
+    for (var i = 0; i < src.length; i++) {
+      var s = String(src[i] == null ? "" : src[i]).trim();
+      if (!s) continue;
+      var key = s.replace(/[\\/]+$/, "").toLowerCase() || s.toLowerCase();
+      if (seen[key]) continue;
+      seen[key] = true;
+      out.push(s);
+    }
+    return out;
+  }
+
+  // 질문 맨 위의 @cwd 줄들. 워처와 같은 규칙이다: 맨 위의 지시어 줄(@cwd/@session/@model)만 보고, 줄 순서대로 모은다.
+  function leadingCwds(text) {
+    var out = [];
+    var lines = String(text == null ? "" : text).split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (/^\s*$/.test(line)) continue;
+      var m = line.match(/^\ufeff?@cwd:\s*(.+)$/i);
+      if (m) { out.push(m[1].trim()); continue; }
+      if (/^\ufeff?@(session|model):/i.test(line)) continue;
+      break;
+    }
+    return cwdListOf(out);
+  }
+
   function extractImagesFromText(text) {
-    if (!text) return { cwd: "", images: [] };
-    var cwdMatch = text.match(/@cwd:\s*([^\r\n]+)/i);
-    var cwd = cwdMatch ? cwdMatch[1].trim() : "";
+    if (!text) return { cwd: "", cwds: [], images: [] };
+    // @cwd 는 여러 줄일 수 있다. cwds 가 폴더 목록이고, cwd 는 그 첫 번째다(상대 경로 이미지는 첫 폴더 기준으로 찾는다).
+    var cwds = leadingCwds(text);
+    if (!cwds.length) {
+      // 예전 동작: 맨 위가 아니라 본문 중간에 있는 @cwd 한 줄도 읽는다
+      var cwdMatch = text.match(/@cwd:\s*([^\r\n]+)/i);
+      if (cwdMatch) cwds = cwdListOf(cwdMatch[1]);
+    }
+    var cwd = cwds[0] || "";
     var candidates = [];
     var seen = {};
 
@@ -1515,7 +1552,7 @@
     var relRegex = /(?:^|[\s"'(<])((?:[a-zA-Z0-9_\-\.\uac00-\ud7a3]+\/|[a-zA-Z0-9_\-\.\uac00-\ud7a3]+\\)*[a-zA-Z0-9_\-\.\uac00-\ud7a3]+\.(?:png|jpe?g|gif|webp|svg|bmp|ico))(?=[\s"')>]|$)/gi;
     while ((m = relRegex.exec(text)) !== null) { add(m[1]); }
 
-    return { cwd: cwd, images: candidates };
+    return { cwd: cwd, cwds: cwds, images: candidates };
   }
 
   function createImageGallery(images, cwd) {
@@ -2058,15 +2095,27 @@
     return "도구 호출 " + steps.length + "번 · " + parts.join(" · ") + (order.length > 3 ? " 외 " + (order.length - 3) + "종" : "");
   }
 
-  // 작업 폴더(@cwd) 아래 경로는 폴더 이름을 빼고 보인다. 예) C:\workpp\src.py -> src.py (폴더 자체는 ".")
+  // 작업 폴더(@cwd) 아래 경로는 폴더 이름을 빼고 보인다. 예) C:\workpp\src.py -> src.py (폴더 자체는 ".")
+  // 폴더가 여러 개면 어느 폴더의 파일인지 알 수 있게 폴더 이름부터 보인다. 예) 폴더 C:\a\repo, D:\b\docs -> repo\src.py, docs\x.md (폴더 자체는 "repo")
   // 명령 안에 적힌 경로도 같은 규칙이다. work2 처럼 이름만 비슷한 폴더는 건드리지 않는다. 전체 경로는 마우스를 올리면 보인다.
+  // cwd 는 폴더 문자열 하나나 폴더 배열이다.
   function shortenPathsForCwd(text, cwd) {
     var src = String(text == null ? "" : text);
-    var base = String(cwd || "").trim().replace(/[\\/]+$/, "");
-    if (!src || !base) return src;
-    var esc = base.replace(/[.*+?^${}()|[\]\\\/]/g, function (ch) { return (ch === "\\" || ch === "/") ? "[\\\\/]" : "\\" + ch; });
-    var re = new RegExp("(^|[\\s\"'(=])" + esc + "([\\\\/]+|(?=$|[\\s\"')]))", "gi");
-    var out = src.replace(re, function (m, pre, sep) { return sep ? pre : pre + "."; });
+    var bases = cwdListOf(cwd).map(function (c) { return c.replace(/[\\/]+$/, ""); }).filter(Boolean);
+    if (!src || !bases.length) return src;
+    var multi = bases.length > 1;
+    // 한 폴더가 다른 폴더 안에 있으면 더 구체적인(긴) 폴더 기준으로 먼저 줄인다
+    bases.sort(function (a, b) { return b.length - a.length; });
+    var out = src;
+    bases.forEach(function (base) {
+      var esc = base.replace(/[.*+?^${}()|[\]\\\/]/g, function (ch) { return (ch === "\\" || ch === "/") ? "[\\\\/]" : "\\" + ch; });
+      var re = new RegExp("(^|[\\s\"'(=])" + esc + "([\\\\/]+|(?=$|[\\s\"')]))", "gi");
+      var name = multi ? base.split(/[\\/]/).pop() : "";
+      out = out.replace(re, function (m, pre, sep) {
+        if (!sep) return pre + (name || ".");
+        return pre + (name ? name + sep : "");
+      });
+    });
     return out === "" ? "." : out;
   }
 
@@ -2087,7 +2136,10 @@
       var tip = [];
       if (st.tool) tip.push("도구: " + st.tool);
       if (st.detail) tip.push("대상: " + st.detail);
-      if (cwd && shown !== st.detail) tip.push("작업 폴더(@cwd): " + cwd + " — 목록에는 이 폴더 아래 경로만 줄여 보입니다");
+      if (shown !== st.detail && cwdListOf(cwd).length) {
+        var tipCwds = cwdListOf(cwd);
+        tip.push("작업 폴더(@cwd): " + tipCwds.join(", ") + (tipCwds.length > 1 ? " — 여러 폴더라 목록에는 폴더 이름부터 줄여 보입니다" : " — 목록에는 이 폴더 아래 경로만 줄여 보입니다"));
+      }
       if (st.label) tip.push("agy 가 붙인 설명: " + st.label);
       return '<li class="proc-row"' + (tip.length ? ' title="' + escapeHtml(tip.join("\n")) + '"' : '') + '>' +
         '<span class="proc-n">' + escapeHtml(String(st.n)) + '</span>' +
@@ -2153,7 +2205,7 @@
 
   // 완료 기록 / 대기·진행 작업에서 과정 창에 넘길 옵션을 만든다. 창이 열려 있는 동안 최신 데이터로 다시 만들 때도 쓴다.
   function recordProcessOpts(r, cwd) {
-    return { steps: Array.isArray(r.process) ? r.process : null, convId: r.session_id || "", cwd: cwd != null ? cwd : extractImagesFromText(r.question).cwd };
+    return { steps: Array.isArray(r.process) ? r.process : null, convId: r.session_id || "", cwd: cwd != null ? cwd : extractImagesFromText(r.question).cwds };
   }
   function pendingProcessOpts(p, cwd) {
     var isProcessing = (p.state === "processing");
@@ -2162,7 +2214,7 @@
       live: isProcessing,
       waiting: !isProcessing,
       convId: (isProcessing && p.progress && p.progress.conversation_id) ? String(p.progress.conversation_id) : "",
-      cwd: cwd != null ? cwd : (p.cwd || extractImagesFromText(p.question).cwd)
+      cwd: cwd != null ? cwd : (cwdListOf(p.cwd).length ? cwdListOf(p.cwd) : extractImagesFromText(p.question).cwds)
     };
   }
 
@@ -2642,14 +2694,19 @@
         (st.error ? '<button type="button" class="proc-retry" data-conv="' + escapeHtml(st.fetchId) + '">다시 시도</button>' : "");
     }
     var toolsHtml = buildTranslateToolsHtml(convId, st.steps);
-    var head = [src.taskId, st.summary, src.opts.live ? "live" : "", src.opts.cwd || "", toolsHtml].join("\u0001");
+    var head = [src.taskId, st.summary, src.opts.live ? "live" : "", cwdListOf(src.opts.cwd).join("|"), toolsHtml].join("\u0001");
     if (procDialogLast === head + "\u0002" + html) return;
     procDialogLast = head + "\u0002" + html;
 
     dlg.querySelector(".proc-dlg-task").textContent = src.taskId;
     dlg.querySelector(".proc-dlg-sum").textContent = st.summary + (src.opts.live && st.steps ? " · 진행 중이라 새 단계가 생기면 자동으로 이어 붙습니다" : "");
     var cwdEl = dlg.querySelector(".proc-dlg-cwd");
-    cwdEl.textContent = (src.opts.cwd && st.steps && st.steps.length) ? "작업 폴더 " + src.opts.cwd + " 아래 경로는 폴더 이름을 빼고 보입니다." : "";
+    var dlgCwds = cwdListOf(src.opts.cwd);
+    cwdEl.textContent = (dlgCwds.length && st.steps && st.steps.length)
+      ? (dlgCwds.length === 1
+        ? "작업 폴더 " + dlgCwds[0] + " 아래 경로는 폴더 이름을 빼고 보입니다."
+        : "작업 폴더 " + dlgCwds.length + "개: " + dlgCwds.join(", ") + " — 이 폴더들 아래 경로는 폴더 이름부터 보입니다.")
+      : "";
     cwdEl.hidden = !cwdEl.textContent;
     var toolsEl = dlg.querySelector(".proc-dlg-tools");
     toolsEl.innerHTML = toolsHtml;
@@ -2744,7 +2801,7 @@
     dq.appendChild(qb);
     card.appendChild(dq);
 
-    meta.appendChild(buildProcessButton(card.getAttribute("data-key"), recordProcessOpts(r, qImgInfo.cwd)));
+    meta.appendChild(buildProcessButton(card.getAttribute("data-key"), recordProcessOpts(r, qImgInfo.cwds)));
 
     var da = document.createElement("details");
     da.className = "qa a";
@@ -2812,7 +2869,7 @@
     if (!tool && !pg.detail && !pg.action && !pg.say && !pg.thinking) return "";
     var pieces = [];
     if (tool) pieces.push('<span class="pg-tool">' + escapeHtml(tool) + (pg.background ? ' (백그라운드)' : '') + '</span>');
-    if (pg.detail) pieces.push('<span class="pg-detail">' + escapeHtml(shortenPathsForCwd(pg.detail, cwd || pg.cwd)) + '</span>');
+    if (pg.detail) pieces.push('<span class="pg-detail">' + escapeHtml(shortenPathsForCwd(pg.detail, cwdListOf(cwd).length ? cwd : pg.cwd)) + '</span>');
     if (pg.action) pieces.push('<span class="pg-label">' + ((tool || pg.detail) ? '· ' : '') + escapeHtml(pg.action) + '</span>');
     var html = '지금: ' + pieces.join(' ');
     // 줄이 길어 잘리면 마우스를 올려 전체를 본다
@@ -2895,7 +2952,9 @@
     var qb = document.createElement("div");
     qb.className = "body";
     var qImgInfo = extractImagesFromText(p.question);
-    var effectiveCwd = p.cwd || qImgInfo.cwd;
+    var effCwds = cwdListOf(p.cwd);              // 서버가 준 폴더 목록(옛 서버는 문자열 하나)
+    if (!effCwds.length) effCwds = qImgInfo.cwds;   // 없으면 질문 맨 위의 @cwd 줄들
+    var effectiveCwd = effCwds[0] || "";            // 상대 경로 이미지는 첫 번째 폴더 기준으로 찾는다
     var qGallery = createImageGallery(qImgInfo.images, effectiveCwd);
     if (qGallery) qb.appendChild(qGallery);
     var qContent = document.createElement("div");
@@ -2905,7 +2964,7 @@
     dq.appendChild(qb);
     card.appendChild(dq);
 
-    meta.appendChild(buildProcessButton(card.getAttribute("data-key"), pendingProcessOpts(p, effectiveCwd)));
+    meta.appendChild(buildProcessButton(card.getAttribute("data-key"), pendingProcessOpts(p, effCwds)));
 
     var da = document.createElement("details");
     da.className = "qa a qa-pending-a";
@@ -2933,7 +2992,7 @@
       (isProcessing ? '  <span class="pending-spinner" aria-hidden="true"></span><span>agy가' + modelText + ' 응답을 만들고 있습니다. 끝나면 이 자리에 답변이 나옵니다.</span>' :
                       '  <span>앞 작업이 끝나면' + modelText + ' 자동으로 실행됩니다.</span>'),
       '</div>',
-      (isProcessing ? buildProgressHtml(p.progress, effectiveCwd) : "")
+      (isProcessing ? buildProgressHtml(p.progress, effCwds) : "")
     ].join("");
     da.appendChild(ab);
     card.appendChild(da);

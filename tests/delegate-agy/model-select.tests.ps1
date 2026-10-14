@@ -31,6 +31,14 @@ foreach ($name in @("Get-JsonField", "Invoke-AgyOnce", "Invoke-AgyWithFallback",
     Invoke-Expression $fn.Extent.Text
 }
 
+$astCommon = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $subDir "common.ps1"), [ref]$tokens, [ref]$errs)
+foreach ($name in @("ConvertTo-CwdList", "Resolve-TaskCwds", "Get-MissingCwds")) {
+    $fn = $astCommon.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+    if (-not $fn) { throw "$name 를 common.ps1 에서 찾지 못했습니다." }
+    $fnTexts[$name] = $fn.Extent.Text
+    Invoke-Expression $fn.Extent.Text
+}
+
 Write-Host "정의"
 Assert-Equal "우선순위 목록의 첫 모델은 gemini-3.8-flash-high" "gemini-3.8-flash-high" $ModelPriority[0]
 Assert-Equal "고를 수 있는 모델에 flash 3단계가 있다" $true (($SelectableModels -contains "gemini-3.8-flash-high") -and ($SelectableModels -contains "gemini-3.8-flash-medium") -and ($SelectableModels -contains "gemini-3.8-flash-low"))
@@ -41,17 +49,17 @@ Assert-Equal "Gemini 계열만 허용한다 (claude/gpt-oss 제외)" 0 @($Select
 Write-Host "ConvertFrom-TaskDirectives"
 $d = ConvertFrom-TaskDirectives "그냥 질문입니다"
 Assert-Equal "지시어가 없으면 본문 그대로" "그냥 질문입니다" $d.Prompt
-Assert-Equal "  cwd/session/model 은 `$null" $true (($null -eq $d.Cwd) -and ($null -eq $d.Session) -and ($null -eq $d.Model))
+Assert-Equal "  cwd 는 빈 배열, session/model 은 `$null" $true ((@($d.Cwd).Count -eq 0) -and ($null -eq $d.Session) -and ($null -eq $d.Model))
 
 $d = ConvertFrom-TaskDirectives "@cwd: C:\proj`n@session: 작업-1`n@model: gemini-3.8-flash-low`n본문 첫 줄`n둘째 줄"
-Assert-Equal "세 지시어를 모두 읽는다 (cwd)" "C:\proj" $d.Cwd
+Assert-Equal "세 지시어를 모두 읽는다 (cwd)" "C:\proj" (@($d.Cwd) -join "|")
 Assert-Equal "  session" "작업-1" $d.Session
 Assert-Equal "  model" "gemini-3.8-flash-low" $d.Model
 Assert-Equal "  본문은 지시어 다음 줄부터" "본문 첫 줄`n둘째 줄" $d.Prompt
 
 $d = ConvertFrom-TaskDirectives "@model: gemini-3.8-flash-medium`r`n`r`n@cwd: C:\p`r`n질문"
 Assert-Equal "순서가 달라도, 사이에 빈 줄이 있어도, CRLF 여도 읽는다 (model)" "gemini-3.8-flash-medium" $d.Model
-Assert-Equal "  cwd" "C:\p" $d.Cwd
+Assert-Equal "  cwd" "C:\p" (@($d.Cwd) -join "|")
 Assert-Equal "  본문" "질문" $d.Prompt
 
 $d = ConvertFrom-TaskDirectives ([string][char]0xFEFF + "@model: gemini-3.8-flash-low`n질문")
@@ -67,8 +75,36 @@ Assert-Equal "  본문에 그대로 남는다" "첫 줄은 본문`n@model: gemin
 $d = ConvertFrom-TaskDirectives "@foo: 모르는 키`n@model: gemini-3.8-flash-low`n끝"
 Assert-Equal "모르는 @키 줄에서 지시어 읽기가 멈춘다 (그 뒤 @model 은 읽지 않음)" $null $d.Model
 
+
+Write-Host "ConvertFrom-TaskDirectives: @cwd 여러 줄"
+$d = ConvertFrom-TaskDirectives "@cwd: D:\a\repo`n@cwd: D:\b\docs`n@model: gemini-3.8-flash-medium`n본문"
+Assert-Equal "@cwd 를 여러 줄 쓰면 줄 순서대로 모두 읽는다" "D:\a\repo|D:\b\docs" (@($d.Cwd) -join "|")
+Assert-Equal "  개수는 2" 2 @($d.Cwd).Count
+Assert-Equal "  다른 지시어와 본문은 그대로" "gemini-3.8-flash-medium|본문" ("{0}|{1}" -f $d.Model, $d.Prompt)
+$d = ConvertFrom-TaskDirectives "@cwd: D:\a`n@model: gemini-3.8-flash-low`n@cwd: D:\b`n@session: s`n@cwd: D:\c`n질문"
+Assert-Equal "다른 지시어 사이에 끼어 있어도 순서대로 모은다" "D:\a|D:\b|D:\c" (@($d.Cwd) -join "|")
+$d = ConvertFrom-TaskDirectives "@cwd: D:\Repo`n@cwd: d:\repo\`n@cwd: D:\REPO/`n@cwd: D:\other`n질문"
+Assert-Equal "같은 경로는 대소문자와 끝의 \ 또는 / 를 무시하고 처음 것만 남긴다" "D:\Repo|D:\other" (@($d.Cwd) -join "|")
+$d = ConvertFrom-TaskDirectives "@cwd: D:\a`r`n`r`n@cwd:    D:\b with space   `r`n질문"
+Assert-Equal "빈 줄과 CRLF 가 있어도, 값 앞뒤 공백은 지우고 안의 공백은 둔다" "D:\a|D:\b with space" (@($d.Cwd) -join "|")
+$d = ConvertFrom-TaskDirectives "질문 첫 줄`n@cwd: D:\late"
+Assert-Equal "본문이 시작된 뒤의 @cwd 는 지시어가 아니다(폴더 없음)" 0 @($d.Cwd).Count
+$d = ConvertFrom-TaskDirectives "@cwd: D:\only`n질문"
+Assert-Equal "한 줄짜리는 이전과 같은 폴더 하나(배열이지만 요소는 하나)" "D:\only|1" ("{0}|{1}" -f (@($d.Cwd) -join "|"), @($d.Cwd).Count)
+$d = ConvertFrom-TaskDirectives "질문만"
+Assert-Equal "@cwd 가 없으면 빈 배열(null 이 아님)" "0|False" ("{0}|{1}" -f @($d.Cwd).Count, ($null -eq $d.Cwd))
+Assert-Equal "ConvertTo-CwdList: 문자열 하나(예전 세션 파일)도 읽는다" "D:\old" (@(ConvertTo-CwdList "D:\old") -join "|")
+Assert-Equal "  배열도 읽는다" "D:\a|D:\b" (@(ConvertTo-CwdList @("D:\a", "D:\b")) -join "|")
+Assert-Equal "  null·빈 문자열·공백뿐인 값은 뺀다" 0 @(ConvertTo-CwdList @($null, "", "   ")).Count
+Assert-Equal "Resolve-TaskCwds: 이번 호출에 @cwd 가 있으면 이번 목록만(세션과 합치지 않는다)" "D:\new" (@(Resolve-TaskCwds @("D:\new") @("D:\old1", "D:\old2")) -join "|")
+Assert-Equal "  없으면 세션의 목록(배열)" "D:\old1|D:\old2" (@(Resolve-TaskCwds @() @("D:\old1", "D:\old2")) -join "|")
+Assert-Equal "  없으면 세션의 값이 문자열(예전 파일)이어도 읽는다" "D:\old" (@(Resolve-TaskCwds @() "D:\old") -join "|")
+Assert-Equal "  둘 다 없으면 빈 배열" 0 @(Resolve-TaskCwds @() $null).Count
+Assert-Equal "Get-MissingCwds: 없는 폴더만 모두 돌려준다" "D:\no-such-1|D:\no-such-2" (@(Get-MissingCwds @($env:TEMP, "D:\no-such-1", "D:\no-such-2")) -join "|")
+Assert-Equal "  모두 있으면 빈 배열" 0 @(Get-MissingCwds @($env:TEMP, $env:windir)).Count
+
 # 빈 문자열/공백뿐인 입력이 무한 루프에 빠지지 않는다(예전 인라인 루프에는 그 위험이 있었음)
-$job = Start-Job -ScriptBlock { param($t) Invoke-Expression $t; $x = ConvertFrom-TaskDirectives ""; $y = ConvertFrom-TaskDirectives "  `n  "; "ok" } -ArgumentList $fnTexts["ConvertFrom-TaskDirectives"]
+$job = Start-Job -ScriptBlock { param($t, $u) Invoke-Expression $u; Invoke-Expression $t; $x = ConvertFrom-TaskDirectives ""; $y = ConvertFrom-TaskDirectives "  `n  "; "ok" } -ArgumentList $fnTexts["ConvertFrom-TaskDirectives"], $fnTexts["ConvertTo-CwdList"]
 $finished = Wait-Job $job -Timeout 20
 Assert-Equal "빈 입력에서 멈추지 않는다" $true ([bool]$finished)
 if (-not $finished) { Stop-Job $job }
@@ -112,6 +148,8 @@ $a = @($args)
 $i = [Array]::IndexOf([string[]]$a, '--model'); $model = if ($i -ge 0) { $a[$i + 1] } else { "" }
 $c = [Array]::IndexOf([string[]]$a, '--conversation'); $conv = if ($c -ge 0) { $a[$c + 1] } else { "" }
 Add-Content -Path $env:FAKE_ARGS_LOG -Value ("model=" + $model + " conv=" + $conv)
+$dirs = @(); for ($k = 0; $k -lt ($a.Count - 1); $k++) { if ($a[$k] -eq '--add-dir') { $dirs += $a[$k + 1] } }
+Add-Content -Path $env:FAKE_DIRS_LOG -Value ("dirs=" + ($dirs -join '|'))
 $quota = @($env:FAKE_QUOTA_MODELS -split ',' | Where-Object { $_ })
 if ($quota -contains $model) { '{"status":"ERROR","error":"quota exceeded for model ' + $model + '"}' }
 else { '{"status":"SUCCESS","response":"ok from ' + $model + '","conversation_id":"conv-test","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}' }
@@ -120,19 +158,22 @@ Set-Content -Path (Join-Path $fakeBin "agy.cmd") -Encoding ASCII -Value "@echo o
 $env:PATH = "$fakeBin;$env:PATH"
 $env:AGY_HOME = Join-Path $work "agyhome"
 $env:FAKE_ARGS_LOG = Join-Path $work "args.log"
+$env:FAKE_DIRS_LOG = Join-Path $work "dirs.log"
 
 $LogsDir = $work; $RuntimeDir = $work
 $AgyTimeoutSeconds = 60; $AgyStallSeconds = 30; $AgyPollSeconds = 2; $AgyProgressLogSeconds = 600; $AgyConversationWindowSeconds = 5
 $script:LogLines = @()
 function Log($msg) { $script:LogLines += $msg }
 
-function Run-Agy([string]$requested, [string]$quotaModels = "", [string]$conversationId = "", [string]$knownModel = "") {
+function Run-Agy([string]$requested, [string]$quotaModels = "", [string]$conversationId = "", [string]$knownModel = "", $cwds = $null) {
     Remove-Item $env:FAKE_ARGS_LOG -Force -ErrorAction SilentlyContinue
+    Remove-Item $env:FAKE_DIRS_LOG -Force -ErrorAction SilentlyContinue
     $env:FAKE_QUOTA_MODELS = $quotaModels
-    $r = Invoke-AgyWithFallback -safePrompt "hello" -targetCwd $null -skipPerm $false -errFile (Join-Path $work "err.log") -conversationId $conversationId -knownModel $knownModel -taskId "t" -requestedModel $requested
+    $r = Invoke-AgyWithFallback -safePrompt "hello" -targetCwd $cwds -skipPerm $false -errFile (Join-Path $work "err.log") -conversationId $conversationId -knownModel $knownModel -taskId "t" -requestedModel $requested
     # @(if ...) 로 감싼다: if 식은 한 줄짜리 배열을 문자열로 풀어 버려서 $calls[0] 이 첫 "글자"가 된다.
     $calls = @(if (Test-Path $env:FAKE_ARGS_LOG) { Get-Content $env:FAKE_ARGS_LOG })
-    return @{ Result = $r; Calls = $calls }
+    $dirs = @(if (Test-Path $env:FAKE_DIRS_LOG) { Get-Content $env:FAKE_DIRS_LOG })
+    return @{ Result = $r; Calls = $calls; Dirs = $dirs }
 }
 
 Write-Host "Invoke-AgyWithFallback (가짜 agy)"
@@ -160,6 +201,24 @@ Assert-Equal "  사용 모델은 비어 있다 (실제로 못 썼다)" $null $o.
 
 $o = Run-Agy "gemini-3.8-flash-low" "" "conv-1" "gemini-3.8-flash-low"
 Assert-Equal "이어가는 세션은 --conversation 만 쓰고 --model 은 넘기지 않는다" "model= conv=conv-1" $o.Calls[0]
+
+
+Write-Host "Invoke-AgyWithFallback: @cwd 폴더마다 --add-dir"
+$o = Run-Agy "" "" "" "" @("D:\a\repo", "D:\b\docs")
+Assert-Equal "폴더가 둘이면 --add-dir 를 폴더마다 한 번씩, 줄 순서대로 넘긴다" "dirs=D:\a\repo|D:\b\docs" $o.Dirs[0]
+Assert-Equal "  agy 는 한 번만 불렀다" 1 $o.Calls.Count
+$o = Run-Agy "" "" "" "" @("D:\only")
+Assert-Equal "폴더가 하나면 이전처럼 --add-dir 하나" "dirs=D:\only" $o.Dirs[0]
+$o = Run-Agy "" "" "" "" "D:\as-string"
+Assert-Equal "문자열 하나를 줘도(예전 호출 방식) --add-dir 하나" "dirs=D:\as-string" $o.Dirs[0]
+$o = Run-Agy "" "" "" "" $null
+Assert-Equal "폴더가 없으면 --add-dir 를 붙이지 않는다" "dirs=" $o.Dirs[0]
+$o = Run-Agy "" "" "" "" @()
+Assert-Equal "빈 배열도 --add-dir 를 붙이지 않는다" "dirs=" $o.Dirs[0]
+$o = Run-Agy "gemini-3.8-flash-low" "" "conv-1" "gemini-3.8-flash-low" @("D:\a", "D:\b")
+Assert-Equal "이어가는 세션 호출에도 폴더마다 --add-dir 를 넘긴다" "dirs=D:\a|D:\b" $o.Dirs[0]
+$o = Run-Agy "" $ModelPriority[0] "" "" @("D:\a", "D:\b")
+Assert-Equal "모델 폴백으로 다시 불러도 두 번 모두 같은 폴더 목록을 넘긴다" "2|dirs=D:\a|D:\b|dirs=D:\a|D:\b" ("{0}|{1}|{2}" -f $o.Dirs.Count, $o.Dirs[0], $o.Dirs[1])
 
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""
