@@ -113,6 +113,7 @@ if ($env:FAKE_MODE -eq 'hang') { Start-Sleep -Seconds 30 }
 $pf = ([string]$a[1]).Substring(1)
 $text = [System.IO.File]::ReadAllText($pf, [System.Text.Encoding]::UTF8)
 $line = ($text -split "`n" | Where-Object { $_.Trim().StartsWith('[') } | Select-Object -Last 1)
+if ($env:FAKE_MODE -eq 'garbage-once' -and -not (Test-Path ($env:FAKE_ARGS_LOG + '.once'))) { New-Item -ItemType File -Path ($env:FAKE_ARGS_LOG + '.once') | Out-Null; '{"status":"SUCCESS","response":"I wrote a plan. Please approve."}'; exit 0 }
 if ($env:FAKE_MODE -eq 'garbage') { '{"status":"SUCCESS","response":"cannot translate this"}'; exit 0 }
 $in = ConvertFrom-Json -InputObject $line
 $out = foreach ($it in @($in)) {
@@ -186,11 +187,24 @@ $tdir2 = Join-Path $agyHome "brain\$convId2\.system_generated\logs"
 New-Item -ItemType Directory -Force -Path $tdir2 | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $tdir2 "transcript_full.jsonl"), ($lines[0] + "`n"), $utf8)
 $out4 = Join-Path $work "ko\$convId2.json"
+Remove-Item -LiteralPath $env:FAKE_ARGS_LOG -Force -ErrorAction SilentlyContinue
 & $trScript -ConversationId $convId2 -OutFile $out4 -TimeoutSeconds 60
 $c4 = Read-TranslationCache $out4
 Assert-Equal "JSON 이 아닌 답이면 error 와 이유" "error|True" ("{0}|{1}" -f $c4.Status, ($c4.Message -like "*JSON*"))
 Assert-Equal "  번역된 것은 없고 단계 수도 올라가지 않는다" "0|0" ("{0}|{1}" -f $c4.Items.Count, $c4.StepsCovered)
 Assert-Equal "  실행 표시 파일이 남지 않는다" $false (Test-Path "$out4.running")
+Assert-Equal "  해석 못 하는 답은 한 번 더 불러 보고 그래도 안 되면 error(agy 2번)" 2 @(Get-Content -LiteralPath $env:FAKE_ARGS_LOG | Where-Object { $_ -like "args=*" }).Count
+
+# 첫 답만 계획서 같은 엉뚱한 글이고 두 번째는 번역이면 다시 불러서 해낸다
+$env:FAKE_MODE = "garbage-once"
+Remove-Item -LiteralPath $env:FAKE_ARGS_LOG -Force -ErrorAction SilentlyContinue
+$out6 = Join-Path $work "ko\once.json"
+& $trScript -ConversationId $convId2 -OutFile $out6 -TimeoutSeconds 60
+$c6 = Read-TranslationCache $out6
+Assert-Equal "첫 답이 엉뚱해도 한 번 더 불러서 done" "done|KO:Reading a.md" ("{0}|{1}" -f $c6.Status, $c6.Items["0"].label)
+Assert-Equal "  agy 는 2번 불렀다" 2 @(Get-Content -LiteralPath $env:FAKE_ARGS_LOG | Where-Object { $_ -like "args=*" }).Count
+Remove-Item -LiteralPath ($env:FAKE_ARGS_LOG + ".once") -Force -ErrorAction SilentlyContinue
+$env:FAKE_MODE = $null
 
 # agy 가 시간 안에 안 끝나면 error
 $env:FAKE_MODE = "hang"
