@@ -102,6 +102,36 @@ Assert-Equal "종료된다" $null (Get-Process -Id $mine.Id -ErrorAction Silentl
 Assert-Equal "남의 agy 는 영향받지 않는다" $true ($null -ne (Get-Process -Id $theirsPid -ErrorAction SilentlyContinue))
 Stop-Process -Id $theirsPid -Force -ErrorAction SilentlyContinue
 
+Write-Host "Resolve-AgyConversation: 표식(Marker)으로 동시에 시작한 내 대화 고르기"
+$home2 = Join-Path ([IO.Path]::GetTempPath()) ("agy-progress-marker-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path (Join-Path $home2 "conversations") | Out-Null
+function New-MarkedConversation($id, [datetime]$created, $firstLine) {
+    $db = Join-Path $home2 "conversations\$id.db"
+    Set-Content -LiteralPath $db -Value "x"
+    (Get-Item $db).CreationTime = $created
+    if ($null -ne $firstLine) {
+        $dir = Join-Path $home2 "brain\$id\.system_generated\logs"
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $dir "transcript_full.jsonl"), ($firstLine + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+    }
+}
+New-MarkedConversation "conv-a" $t0.AddSeconds(5) '{"step_index":0,"type":"USER_INPUT","content":"<USER_REQUEST>\n@C:\\x\\prompt_task-a.txt\n</USER_REQUEST>"}'
+New-MarkedConversation "conv-b" $t0.AddSeconds(6) '{"step_index":0,"type":"USER_INPUT","content":"<USER_REQUEST>\n@C:\\x\\prompt_task-b.txt\n</USER_REQUEST>"}'
+Assert-Equal "표식이 없으면 후보가 둘이라 ambiguous(예전과 같다)" "ambiguous" (Resolve-AgyConversation $home2 $null $t0 120).State
+$ra = Resolve-AgyConversation $home2 $null $t0 120 "prompt_task-a.txt"
+Assert-Equal "표식이 한 대화에만 있으면 그 대화를 고른다 (a)" "found|conv-a" ("{0}|{1}" -f $ra.State, $ra.Id)
+$rb = Resolve-AgyConversation $home2 $null $t0 120 "prompt_task-b.txt"
+Assert-Equal "  (b)" "found|conv-b" ("{0}|{1}" -f $rb.State, $rb.Id)
+Assert-Equal "표식이 어느 대화에도 없으면 ambiguous" "ambiguous" (Resolve-AgyConversation $home2 $null $t0 120 "prompt_task-zzz.txt").State
+New-MarkedConversation "conv-c" $t0.AddSeconds(7) '{"content":"여러 파일에 같은 표식 prompt_task-a.txt"}'
+Assert-Equal "표식이 둘 이상에 있으면 ambiguous" "ambiguous" (Resolve-AgyConversation $home2 $null $t0 120 "prompt_task-a.txt").State
+New-MarkedConversation "conv-d" $t0.AddSeconds(8) '{"content":"<USER_REQUEST>\n한글 지시문 첫머리입니다 보고서를 써 주세요\n</USER_REQUEST>"}'
+Assert-Equal "한글 표식도 찾는다" "found|conv-d" (("{0}|{1}" -f (Resolve-AgyConversation $home2 $null $t0 120 "한글 지시문 첫머리입니다").State, (Resolve-AgyConversation $home2 $null $t0 120 "한글 지시문 첫머리입니다").Id))
+New-MarkedConversation "conv-e" $t0.AddSeconds(9) $null
+Assert-Equal "대화 기록이 아직 없는 후보가 있어도 표식이 한 곳에만 있으면 그것을 고른다" "found|conv-d" (("{0}|{1}" -f (Resolve-AgyConversation $home2 $null $t0 120 "한글 지시문 첫머리입니다").State, (Resolve-AgyConversation $home2 $null $t0 120 "한글 지시문 첫머리입니다").Id))
+Assert-Equal "표식이 비어 있으면 후보가 여럿일 때 ambiguous" "ambiguous" (Resolve-AgyConversation $home2 $null $t0 120 "").State
+Remove-Item -LiteralPath $home2 -Recurse -Force -ErrorAction SilentlyContinue
+
 Remove-Item -LiteralPath $home_ -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""
 Write-Host ("통과 {0} / 실패 {1}" -f $script:Passed, $script:Failed)

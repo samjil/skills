@@ -1108,12 +1108,30 @@ try {
                             } else {
                                 ""
                             }
-                            $state = if ($watcherAlive -and $pendingList.Count -eq 0) { "processing" } else { "queued" }
+                            $claim = $null
+                            $claimAlive = $false
+                            if (-not $legacyQueue) {
+                                $claimFile = Join-Path $runningDir ("{0}.json" -f $f.BaseName)
+                                if (Test-Path -LiteralPath $claimFile) {
+                                    try { $claim = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($claimFile, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF)) } catch {}
+                                }
+                                if ($claim -and [int]$claim.pid -gt 0) {
+                                    $cp = Get-Process -Id ([int]$claim.pid) -ErrorAction SilentlyContinue
+                                    $claimAlive = [bool]($cp -and $cp.ProcessName -eq "powershell")
+                                }
+                            }
+                            if ($legacyQueue) {
+                                $state = if ($watcherAlive -and $pendingList.Count -eq 0) { "processing" } else { "queued" }
+                            } else {
+                                $state = if ($claimAlive) { "processing" } else { "queued" }
+                            }
 
                             # 모델 및 세션 ID 해석
                             $resolvedModel = ""
                             $sessionId = ""
-                            if ($currentTask -and $currentTask.task_id -eq $f.BaseName -and $currentTask.model) {
+                            if ($claimAlive -and $claim.model) {
+                                $resolvedModel = [string]$claim.model
+                            } elseif ($legacyQueue -and $currentTask -and $currentTask.task_id -eq $f.BaseName -and $currentTask.model) {
                                 $resolvedModel = [string]$currentTask.model
                             }
                             if (-not $resolvedModel -and $sessionVal) {
@@ -1131,22 +1149,31 @@ try {
                                 $resolvedModel = $modelVal
                             }
                             if (-not $resolvedModel) {
+                # 작업마다 있는 표시 파일(logs\running\<작업 ID>.json): 동시에 도는 작업 각각의 작업자 PID·모델·시작 시각·대화 ID.
+                # 이 폴더가 아예 없으면 옛 워처(한 번에 하나만 처리)라서 예전 규칙(맨 앞 작업이 처리 중)을 쓴다.
+                $runningDir = Join-Path $runtimeDir "logs\running"
+                $legacyQueue = -not (Test-Path -LiteralPath $runningDir -PathType Container)
+
                                 $resolvedModel = "gemini-3.8-flash-high"
                             }
 
                             # 진행 중인 작업이면 agy 대화 기록에서 현재 단계/최근 동작을 읽어 붙입니다.
                             $progress = $null
-                            if ($state -eq "processing" -and $currentTask -and $currentTask.task_id -eq $f.BaseName) {
+                            if ($state -eq "processing" -and (($claimAlive -and $claim.started_at) -or ($legacyQueue -and $currentTask -and $currentTask.task_id -eq $f.BaseName))) {
                                 $convId = ""
-                                if ($sessionVal) {
+                                if ($claimAlive -and $claim.conversation_id) { $convId = [string]$claim.conversation_id }
+                                if (-not $convId -and $sessionVal) {
                                     $sFile2 = Join-Path $sessionsDir ("{0}.json" -f (($sessionVal -replace '[\\/:*?"<>|]', '_').Trim()))
                                     if (Test-Path -LiteralPath $sFile2) {
                                         try { $convId = [string]((Get-Content -LiteralPath $sFile2 -Raw -Encoding UTF8 | ConvertFrom-Json).conversation_id) } catch {}
                                     }
                                 }
                                 $startedAt = $null
-                                try { $startedAt = [datetime]::ParseExact([string]$currentTask.started_at, "yyyy-MM-dd HH:mm:ss", $null) } catch {}
-                                $progress = Get-AgyProgress $convId $startedAt
+                                $startedText = ""
+                                if ($claimAlive -and $claim.started_at) { $startedText = [string]$claim.started_at } elseif ($currentTask) { $startedText = [string]$currentTask.started_at }
+                                try { $startedAt = [datetime]::ParseExact($startedText, "yyyy-MM-dd HH:mm:ss", $null) } catch {}
+                                $qSnippet = if ($question.Length -gt 40) { $question.Substring(0, 40) } else { $question }
+                                $progress = Get-AgyProgress $convId $startedAt $f.BaseName $qSnippet
                             }
 
                             $pendingList += [PSCustomObject]@{
@@ -1217,6 +1244,7 @@ try {
                     watcherAlive  = $watcherAlive
                     watcherSource = [string]$aliveInfo.Source
                     manualStop    = (Test-WatcherManualStop $WatcherRuntimeDir)
+                                started_at = $(if ($state -eq "processing" -and $startedText) { $startedText } else { "" })
                     canStart      = [bool]$watcherHealth
                     autoRestart   = $autoRestart
                     lastHeartbeat = $lastHeartbeat
