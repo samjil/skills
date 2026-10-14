@@ -1121,6 +1121,28 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .proc-retry:hover { background: var(--raised); }
 
+/* 창 위쪽의 번역 줄: 버튼(한글로 번역 / 원문 보기)과 안내 */
+.proc-dlg-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
+.proc-tr-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.proc-tr-btn:hover:not(:disabled) { background: var(--raised); }
+.proc-tr-btn:disabled { color: var(--ink-3); border-color: var(--line); background: transparent; cursor: default; }
+.proc-tr-note { color: var(--ink-3); font-size: var(--fs-xs); }
+/* 보기 전환(원문 / agy 번역 / 브라우저 번역): 붙어 있는 버튼 묶음, 지금 보는 것은 눌린 모양 */
+.proc-tr-views { display: inline-flex; }
+.proc-tr-views .proc-tr-view { border-radius: 0; margin-left: -1px; }
+.proc-tr-views .proc-tr-view:first-child { border-radius: var(--r-md) 0 0 var(--r-md); margin-left: 0; }
+.proc-tr-views .proc-tr-view:last-child { border-radius: 0 var(--r-md) var(--r-md) 0; }
+.proc-tr-views .proc-tr-view:only-child { border-radius: var(--r-md); }
+.proc-tr-btn[aria-pressed="true"] { background: var(--raised); border-color: var(--ink-3); color: var(--ink); position: relative; }
+
 .load-more-wrap { display: flex; justify-content: center; margin: 24px 0 8px; max-width: 960px; }
 #loadmore {
   border: 1px solid var(--line);

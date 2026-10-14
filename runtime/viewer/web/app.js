@@ -2161,6 +2161,7 @@
       steps: (isProcessing && p.progress && Array.isArray(p.progress.steps)) ? p.progress.steps : null,
       live: isProcessing,
       waiting: !isProcessing,
+      convId: (isProcessing && p.progress && p.progress.conversation_id) ? String(p.progress.conversation_id) : "",
       cwd: cwd != null ? cwd : (p.cwd || extractImagesFromText(p.question).cwd)
     };
   }
@@ -2206,7 +2207,298 @@
     return b;
   }
 
+  // ---- 과정 번역("한글로 번역"). agy 의 생각·설명·라벨은 영어로 나올 때가 많다. 창에서 버튼을 눌렀을 때만 서버
+  // (/api/delegate/translate)가 agy(gemini-3.8-flash-low)로 옮기고, 결과는 서버에 캐시돼서 다음부터는 바로 보인다.
+  var procTr = {};        // 대화 id -> { state: running|done|none|error|unavailable, message, items(단계 순번 -> label/think/say), model }
+  var procTrView = {};    // 대화 id -> "orig" | "agy" | "browser": 사용자가 고른 보기(고르지 않았으면 있는 번역본)
+  var procTrTimer = null;
+  var procDialogConv = "";  // 지금 창에 보이는 과정의 대화 id
+
+  function hasHangul(s) { return /[\uAC00-\uD7A3]/.test(String(s == null ? "" : s)); }
+
+  // 번역할 글(한글이 아닌 라벨·생각·설명)이 하나라도 있는지. items 를 주면 그 안에 이미 번역된 칸은 뺀다.
+  function needsTranslation(steps, items) {
+    if (!steps) return false;
+    var names = ["label", "think", "say"];
+    for (var i = 0; i < steps.length; i++) {
+      var have = items ? items[String(i)] : null;
+      for (var k = 0; k < names.length; k++) {
+        var v = steps[i][names[k]];
+        if (v && !hasHangul(v) && !(have && have[names[k]])) return true;
+      }
+    }
+    return false;
+  }
+
+
+  // 번역해 둔 라벨·생각·설명으로 단계 목록의 글을 바꾼 사본을 돌려준다(원본은 건드리지 않는다). 순번은 단계 목록의 위치다.
+  function applyProcessTranslation(steps, items) {
+    if (!items) return steps;
+    return steps.map(function (st, i) {
+      var ko = items[String(i)];
+      if (!ko) return st;
+      var c = {};
+      for (var k in st) { if (Object.prototype.hasOwnProperty.call(st, k)) c[k] = st[k]; }
+      if (ko.label) c.label = ko.label;
+      if (ko.think) c.think = ko.think;
+      if (ko.say) c.say = ko.say;
+      return c;
+    });
+  }
+
+  function procItemCount(items) { return items ? Object.keys(items).length : 0; }
+
+  // 지금 보는 글: "orig"(원문) | "agy"(agy 번역) | "browser"(브라우저 번역). 고르지 않았으면 있는 번역본(agy 우선), 없으면 원문.
+  function procTrViewOf(convId) {
+    var nA = procItemCount(procTr[convId] && procTr[convId].items);
+    var nB = procItemCount(procTrB[convId] && procTrB[convId].items);
+    var v = procTrView[convId];
+    if (v === "orig") return "orig";
+    if (v === "agy" && nA) return "agy";
+    if (v === "browser" && nB) return "browser";
+    return nA ? "agy" : (nB ? "browser" : "orig");
+  }
+
+  function procTrItemsFor(convId, view) {
+    if (view === "agy") return (procTr[convId] && procTr[convId].items) || null;
+    if (view === "browser") return (procTrB[convId] && procTrB[convId].items) || null;
+    return null;
+  }
+
+  // 창 위쪽의 번역 줄: 보기 전환(원문 / agy 번역 / 브라우저 번역)과 번역 실행 버튼 두 개(agy, 브라우저)와 안내.
+  // 번역할 글이 없고 번역해 둔 것도 없으면 빈 글(줄을 숨긴다).
+  function buildTranslateToolsHtml(convId, steps) {
+    if (!convId || !steps || !steps.length) return "";
+    var agy = procTr[convId] || null;
+    var br = procTrB[convId] || null;
+    var nA = procItemCount(agy && agy.items);
+    var nB = procItemCount(br && br.items);
+    var needA = needsTranslation(steps, agy && agy.items);
+    var needB = needsTranslation(steps, br && br.items);
+    if (!needsTranslation(steps) && !nA && !nB) return "";
+    var view = procTrViewOf(convId);
+    var out = [];
+
+    // 보기 전환: 번역본이 하나라도 있을 때만
+    if (nA || nB) {
+      var views = [["orig", "원문"]];
+      if (nA) views.push(["agy", "agy 번역"]);
+      if (nB) views.push(["browser", "브라우저 번역"]);
+      out.push('<span class="proc-tr-views" role="group" aria-label="보기">' + views.map(function (v) {
+        return '<button type="button" class="proc-tr-btn proc-tr-view" data-act="view" data-view="' + v[0] + '" aria-pressed="' + (view === v[0] ? "true" : "false") + '">' + v[1] + '</button>';
+      }).join("") + '</span>');
+    }
+
+    // agy 로 번역
+    var aState = agy ? agy.state : "";
+    if (aState === "running") {
+      out.push('<button type="button" class="proc-tr-btn" disabled>agy 번역 중… (30초~1분)</button>');
+    } else if (aState !== "unavailable" && aState !== "done" && needA) {
+      out.push('<button type="button" class="proc-tr-btn" data-act="translate" title="agy(gemini-3.8-flash-low)가 번역합니다. 30초~1분 걸리고 agy 사용량을 씁니다. 결과는 서버에 저장됩니다.">' +
+        (nA > 0 ? "agy로 새 단계 번역" : (aState === "error" ? "agy로 다시 시도" : "agy로 번역")) + '</button>');
+    }
+
+    // 브라우저로 번역
+    var bState = br ? br.state : "";
+    if (browserTranslatorSupported()) {
+      if (bState === "running") {
+        var pg = br.progress || {};
+        out.push('<button type="button" class="proc-tr-btn" disabled>' +
+          (pg.download >= 0 ? "언어 팩 내려받는 중 " + pg.download + "%" : "브라우저 번역 중… " + (pg.total ? pg.done + "/" + pg.total : "")) + '</button>');
+      } else if (needB) {
+        out.push('<button type="button" class="proc-tr-btn" data-act="translate-browser" title="이 브라우저의 내장 번역을 씁니다. 무료이고 빠르지만 품질이 낮을 수 있습니다. 처음에는 언어 팩을 내려받을 수 있습니다.">' +
+          (nB > 0 ? "브라우저로 새 단계 번역" : (bState === "error" ? "브라우저로 다시 시도" : "브라우저로 번역")) + '</button>');
+      }
+    }
+
+    // 안내
+    if (aState === "unavailable") out.push('<span class="proc-tr-note">' + escapeHtml((agy && agy.message) || "agy 로는 번역할 수 없습니다") + '.</span>');
+    if (aState === "error" && agy.message) out.push('<span class="proc-tr-note">agy 번역 실패: ' + escapeHtml(agy.message) + '</span>');
+    if (bState === "error" && br.message) out.push('<span class="proc-tr-note">브라우저 번역 실패: ' + escapeHtml(br.message) + '</span>');
+    if (bState === "done" && br.message) out.push('<span class="proc-tr-note">' + escapeHtml(br.message) + '.</span>');
+    if (view === "agy") out.push('<span class="proc-tr-note">AI(' + escapeHtml((agy && agy.model) || "agy") + ')가 번역한 글입니다.</span>');
+    if (view === "browser") out.push('<span class="proc-tr-note">브라우저 내장 번역 결과입니다. 틀릴 수 있습니다.</span>');
+    return out.join("");
+  }
+
+  function setProcessTranslation(convId, res, fallbackMessage) {
+    var prev = procTr[convId] || {};
+    if (res && typeof res === "object") {
+      procTr[convId] = { state: res.state || "none", message: res.message || "", items: res.items || {}, model: res.model || prev.model || "" };
+    } else {
+      procTr[convId] = { state: "error", message: fallbackMessage || "", items: prev.items || {}, model: prev.model || "" };
+    }
+  }
+
+  // 번역 중이면 3초마다 상태를 다시 읽는다(창이 이 대화를 보여 주는 동안만).
+  function afterProcessTranslationChange(convId) {
+    renderProcessDialog();
+    if (procTrTimer) { clearTimeout(procTrTimer); procTrTimer = null; }
+    var t = procTr[convId];
+    var dlg = document.getElementById("process-dialog");
+    if (t && t.state === "running" && dlg && dlg.open && procDialogConv === convId) {
+      procTrTimer = setTimeout(function () { loadProcessTranslation(convId); }, 3000);
+    }
+  }
+
+  function loadProcessTranslation(convId) {
+    fetchJson("/api/delegate/translate?id=" + encodeURIComponent(convId))
+      .then(function (res) { setProcessTranslation(convId, res, "번역 상태를 읽지 못했습니다"); })
+      .catch(function () { setProcessTranslation(convId, null, "번역 상태를 읽지 못했습니다"); })
+      .then(function () { afterProcessTranslationChange(convId); });
+  }
+
+  function startProcessTranslation(convId) {
+    var prev = procTr[convId] || {};
+    procTr[convId] = { state: "running", message: "", items: prev.items || {}, model: prev.model || "" };
+    renderProcessDialog();
+    fetch("/api/delegate/translate?id=" + encodeURIComponent(convId), { method: "POST", headers: { "X-Samjil-Viewer": "1" } })
+      .then(function (r) { return r.text(); })
+      .then(function (t) {
+        if (t && t.charCodeAt(0) === 0xFEFF) { t = t.slice(1); }
+        setProcessTranslation(convId, JSON.parse(t), "번역을 시작하지 못했습니다");
+      })
+      .catch(function () { setProcessTranslation(convId, null, "번역을 시작하지 못했습니다"); })
+      .then(function () { afterProcessTranslationChange(convId); });
+  }
+
+  // ---- 브라우저 내장 번역(Translator API). 서버·agy 를 거치지 않고 이 화면이 직접 영어->한국어로 옮긴다. 무료이고 빠르지만
+  // 품질이 낮을 수 있고, 지시("코드는 번역하지 마")를 줄 수 없어서 백틱 안의 코드는 번역 전에 자리표시자로 빼 두었다가 되돌린다.
+  // 되돌리지 못한 글(자리표시자가 사라지거나 늘어남)은 번역본으로 쓰지 않고 원문을 둔다. 결과는 이 브라우저(localStorage)에만 남는다.
+  var procTrB = {};   // 대화 id -> { state: running|done|error, message, items, progress: { done, total, download } }
+  var BROWSER_TR_STORE = "samjil.processTranslation.browser.v1";
+  var BROWSER_TR_KEEP = 40;   // 최근 대화 몇 개까지 기억할지
+
+  // 백틱으로 감싼 코드/이름을 XQ1X, XQ2X … 로 바꿔 둔다.
+  function protectCodeSpans(text) {
+    var codes = [];
+    var out = String(text == null ? "" : text).replace(/`[^`\n]+`/g, function (m) { codes.push(m); return "XQ" + codes.length + "X"; });
+    return { text: out, codes: codes };
+  }
+
+  // 번역된 글의 자리표시자를 원래 코드로 되돌린다. 하나라도 없거나, 만든 적 없는 자리표시자가 있으면 null(쓰지 않는다).
+  function restoreCodeSpans(text, codes) {
+    var s = String(text == null ? "" : text);
+    for (var i = 0; i < codes.length; i++) {
+      var tok = "XQ" + (i + 1) + "X";
+      if (s.indexOf(tok) < 0) return null;
+      s = s.split(tok).join(codes[i]);
+    }
+    return /XQ\d+X/.test(s) ? null : s;
+  }
+
+  // 번역기(translator.translate(글) -> Promise<글>)로 단계 목록의 한글 아닌 칸을 번역한다. existing 에 이미 있는 칸은 건너뛴다.
+  // 반환: Promise<{ items, failed, total }>. 한 칸이 실패해도 나머지는 계속한다.
+  function translateStepsWithBrowser(steps, existing, translator, onProgress) {
+    var jobs = [];
+    var fields = ["label", "think", "say"];
+    steps.forEach(function (st, i) {
+      fields.forEach(function (f) {
+        var v = st[f];
+        var have = existing && existing[String(i)] && existing[String(i)][f];
+        if (v && !hasHangul(v) && !have) jobs.push({ i: String(i), f: f, text: String(v) });
+      });
+    });
+    var items = {};
+    Object.keys(existing || {}).forEach(function (k) { items[k] = {}; Object.keys(existing[k]).forEach(function (f) { items[k][f] = existing[k][f]; }); });
+    var failed = 0, done = 0;
+    var chain = Promise.resolve();
+    jobs.forEach(function (j) {
+      chain = chain.then(function () {
+        var pr = protectCodeSpans(j.text);
+        return Promise.resolve(translator.translate(pr.text)).then(function (ko) {
+          var restored = restoreCodeSpans(ko, pr.codes);
+          if (restored && restored.trim()) {
+            if (!items[j.i]) items[j.i] = {};
+            items[j.i][j.f] = restored.trim();
+          } else { failed++; }
+        }).catch(function () { failed++; }).then(function () {
+          done++;
+          if (onProgress) onProgress(done, jobs.length);
+        });
+      });
+    });
+    return chain.then(function () { return { items: items, failed: failed, total: jobs.length }; });
+  }
+
+  function withTimeout(promise, ms, message) {
+    return new Promise(function (resolve, reject) {
+      var t = setTimeout(function () { reject(new Error(message)); }, ms);
+      Promise.resolve(promise).then(function (v) { clearTimeout(t); resolve(v); }, function (e) { clearTimeout(t); reject(e); });
+    });
+  }
+
+  function browserTranslatorSupported() { return typeof Translator !== "undefined"; }
+
+  // 번역기를 만든다. 언어 팩이 없으면 내려받는다(진행률은 onDownload). 이 브라우저가 못 하면 이유를 담아 reject.
+  function createBrowserTranslator(onDownload) {
+    if (!browserTranslatorSupported()) return Promise.reject(new Error("이 브라우저는 내장 번역(Translator API)을 지원하지 않습니다"));
+    var opts = { sourceLanguage: "en", targetLanguage: "ko" };
+    return withTimeout(Translator.availability(opts), 10000, "브라우저가 번역 가능 여부에 답하지 않습니다. 이 브라우저에서는 쓸 수 없는 것 같습니다")
+      .then(function (av) {
+        if (av === "unavailable") throw new Error("이 브라우저는 영어→한국어 번역을 지원하지 않습니다");
+        var create = Translator.create({
+          sourceLanguage: opts.sourceLanguage, targetLanguage: opts.targetLanguage,
+          monitor: function (m) { m.addEventListener("downloadprogress", function (e) { if (onDownload) onDownload(Math.round((e.loaded || 0) * 100)); }); }
+        });
+        return withTimeout(create, 180000, "번역 모델 준비가 끝나지 않았습니다. 다시 눌러 주세요");
+      });
+  }
+
+  function loadBrowserTranslations() {
+    try {
+      var raw = window.localStorage.getItem(BROWSER_TR_STORE);
+      var obj = raw ? JSON.parse(raw) : {};
+      return (obj && typeof obj === "object") ? obj : {};
+    } catch (e) { return {}; }
+  }
+
+  function saveBrowserTranslation(convId, items) {
+    try {
+      var all = loadBrowserTranslations();
+      all[convId] = { t: Date.now(), items: items };
+      var ids = Object.keys(all).sort(function (a, b) { return (all[b].t || 0) - (all[a].t || 0); });
+      ids.slice(BROWSER_TR_KEEP).forEach(function (id) { delete all[id]; });
+      window.localStorage.setItem(BROWSER_TR_STORE, JSON.stringify(all));
+    } catch (e) { /* 저장을 못 해도(비공개 창 등) 이번 화면에서는 번역본이 보인다 */ }
+  }
+
+  // 창을 열 때 이 브라우저에 저장해 둔 번역이 있으면 불러온다.
+  function restoreBrowserTranslation(convId) {
+    if (procTrB[convId] && procTrB[convId].items) return;
+    var saved = loadBrowserTranslations()[convId];
+    if (saved && saved.items && Object.keys(saved.items).length) procTrB[convId] = { state: "done", message: "", items: saved.items, progress: null };
+  }
+
+  function startBrowserTranslation(convId, steps) {
+    var prev = procTrB[convId] || {};
+    var existing = prev.items || {};
+    procTrB[convId] = { state: "running", message: "", items: existing, progress: { done: 0, total: 0, download: -1 } };
+    renderProcessDialog();
+    var token = procTrB[convId];
+    function progress(p) { if (procTrB[convId] === token) { token.progress = p; renderProcessDialog(); } }
+    createBrowserTranslator(function (pct) { progress({ done: 0, total: 0, download: pct }); })
+      .then(function (translator) {
+        return translateStepsWithBrowser(steps, existing, translator, function (d, t) { progress({ done: d, total: t, download: -1 }); })
+          .then(function (res) { try { if (translator.destroy) translator.destroy(); } catch (e) {} return res; });
+      })
+      .then(function (res) {
+        var allFailed = res.total > 0 && res.failed === res.total;
+        procTrB[convId] = {
+          state: allFailed ? "error" : "done",
+          message: allFailed ? "브라우저 번역이 모든 글에서 실패했습니다" : (res.failed ? res.failed + "칸은 번역을 쓸 수 없어 원문으로 두었습니다" : ""),
+          items: res.items, progress: null
+        };
+        if (!allFailed) saveBrowserTranslation(convId, res.items);
+      })
+      .catch(function (err) {
+        procTrB[convId] = { state: "error", message: (err && err.message) ? err.message : "브라우저 번역에 실패했습니다", items: existing, progress: null };
+      })
+      .then(function () { renderProcessDialog(); });
+  }
+
   var procDialogKey = "";   // 지금 열려 있는 과정 창의 카드 키("" 이면 닫힘)
+  var procDialogSteps = null;  // 지금 창에 보이는 단계 목록(브라우저 번역 버튼이 쓴다)
   var procDialogLast = "";  // 마지막으로 그린 내용(같으면 다시 그리지 않아 스크롤과 선택이 유지된다)
 
   function ensureProcessDialog() {
@@ -2226,15 +2518,26 @@
       '  </header>',
       '  <p class="proc-dlg-sum"></p>',
       '  <p class="proc-dlg-cwd"></p>',
+      '  <div class="proc-dlg-tools" hidden></div>',
       '  <div class="proc-dlg-body"></div>',
       '</div>'
     ].join("");
     dlg.addEventListener("click", function (e) {
       if (e.target === dlg || (e.target.classList && e.target.classList.contains("proc-dlg-close"))) { dlg.close(); return; }
       var retry = e.target.closest ? e.target.closest(".proc-retry") : null;
-      if (retry) { loadProcessFor(retry.getAttribute("data-conv")); }
+      if (retry) { loadProcessFor(retry.getAttribute("data-conv")); return; }
+      var trBtn = e.target.closest ? e.target.closest(".proc-tr-btn") : null;
+      if (trBtn && procDialogConv) {
+        var act = trBtn.getAttribute("data-act");
+        if (act === "translate") { startProcessTranslation(procDialogConv); }
+        else if (act === "translate-browser") { startBrowserTranslation(procDialogConv, procDialogSteps || []); }
+        else if (act === "view") { procTrView[procDialogConv] = trBtn.getAttribute("data-view"); renderProcessDialog(); }
+      }
     });
-    dlg.addEventListener("close", function () { procDialogKey = ""; procDialogLast = ""; });
+    dlg.addEventListener("close", function () {
+      procDialogKey = ""; procDialogLast = ""; procDialogConv = "";
+      if (procTrTimer) { clearTimeout(procTrTimer); procTrTimer = null; }
+    });
     document.body.appendChild(dlg);
     return dlg;
   }
@@ -2249,16 +2552,21 @@
     procDialogKey = src.key;
     var st = resolveProcessState(src.opts);
 
+    var convId = src.opts.convId || "";
+    procDialogConv = convId;
     var html;
     if (st.steps && st.steps.length) {
-      html = buildProcessRowsHtml(st.steps, src.opts.cwd);
+      procDialogSteps = st.steps;
+      var viewItems = procTrItemsFor(convId, procTrViewOf(convId));
+      html = buildProcessRowsHtml(viewItems ? applyProcessTranslation(st.steps, viewItems) : st.steps, src.opts.cwd);
     } else if (st.steps) {
       html = '<p class="proc-empty">' + escapeHtml(st.summary) + '.</p>';
     } else {
       html = '<p class="proc-empty">' + escapeHtml(st.message) + '.</p>' +
         (st.error ? '<button type="button" class="proc-retry" data-conv="' + escapeHtml(st.fetchId) + '">다시 시도</button>' : "");
     }
-    var head = [src.taskId, st.summary, src.opts.live ? "live" : "", src.opts.cwd || ""].join("\u0001");
+    var toolsHtml = buildTranslateToolsHtml(convId, st.steps);
+    var head = [src.taskId, st.summary, src.opts.live ? "live" : "", src.opts.cwd || "", toolsHtml].join("\u0001");
     if (procDialogLast === head + "\u0002" + html) return;
     procDialogLast = head + "\u0002" + html;
 
@@ -2267,6 +2575,9 @@
     var cwdEl = dlg.querySelector(".proc-dlg-cwd");
     cwdEl.textContent = (src.opts.cwd && st.steps && st.steps.length) ? "작업 폴더 " + src.opts.cwd + " 아래 경로는 폴더 이름을 빼고 보입니다." : "";
     cwdEl.hidden = !cwdEl.textContent;
+    var toolsEl = dlg.querySelector(".proc-dlg-tools");
+    toolsEl.innerHTML = toolsHtml;
+    toolsEl.hidden = !toolsHtml;
     var body = dlg.querySelector(".proc-dlg-body");
     var top = body.scrollTop;
     body.innerHTML = html;
@@ -2282,8 +2593,11 @@
     // 기록에 과정이 없는 옛 위임만, 창을 여는 지금 한 번 읽어 온다(카드를 그릴 때는 읽지 않는다)
     var st = resolveProcessState(src.opts);
     if (st.fetchId) loadProcessFor(st.fetchId);
+    if (src.opts.convId) restoreBrowserTranslation(src.opts.convId);
     if (!dlg.open) dlg.showModal();
     renderProcessDialog();
+    // 번역해 둔 것이 있는지 서버에서 한 번 읽는다(작은 응답). 번역을 시작하는 것은 사용자가 버튼을 눌렀을 때뿐이다.
+    if (src.opts.convId) loadProcessTranslation(src.opts.convId);
   }
 
   function buildCard(r) {
