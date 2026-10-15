@@ -1983,7 +1983,10 @@
       }
 
       pItem.onclick = function () {
-        var nextOpen = !isOpen;
+        // 스마트 토글: 이미 이 프로젝트의 전체 목록이 활성화된 상태에서 다시 누를 때만 접기/펼치기 토글
+        // 하위 세션이 선택되어 있거나 다른 프로젝트에서 진입 시에는 항상 목록을 펼친 상태(open)로 유지
+        var isAlreadyProjectActive = (currentQaProject === p.id && !currentQaSession);
+        var nextOpen = isAlreadyProjectActive ? !isOpen : true;
         currentQaProject = p.id;
         currentQaSession = "";
         setQaTreeOpen(p.id, nextOpen);
@@ -2245,7 +2248,10 @@
       }
 
       pItem.onclick = function () {
-        var nextOpen = !isOpen;
+        // 스마트 토글: 이미 이 프로젝트의 전체 목록이 활성화된 상태에서 다시 누를 때만 접기/펼치기 토글
+        // 하위 세션이 선택되어 있거나 다른 프로젝트에서 진입 시에는 항상 목록을 펼친 상태(open)로 유지
+        var isAlreadyProjectActive = (currentHandoffProject === p.id && !currentHandoffSession);
+        var nextOpen = isAlreadyProjectActive ? !isOpen : true;
         currentHandoffProject = p.id;
         currentHandoffSession = "";
         setHandoffTreeOpen(p.id, nextOpen);
