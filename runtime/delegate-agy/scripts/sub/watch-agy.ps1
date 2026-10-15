@@ -952,6 +952,7 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
     $lastActivity    = $null
     $stopNow         = $null
     $nextProgressLog = $AgyProgressLogSeconds
+    $nextBgLog       = 0         # 백그라운드 도구를 기다린다는 로그를 5분에 한 번만 남기려고
     $finished        = $false
     while ($true) {
         $finished = $proc.WaitForExit([int]($AgyPollSeconds * 1000))
@@ -985,7 +986,16 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
         if ($stallCheck -and $convId) {
             $lastActivity = Get-AgyConversationActivity $agyHome $convId
             if (Test-AgyStalled $lastActivity $startedAt $now $AgyStallSeconds) {
-                $stopReason = 'stall'; $stopNow = $now; break
+                # 오래 걸리는 명령을 agy 가 백그라운드로 돌려 두고 기다리는 중이면 새 단계가 없는 게 정상이다. 끊지 않는다(절대 마감은 그대로).
+                $bgPending = @(Get-AgyPendingBackgroundTasks $agyHome $convId)
+                if ($bgPending.Count -gt 0) {
+                    if ($elapsed -ge $nextBgLog) {
+                        Log ("  새 단계가 {0}초 넘게 없지만 agy 가 백그라운드로 돌린 도구 {1}건이 아직 끝나지 않아 멈춤으로 보지 않고 기다립니다 ({2}). 절대 마감 {3}초까지." -f $AgyStallSeconds, $bgPending.Count, ($bgPending -join ', '), $AgyTimeoutSeconds)
+                        $nextBgLog = $elapsed + 300
+                    }
+                } else {
+                    $stopReason = 'stall'; $stopNow = $now; break
+                }
             }
         }
         if ($elapsed -ge $nextProgressLog) {

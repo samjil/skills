@@ -86,7 +86,10 @@ $sleepArgs = @("-NoProfile", "-Command", "Start-Sleep 60")
 $mine = Start-Process -FilePath $fakeAgy -ArgumentList $sleepArgs -PassThru -WindowStyle Hidden
 # 남의 것: WMI 가 띄우므로 부모가 이 테스트 프로세스가 아니다(사용자가 직접 띄운 agy 를 흉내).
 $cmdLine = '"' + $fakeAgy + '" -NoProfile -Command "Start-Sleep 60"'
-$created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmdLine }
+# WMI 로 만드는 이유: 이 시험 프로세스의 자손이 아닌 "남의 agy" 를 흉내 내려고. 다만 기본 설정으로 만들면 콘솔 창이 시험 때마다 보였다 사라진다
+# (콘솔 창 감시기로 잡음) - ShowWindow=0(SW_HIDE) 으로 창 없이 만든다.
+$startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
+$created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmdLine; ProcessStartupInformation = $startup }
 $theirsPid = [int]$created.ProcessId
 Start-Sleep -Seconds 2
 $found = @(Get-DescendantProcessIdsByName $PID "agy")
@@ -160,8 +163,29 @@ Assert-Equal "대화 기록이 없으면 `$null" $true ($null -eq (Get-AgyLastSt
 Assert-Equal "경로 문자가 든 id 는 `$null" $true ($null -eq (Get-AgyLastStepSummary $home3 "..\x"))
 Assert-Equal "요약이 없으면 로그 글도 비어 있다" "" (Format-AgyLastStep $null)
 $fmt = Format-AgyLastStep $s2
-Assert-Equal "로그 글에 단계 번호·종류·짐작이 든다" $true (($fmt -like "*#22*") -and ($fmt -like "*GENERIC*") -and ($fmt -like "*모델이 다음 응답을 만드는 중일 수 있음*"))
+Assert-Equal "로그 글에 단계 번호·종류·짐작이 든다" $true (($fmt -like "*#22*") -and ($fmt -like "*GENERIC*") -and ($fmt -like "*모델 응답을 기다리는 중이거나 agy 가 멈춘 것일 수 있음*"))
 Assert-Equal "도구가 도는 중이면 도구 이름과 짐작이 로그 글에 든다" $true ((Format-AgyLastStep $s1) -like "*run_command,view_file*도구가 아직 도는 중일 수 있음*")
+
+Write-Host "Get-AgyPendingBackgroundTasks (오래 걸리는 명령을 백그라운드로 돌려 두고 기다리는 중인가)"
+$bgId = "bg-conv"
+$bgRun4 = '{"step_index":4,"source":"MODEL","type":"GENERIC","status":"RUNNING","content":"Created At: x\nTool is running as a background task with task id: ' + $bgId + '/task-4\nTask Description: Start-Sleep -Seconds 420\nYOU MUST TAKE ONE OF THE FOLLOWING TWO ACTIONS"}'
+$bgRun7 = '{"step_index":7,"source":"MODEL","type":"GENERIC","status":"RUNNING","content":"Tool is running as a background task with task id: ' + $bgId + '/task-7\nTask Description: pytest"}'
+$bgDone4 = '{"step_index":6,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE","content":"<SYSTEM_MESSAGE>\n[Message] timestamp=x sender=' + $bgId + '/task-4 priority=H content=Task id \"' + $bgId + '/task-4\" finished with result:\n\nThe command exited with code 0."}'
+$bgDoneOther = '{"step_index":6,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE","content":"[Message] sender=other-conv/task-4 content=finished"}'
+Write-Transcript $bgId @($stPlanner, $bgRun4, $stResult)
+Assert-Equal "시작만 있고 끝 알림이 없으면 도는 중이다" "bg-conv/task-4" (@(Get-AgyPendingBackgroundTasks $home3 $bgId) -join ",")
+Write-Transcript $bgId @($stPlanner, $bgRun4, $stResult, $bgDone4, $stFinal)
+Assert-Equal "같은 task-N 의 끝 알림(SYSTEM_MESSAGE)이 오면 도는 중이 아니다" 0 @(Get-AgyPendingBackgroundTasks $home3 $bgId).Count
+Write-Transcript $bgId @($bgRun4, $bgRun7, $bgDone4)
+Assert-Equal "둘 중 하나만 끝났으면 나머지 하나가 도는 중이다" "bg-conv/task-7" (@(Get-AgyPendingBackgroundTasks $home3 $bgId) -join ",")
+Write-Transcript $bgId @($bgRun4, $bgDoneOther)
+Assert-Equal "다른 대화의 같은 번호 끝 알림은 세지 않는다" "bg-conv/task-4" (@(Get-AgyPendingBackgroundTasks $home3 $bgId) -join ",")
+Write-Transcript $bgId @($stPlanner, $stResult, $stFinal)
+Assert-Equal "백그라운드 도구가 없으면 비어 있다" 0 @(Get-AgyPendingBackgroundTasks $home3 $bgId).Count
+Assert-Equal "대화 기록이 없으면 비어 있다" 0 @(Get-AgyPendingBackgroundTasks $home3 "bg-none").Count
+Assert-Equal "경로 문자가 든 id 는 비어 있다" 0 @(Get-AgyPendingBackgroundTasks $home3 "..\x").Count
+Write-Transcript $bgId @($bgRun4, '{"step_ind')
+Assert-Equal "쓰는 중이라 끊긴 마지막 줄이 있어도 도는 중으로 읽는다" "bg-conv/task-4" (@(Get-AgyPendingBackgroundTasks $home3 $bgId) -join ",")
 Remove-Item -LiteralPath $home3 -Recurse -Force -ErrorAction SilentlyContinue
 
 Remove-Item -LiteralPath $home_ -Recurse -Force -ErrorAction SilentlyContinue
