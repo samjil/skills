@@ -33,6 +33,7 @@ $prompt = [string]$a[$pi + 1]
 if ($prompt.StartsWith('@')) { $prompt = [System.IO.File]::ReadAllText($prompt.Substring(1)) }
 $tag = 'x'; if ($prompt -match 'TAG:(\S+)') { $tag = $Matches[1] }
 $sec = 1; if ($prompt -match 'SLEEP:(\d+)') { $sec = [int]$Matches[1] }
+if ($prompt -match 'NOISE') { [Console]::Error.WriteLine('stderr-noise-from-agy') }   # 성공했는데 agy 가 표준오류에 잡음을 남기는 경우
 [System.IO.File]::WriteAllText((Join-Path $env:FAKE_TIMES_DIR "$tag.prompt"), $prompt)
 [System.IO.File]::WriteAllText((Join-Path $env:FAKE_TIMES_DIR "$tag.start"), [string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
 Start-Sleep -Seconds $sec
@@ -125,17 +126,32 @@ try {
     Send-Task "c1" "SLEEP:6" "sess-c" $dirA; Send-Task "c2" "SLEEP:6" "sess-c" $dirB
     Assert-Equal "  둘 다 끝난다" $true (Wait-Done @("c1", "c2"))
     Assert-Equal "  실행 시간이 겹친다" $true (Test-Overlap "c1" "c2")
+    Wait-ClaimGone @("c1", "c2")
+    $logC = Get-Content -Raw -Encoding UTF8 (Join-Path $rt "logs\watcher.log")
+    Assert-Equal "  같은 세션을 다른 폴더에서 함께 돌리면 '맥락이 섞일 수 있다'는 주의가 로그에 한 번 남는다" 1 ([regex]::Matches($logC, "주의: 세션 'sess-c'").Count)
 
     Write-Host "세션이 다르면 같은 폴더여도 함께 돈다"
     Send-Task "d1" "SLEEP:6" "sess-d1" $dirA; Send-Task "d2" "SLEEP:6" "sess-d2" $dirA
     Assert-Equal "  둘 다 끝난다" $true (Wait-Done @("d1", "d2"))
     Assert-Equal "  실행 시간이 겹친다" $true (Test-Overlap "d1" "d2")
+    Wait-ClaimGone @("d1", "d2")
+    $logD = Get-Content -Raw -Encoding UTF8 (Join-Path $rt "logs\watcher.log")
+    Assert-Equal "  세션이 다르면 주의를 남기지 않는다" 0 ([regex]::Matches($logD, "주의: 세션 'sess-d").Count)
 
     Write-Host "한 폴더가 다른 폴더의 상위이면 겹치는 것으로 본다(같은 세션이면 차례로)"
     $sub = Join-Path $dirA "sub"; New-Item -ItemType Directory -Force -Path $sub | Out-Null
     Send-Task "e1" "SLEEP:5" "sess-e" $dirA; Send-Task "e2" "SLEEP:2" "sess-e" $sub
     Assert-Equal "  둘 다 끝난다" $true (Wait-Done @("e1", "e2"))
     Assert-Equal "  겹치지 않는다" $false (Test-Overlap "e1" "e2")
+
+    Write-Host "agy 가 표준오류에 잡음을 남겨도 응답 파일이 먼저 생긴다(점검 루프가 비어 있지 않은 error.log 를 먼저 보고 오류로 끝내지 않게)"
+    Send-Task "n1" "SLEEP:1 NOISE"
+    Assert-Equal "  처리된다" $true (Wait-Done @("n1"))
+    Wait-ClaimGone @("n1")
+    $respN = Join-Path $rt "outbox\n1.response.md"; $errN = Join-Path $rt "outbox\n1.error.log"
+    Assert-Equal "  응답 파일이 있다" $true (Test-Path $respN)
+    Assert-Equal "  error.log 에 agy 의 표준오류가 담긴다" $true ((Test-Path $errN) -and ([System.IO.File]::ReadAllText($errN) -like "*stderr-noise-from-agy*"))
+    Assert-Equal "  응답 파일이 error.log 보다 먼저(또는 같은 때) 써진다" $true ((Test-Path $respN) -and (Test-Path $errN) -and ((Get-Item $respN).LastWriteTimeUtc -le (Get-Item $errN).LastWriteTimeUtc))
 
     Write-Host "지시문 맨 앞의 언어 규칙 문단은 agy 에 넘기지 않고 지시파일에서도 뺀다"
     $ruleText = "[언어 규칙 — 가장 먼저 지킨다] 너의 내부 생각(thinking)과 모든 도구 호출 설명, 답변을 처음부터 끝까지 한국어로 쓴다. (코드·경로·명령어·식별자만 원문 그대로)`n"

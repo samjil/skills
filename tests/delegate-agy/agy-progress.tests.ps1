@@ -132,6 +132,38 @@ Assert-Equal "대화 기록이 아직 없는 후보가 있어도 표식이 한 �
 Assert-Equal "표식이 비어 있으면 후보가 여럿일 때 ambiguous" "ambiguous" (Resolve-AgyConversation $home2 $null $t0 120 "").State
 Remove-Item -LiteralPath $home2 -Recurse -Force -ErrorAction SilentlyContinue
 
+Write-Host "Get-AgyLastStepSummary / Format-AgyLastStep (멈춤 판정 때 마지막 단계를 로그에 남기는 진단)"
+$home3 = Join-Path ([IO.Path]::GetTempPath()) ("agy-last-step-" + [Guid]::NewGuid().ToString("N"))
+function Write-Transcript($id, [string[]]$lines) {
+    $dir = Join-Path $home3 "brain\$id\.system_generated\logs"
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $dir "transcript_full.jsonl"), (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+}
+$stPlanner = '{"step_index":21,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","thinking":"실행","tool_calls":[{"name":"run_command","args":{"CommandLine":"pytest -v","toolAction":"x"}},{"name":"view_file","args":{}}]}'
+$stResult  = '{"step_index":22,"source":"MODEL","type":"GENERIC","status":"DONE","content":"ok"}'
+$stFinal   = '{"step_index":23,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","thinking":"끝"}'
+Write-Transcript "ls-tool" @($stResult, $stPlanner)
+$s1 = Get-AgyLastStepSummary $home3 "ls-tool"
+Assert-Equal "도구를 부른 모델 응답이 마지막이면 tool-running" "tool-running|21|PLANNER_RESPONSE|run_command,view_file" ("{0}|{1}|{2}|{3}" -f $s1.Hint, $s1.Index, $s1.Type, (@($s1.Tools) -join ","))
+Write-Transcript "ls-gen" @($stPlanner, $stResult)
+$s2 = Get-AgyLastStepSummary $home3 "ls-gen"
+Assert-Equal "도구 결과가 마지막이면 model-generating(모델이 다음 응답을 만드는 중일 수 있음)" "model-generating|22|GENERIC|0" ("{0}|{1}|{2}|{3}" -f $s2.Hint, $s2.Index, $s2.Type, @($s2.Tools).Count)
+Write-Transcript "ls-fin" @($stPlanner, $stResult, $stFinal)
+Assert-Equal "도구 없는 모델 응답이 마지막이면 model-finishing" "model-finishing" (Get-AgyLastStepSummary $home3 "ls-fin").Hint
+Write-Transcript "ls-partial" @($stPlanner, $stResult, '{"step_ind')
+Assert-Equal "쓰는 중이라 끊긴 마지막 줄은 건너뛰고 앞의 온전한 단계를 쓴다" 22 (Get-AgyLastStepSummary $home3 "ls-partial").Index
+$big = '{"step_index":30,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","thinking":"' + ("가" * 300000) + '","tool_calls":[{"name":"write_to_file","args":{}}]}'
+Write-Transcript "ls-big" @($stResult, $big)
+$s5 = Get-AgyLastStepSummary $home3 "ls-big"
+Assert-Equal "아주 큰 줄(응답 30만 자)도 줄 전체를 JSON 으로 읽지 않고 단계·도구를 뽑는다" "30|write_to_file|tool-running" ("{0}|{1}|{2}" -f $s5.Index, (@($s5.Tools) -join ","), $s5.Hint)
+Assert-Equal "대화 기록이 없으면 `$null" $true ($null -eq (Get-AgyLastStepSummary $home3 "ls-none"))
+Assert-Equal "경로 문자가 든 id 는 `$null" $true ($null -eq (Get-AgyLastStepSummary $home3 "..\x"))
+Assert-Equal "요약이 없으면 로그 글도 비어 있다" "" (Format-AgyLastStep $null)
+$fmt = Format-AgyLastStep $s2
+Assert-Equal "로그 글에 단계 번호·종류·짐작이 든다" $true (($fmt -like "*#22*") -and ($fmt -like "*GENERIC*") -and ($fmt -like "*모델이 다음 응답을 만드는 중일 수 있음*"))
+Assert-Equal "도구가 도는 중이면 도구 이름과 짐작이 로그 글에 든다" $true ((Format-AgyLastStep $s1) -like "*run_command,view_file*도구가 아직 도는 중일 수 있음*")
+Remove-Item -LiteralPath $home3 -Recurse -Force -ErrorAction SilentlyContinue
+
 Remove-Item -LiteralPath $home_ -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""
 Write-Host ("통과 {0} / 실패 {1}" -f $script:Passed, $script:Failed)

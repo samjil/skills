@@ -30,7 +30,7 @@ New-Item -ItemType Directory -Force -Path $SessionsDir | Out-Null
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
 # common.ps1 의 함수들(세션 읽기/쓰기와 폴더 목록, QA 기록)을 꺼내 온다
-foreach ($name in @("ConvertTo-ReadableJson", "Get-SafeSessionFileName", "Get-SessionPath", "Read-Session", "Write-Session", "ConvertTo-CwdList", "Resolve-TaskCwds", "Get-MissingCwds", "Get-QaShardFiles", "Get-QaShardPath", "Add-QaLine", "Test-QaTaskIdExists", "Add-QaRecordUnlocked")) {
+foreach ($name in @("ConvertTo-ReadableJson", "Get-SafeSessionFileName", "Get-SessionPath", "Read-Session", "Write-Session", "ConvertTo-CwdList", "Resolve-TaskCwds", "Get-MissingCwds", "Get-QaShardFiles", "Get-QaShardPath", "Add-QaLine", "Test-QaTaskIdInShardTail", "Test-QaTaskIdInRecentShards", "Add-QaRecordUnlocked")) {
     Invoke-Expression (Get-FunctionText $commonPath $name)
 }
 # 뷰어의 같은 이름 함수(사본)는 다른 이름으로 불러 와서 비교한다

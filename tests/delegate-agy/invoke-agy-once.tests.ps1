@@ -50,6 +50,7 @@ if ($mode -ne "no-conversation") {
     Touch
 }
 switch ($mode) {
+    "stderr-finish"    { [Console]::Error.WriteLine("noise-from-agy"); '{"status":"SUCCESS","response":"done","conversation_id":"' + $id + '"}' }
     "work-then-finish" { for ($i = 0; $i -lt 7; $i++) { Start-Sleep 2; Touch }; '{"status":"SUCCESS","response":"done","conversation_id":"' + $id + '"}' }
     "work-then-silent" { for ($i = 0; $i -lt 2; $i++) { Start-Sleep 2; Touch }; Start-Sleep 60 }
     "work-forever"     { for ($i = 0; $i -lt 30; $i++) { Start-Sleep 2; Touch } }
@@ -94,6 +95,18 @@ Write-Host "D) 새 대화가 아예 안 보임 -> 멈춤 점검 없이 절대 �
 $d = Run-Fake "no-conversation"
 Assert-Equal "  사유는 cap (멈춤으로 오판하지 않음)" "cap" $d.Result.Reason
 Assert-True  "  '멈춤 점검 불가' 로그를 남김" (($script:LogLines -join "`n") -match "멈춤 점검 불가")
+
+Write-Host "E) 표준오류(stderr)를 남기고 끝남 -> 파일로 쓰지 않고 돌려준다(error.log 는 응답 뒤에 호출한 쪽이 쓴다)"
+$errPath = Join-Path $work "err-e.log"
+$env:FAKE_AGY_MODE = "stderr-finish"
+$e = Invoke-AgyOnce @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $fakeBin 'fake-agy.ps1')) $errPath $work
+Assert-Equal "  타임아웃 아님" $false $e.TimedOut
+Assert-True  "  결과(JSON)를 받음" ($e.Raw -match "SUCCESS")
+Assert-True  "  표준오류 글을 StdErr 로 돌려준다" ([string]$e.StdErr -match "noise-from-agy")
+Assert-Equal "  여기서는 error.log 파일을 만들지 않는다" $false (Test-Path -LiteralPath $errPath)
+
+Write-Host "F) 멈춤 판정에는 마지막 단계 진단 글(LastStep)이 붙는다 (B 의 결과로 확인)"
+Assert-True  "  LastStep 이 돌아온다(가짜 agy 의 기록은 단계 번호가 없는 글이라 내용은 비어 있다)" ($b.Result.ContainsKey("LastStep"))
 
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""

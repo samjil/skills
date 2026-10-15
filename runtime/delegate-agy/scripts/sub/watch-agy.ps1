@@ -805,40 +805,6 @@ function Update-QaIndex([int]$Total = -1) {
 
 
 
-# 기록 저장소의 현재 파일(ShardPath) 맨 끝 TailBytes 바이트 안에 이 작업 ID 의 레코드가 있는지 봅니다.
-# 방금 끝난 작업의 레코드가 다른 프로세스(워처가 켜질 때의 전체 동기화 등)에 의해 이미 들어갔는지 확인하는 용도라
-# 파일 전체를 읽지 않습니다. 작업 ID 가 든 줄만 엄격하게(ConvertFrom-Json) 읽어서, 깨진 줄이나 다른 레코드의 본문에
-# 우연히 적힌 같은 글자는 "있음"으로 치지 않습니다.
-function Test-QaTaskIdInShardTail([string]$ShardPath, [string]$TaskId, [int]$TailBytes = 262144) {
-    if (-not (Test-Path -LiteralPath $ShardPath)) { return $false }
-    $buf = $null
-    $got = 0
-    $start = [long]0
-    $fs = New-Object System.IO.FileStream($ShardPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-    try {
-        $len = $fs.Length
-        $start = [Math]::Max([long]0, $len - $TailBytes)
-        [void]$fs.Seek($start, [System.IO.SeekOrigin]::Begin)
-        $buf = [byte[]]::new([int]($len - $start))
-        while ($got -lt $buf.Length) {
-            $n = $fs.Read($buf, $got, $buf.Length - $got)
-            if ($n -le 0) { break }
-            $got += $n
-        }
-    } finally { $fs.Dispose() }
-    $lines = [System.Text.Encoding]::UTF8.GetString($buf, 0, $got) -split "\r?\n"
-    for ($i = 0; $i -lt $lines.Length; $i++) {
-        if ($i -eq 0 -and $start -gt 0) { continue }    # 읽기 시작 지점에서 잘린 첫 줄
-        $l = $lines[$i].Trim().TrimStart([char]0xFEFF)
-        if (-not $l) { continue }
-        if ($l.IndexOf($TaskId, [System.StringComparison]::Ordinal) -lt 0) { continue }
-        $rec = $null
-        try { $rec = $l | ConvertFrom-Json } catch { continue }
-        if ($null -ne $rec -and [string]$rec.task_id -ceq $TaskId) { return $true }
-    }
-    return $false
-}
-
 # index.json 에 적힌 기록 건수(없거나 읽을 수 없으면 0). 작업자가 건수를 +1 할 때 쓴다.
 function Get-QaIndexTotal {
     try {
@@ -898,11 +864,13 @@ function Update-QAReport { Invoke-WithRuntimeLock { Update-QAReportUnlocked } }
 #  기다리는 바람에 워처가 13분 넘게 그 자리에서 멈춘 적이 있습니다.)
 
 $AgyTimeoutSeconds = 1800
+if ($env:AGY_TIMEOUT_SECONDS -match '^\d+$' -and [int]$env:AGY_TIMEOUT_SECONDS -ge 60) { $AgyTimeoutSeconds = [int]$env:AGY_TIMEOUT_SECONDS }   # 환경변수 AGY_TIMEOUT_SECONDS(60 이상)로 바꿀 수 있다
 
 # 위 절대 마감과 별개로, agy 대화 기록에 새 단계가 이 시간 동안 하나도 없으면 "멈춘 것"으로 보고
 # 중단합니다. 단계가 계속 기록되는 동안은(= 일하는 중) 절대 마감까지 기다립니다.
 # 이 값의 근거와 한계는 agy-progress.ps1 머리말을 보세요.
 $AgyStallSeconds = 300
+if ($env:AGY_STALL_SECONDS -match '^\d+$' -and [int]$env:AGY_STALL_SECONDS -ge 30) { $AgyStallSeconds = [int]$env:AGY_STALL_SECONDS }   # 환경변수 AGY_STALL_SECONDS(30 이상)로 바꿀 수 있다
 # 마감/멈춤을 점검하는 주기(초)
 $AgyPollSeconds = 30
 # 오래 걸리는 호출의 진행 상황(경과 시간, 마지막 활동)을 로그에 남기는 주기(초)
@@ -969,11 +937,8 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
         try { $proc.StandardInput.Close() } catch {}
     } catch {
         $startError = "agy 실행 프로세스를 시작하지 못했습니다: $($_.Exception.Message)"
-        if ($errFile) {
-            [System.IO.File]::WriteAllText($errFile, $startError, (New-Object System.Text.UTF8Encoding($true)))
-        }
         if ($proc) { try { $proc.Dispose() } catch {} }
-        return @{ TimedOut = $false; Raw = $null; ExecutionError = $startError }
+        return @{ TimedOut = $false; Raw = $null; ExecutionError = $startError; StdErr = $startError }
     }
     # 절대 마감(AgyTimeoutSeconds)까지 기다리되, AgyPollSeconds마다 깨어나 "아직 일하는가"를 봅니다.
     # 대화 기록에 새 단계가 계속 쌓이면 일하는 중이므로 그대로 두고, AgyStallSeconds 동안
@@ -1048,7 +1013,9 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
         }
         try { if (-not $proc.HasExited) { Stop-ProcessTree $proc.Id } } catch {}
         try { $proc.Dispose() } catch {}
-        return @{ TimedOut = $true; Raw = $null; Reason = $stopReason; IdleSeconds = $idleSeconds; LastActivity = $lastText; ConversationId = $convId }
+        $lastStepText = ""
+        if ($convId) { try { $lastStepText = Format-AgyLastStep (Get-AgyLastStepSummary $agyHome $convId) } catch {} }
+        return @{ TimedOut = $true; Raw = $null; Reason = $stopReason; IdleSeconds = $idleSeconds; LastActivity = $lastText; ConversationId = $convId; LastStep = $lastStepText }
     }
     # 끝났다: 남은 출력을 마저 받는다(비동기로 읽던 스트림이 닫힐 때까지).
     try { $proc.WaitForExit() } catch {}
@@ -1057,15 +1024,14 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
     try { $outText = [string]$outTask.Result } catch {}
     try { $errText = [string]$errTask.Result } catch {}
     try { $proc.Dispose() } catch {}
-    if ($errFile) {
-        # 예전에는 표준오류가 이 파일로 곧바로 흘러들어 갔다. 지금은 끝나고 한 번에 쓴다(없어도 빈 파일을 남겨 기존 동작을 유지한다).
-        try { [System.IO.File]::WriteAllText($errFile, $errText, (New-Object System.Text.UTF8Encoding($true))) } catch {}
-    }
+    # 표준오류는 여기서 파일에 쓰지 않고 돌려준다. error.log 는 응답 파일을 쓴 뒤에 쓰도록 호출한 쪽(Invoke-InboxTaskBody)이 맡는다:
+    # Claude 의 점검 루프는 비어 있지 않은 error.log 를 보면 "오류"로 끝내므로, 성공했는데 agy 가 남긴 잡음(stderr)이
+    # 응답 파일보다 먼저 보이면 잘못된 오류가 된다.
     if ([string]::IsNullOrWhiteSpace($outText)) {
-        return @{ TimedOut = $false; Raw = $null }
+        return @{ TimedOut = $false; Raw = $null; StdErr = $errText }
     }
     # 하나의 문자열로 돌려준다(줄 배열로 넘기면 ConvertFrom-Json 이 줄마다 따로 해석해 배열이 되어 필드를 못 읽는다).
-    return @{ TimedOut = $false; Raw = $outText.Trim() }
+    return @{ TimedOut = $false; Raw = $outText.Trim(); StdErr = $errText }
 }
 
 # $conversationId가 없으면: $ModelPriority 목록을 순서대로 시도합니다(기존 동작).
@@ -1099,6 +1065,7 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
         ErrorMessage   = $null
         ConversationId = $null
         SessionRenewed = $false
+        StdErr         = ""
     }
 
     $overallStart = Get-Date
@@ -1155,6 +1122,7 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
             if ($cut.Length -ge 12) { $marker = $cut.Substring(0, [Math]::Min(60, $cut.Length)) }
         }
         $call = Invoke-AgyOnce $agyArgs $errFile $RuntimeDir $marker
+        if ($call.StdErr) { $result.StdErr = [string]$call.StdErr }
 
         if ($call.TimedOut) {
 
@@ -1162,6 +1130,7 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
                 $idleMin = [math]::Round($call.IdleSeconds / 60, 1)
                 $result.ErrorMessage = "agy가 $idleMin 분 동안 진행하지 않아 중단했습니다 (멈춤 판정: 마지막 활동 $($call.LastActivity), 대화 ID $($call.ConversationId))"
                 Log "  멈춤: 대화 기록에 새 단계가 $idleMin 분 동안 없어 강제로 중단했습니다 (마지막 활동 $($call.LastActivity), 대화 $($call.ConversationId)). 이 작업은 실패로 기록합니다."
+                if ($call.LastStep) { Log "    $($call.LastStep)"; $result.ErrorMessage += " [$($call.LastStep)]" }
             } else {
                 $result.ErrorMessage = "agy 호출이 $AgyTimeoutSeconds 초를 넘겨 중단했습니다 (타임아웃)"
                 Log "  타임아웃: agy 호출이 $AgyTimeoutSeconds 초를 넘겨 강제로 중단했습니다. 이 작업은 실패로 기록합니다."
@@ -1590,6 +1559,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
     $recElapsed  = $null
     $recStatus   = "ERROR"
     $effectiveSessionId = $conversationId
+    $agyStderr = $null    # agy 를 부르지 않은 실패에는 error.log 를 남기지 않는다(예전과 같다)
 
     try {
         # 프롬프트 길이와 무관하게 항상 임시 프롬프트 파일(@$tempPromptFile)을 사용하여
@@ -1604,6 +1574,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
 
         $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwds -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel -taskId $baseName -promptFile $tempPromptFile -requestedModel $requestedModel
 
+        $agyStderr = [string]$agyResult.StdErr
         if ($agyResult.RawJson) {
             Set-Content -Path (Join-Path $OutboxDir "$baseName.raw.json") -Value $agyResult.RawJson -Encoding UTF8
         }
@@ -1664,6 +1635,11 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
     }
 
 
+
+    # error.log(agy 의 표준오류)는 응답 파일을 쓴 뒤에 쓴다(Invoke-AgyOnce 주석 참고). 쓸 내용이 없어도 빈 파일을 남겨 예전 동작을 유지한다.
+    if ($agyStderr -ne $null) {
+        try { [System.IO.File]::WriteAllText($errFile, [string]$agyStderr, (New-Object System.Text.UTF8Encoding($true))) } catch {}
+    }
 
     # 지시파일을 processed 로 옮긴 뒤에 기록 저장소에 덧붙여야 방금 처리한 작업의 질문 내용도 바로 담긴다.
     Complete-TaskQaRecord $baseName $file.FullName $doneFile
@@ -1848,6 +1824,9 @@ try {
         } else {
             $reserved = New-Object System.Collections.ArrayList
             foreach ($c in $claims) { [void]$reserved.Add(@{ Session = [string]$c.session; Cwds = @($c.cwds) }) }
+            # 지금 돌고 있는(이번 점검에서 시작한 것 포함) 작업의 세션 이름: 같은 세션을 다른 폴더에서 또 시작할 때 경고하려고 든다
+            $activeSessions = New-Object System.Collections.ArrayList
+            foreach ($c in $claims) { if ([string]$c.session) { [void]$activeSessions.Add([string]$c.session) } }
             $runningIds = @($claims | ForEach-Object { [string]$_.task_id })
             $slots = $MaxParallel - $claims.Count
 
@@ -1897,7 +1876,16 @@ try {
                 [void]$reserved.Add(@{ Session = $taskSession; Cwds = $taskCwds })
                 if ($conflict -or $slots -le 0) { continue }
 
-                if (Start-InboxWorker $file $taskSession $taskCwds) { $slots-- }
+                if (Start-InboxWorker $file $taskSession $taskCwds) {
+                    $slots--
+                    if ($taskSession) {
+                        if ($activeSessions -contains $taskSession) {
+                            # 서로 다른 폴더라 함께 돌리지만, agy 의 대화는 세션 이름 하나에 하나뿐이라 두 작업의 내용이 섞일 수 있다.
+                            Log "주의: 세션 '$taskSession' 이 이미 다른 폴더에서 돌고 있는데 같은 이름으로 $baseName 을 시작합니다. agy 대화가 하나라 두 작업의 맥락이 섞일 수 있으니, 폴더가 다르면 세션 이름도 다르게 쓰세요."
+                        }
+                        [void]$activeSessions.Add($taskSession)
+                    }
+                }
             }
         }
 

@@ -214,25 +214,46 @@ function Invoke-WithRuntimeLock([scriptblock]$Block, [int]$TimeoutSeconds = 60) 
     }
 }
 
-# 이미 샤드 파일들에 해당 task_id가 기록되어 있는지 확인한다(작업자 프로세스의 중복 기록 방지).
-function Test-QaTaskIdExists([string]$TaskId) {
-    if ([string]::IsNullOrWhiteSpace($TaskId)) { return $false }
-    $escaped = [regex]::Escape($TaskId)
-    $pattern = '"task_id"\s*:\s*"' + $escaped + '"'
-    foreach ($f in (Get-QaShardFiles)) {
-        try {
-            $fs = [System.IO.File]::Open($f.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-            $reader = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
-            try {
-                while (-not $reader.EndOfStream) {
-                    $line = $reader.ReadLine()
-                    if ($line -match $pattern) { return $true }
-                }
-            } finally {
-                $reader.Dispose()
-                $fs.Dispose()
-            }
-        } catch {}
+# 기록 저장소의 현재 파일(ShardPath) 맨 끝 TailBytes 바이트 안에 이 작업 ID 의 레코드가 있는지 봅니다.
+# 방금 끝난 작업의 레코드가 다른 프로세스(워처가 켜질 때의 전체 동기화 등)에 의해 이미 들어갔는지 확인하는 용도라
+# 파일 전체를 읽지 않습니다. 작업 ID 가 든 줄만 엄격하게(ConvertFrom-Json) 읽어서, 깨진 줄이나 다른 레코드의 본문에
+# 우연히 적힌 같은 글자는 "있음"으로 치지 않습니다.
+function Test-QaTaskIdInShardTail([string]$ShardPath, [string]$TaskId, [int]$TailBytes = 262144) {
+    if (-not (Test-Path -LiteralPath $ShardPath)) { return $false }
+    $buf = $null
+    $got = 0
+    $start = [long]0
+    $fs = New-Object System.IO.FileStream($ShardPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $len = $fs.Length
+        $start = [Math]::Max([long]0, $len - $TailBytes)
+        [void]$fs.Seek($start, [System.IO.SeekOrigin]::Begin)
+        $buf = [byte[]]::new([int]($len - $start))
+        while ($got -lt $buf.Length) {
+            $n = $fs.Read($buf, $got, $buf.Length - $got)
+            if ($n -le 0) { break }
+            $got += $n
+        }
+    } finally { $fs.Dispose() }
+    $lines = [System.Text.Encoding]::UTF8.GetString($buf, 0, $got) -split "\r?\n"
+    for ($i = 0; $i -lt $lines.Length; $i++) {
+        if ($i -eq 0 -and $start -gt 0) { continue }    # 읽기 시작 지점에서 잘린 첫 줄
+        $l = $lines[$i].Trim().TrimStart([char]0xFEFF)
+        if (-not $l) { continue }
+        if ($l.IndexOf($TaskId, [System.StringComparison]::Ordinal) -lt 0) { continue }
+        $rec = $null
+        try { $rec = $l | ConvertFrom-Json } catch { continue }
+        if ($null -ne $rec -and [string]$rec.task_id -ceq $TaskId) { return $true }
+    }
+    return $false
+}
+
+# 가장 최근에 쓴 샤드 3개의 꼬리에서 task_id 를 찾는다. 샤드가 5MB 를 넘어 막 새 파일로 나뉜 직후에는 "지금 쓰는 파일"이
+# 비어 있어 앞 파일 끝에 있는 같은 기록을 못 보므로, 활성 샤드 하나만 보지 않는다. 파일 전체는 읽지 않는다.
+function Test-QaTaskIdInRecentShards([string]$TaskId) {
+    $recent = @(Get-QaShardFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 3)
+    foreach ($f in $recent) {
+        if (Test-QaTaskIdInShardTail $f.FullName $TaskId) { return $true }
     }
     return $false
 }
@@ -240,7 +261,7 @@ function Test-QaTaskIdExists([string]$TaskId) {
 # 단일 Q&A 레코드 1건을 추가하고 index.json을 갱신한다. 반환: 기록된 샤드 경로(건너뛰었거나 실패하면 $null).
 function Add-QaRecordUnlocked([System.Collections.IDictionary]$Record, [string]$QaIndexFile, [int]$QaKeepMonths = 12) {
     $taskId = if ($Record -and $Record.Contains("task_id")) { [string]$Record["task_id"] } else { "" }
-    if ($taskId -and (Test-QaTaskIdExists $taskId)) {
+    if ($taskId -and (Test-QaTaskIdInRecentShards $taskId)) {
         return $null
     }
 
