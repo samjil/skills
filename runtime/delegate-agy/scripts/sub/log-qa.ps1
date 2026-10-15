@@ -97,7 +97,7 @@ if ([string]::IsNullOrWhiteSpace($line)) { throw "레코드를 JSON으로 변환
 # 경로를 한 번만 계산해서 씁니다 - Add-Content 이후에 다시 계산하면 방금 쓴 내용 때문에
 # 파일 크기가 달라져 있어(특히 회전 기준을 넘겼다면) 실제로 쓴 파일과 다른 경로를 보고할 수 있습니다.
 $shardPath = Get-QaShardPath
-Add-Content -Path $shardPath -Value $line -Encoding UTF8
+Add-QaLine $shardPath $line
 
 # index.json은 실제 shard 파일들을 다시 읽어 총 건수를 새로 계산합니다
 # (watch-agy.ps1이 지금 안 떠 있어도 웹 뷰어가 정확한 총 건수를 보여주도록).

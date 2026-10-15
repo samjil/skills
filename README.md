@@ -167,6 +167,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\delegate-agy\invoke-ag
 - `ensure-check-only.tests.ps1`: `ensure-agy-running.ps1 -CheckOnly`의 `ALIVE`/`DEAD`/`MANUAL_STOP` 판정
 - `process-translate.tests.ps1`: 과정 번역 보조 스크립트(`process-translate.ps1`) — 한글이 이미 든 칸·이미 번역한 칸 건너뛰기, 덩어리 나누기, 답에서 JSON 꺼내기와 검증, 캐시 읽기·쓰기, 가짜 `agy`로 끝까지(읽기 전용 호출, 캐시 재사용, 새 단계만 번역, 대화 기록 없음, 깨진 답, 시간 초과) (몇 초)
 - `agy-process.tests.ps1`: `agy` 대화 기록에서 과정(도구 호출 목록)을 읽는 `Read-AgyProcessSteps` 테스트 — 도구별 대상, 생각·진행 설명(`think`/`say`)과 글자 수 상한, 시각 변환, 이어 읽기(쓰는 중인 마지막 줄·파일이 바뀐 경우), 상한, BOM, 깨진 줄, 경로 문자가 든 대화 ID 거절 (몇 초)
+- `qa-store.tests.ps1`: 기록 저장소(`qa-*.jsonl`) 쓰기 경로 — 작업자가 끝날 때 전체 기록을 읽지 않고 그 작업 한 건만 덧붙이는지(`Complete-TaskQaRecord`: 질문·답·토큰, `index.json` 갱신, 이미 들어간 작업은 중복 없음, 오류 경로, usage 행이 없을 때 전체 동기화로 물러남), 끊긴 줄 뒤에 새 기록이 같은 줄로 이어 붙지 않는지(`Add-QaLine`), 꼬리 중복 검사(`Test-QaTaskIdInShardTail`), 작업자 경로에서 `Update-QAReport`를 더 부르지 않는지 (몇 초)
 
 뷰어의 워처 자동 점검:
 

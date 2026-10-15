@@ -54,6 +54,32 @@ function Get-QaShardPath {
     return $path
 }
 
+# 기록 저장소(qa-*.jsonl)에 한 줄을 덧붙입니다. watch-agy.ps1(Sync-QaStore, 작업자의 단일 추가)과
+# log-qa.ps1 이 함께 씁니다.
+#  - 파일 끝이 줄바꿈이 아니면(앞선 쓰기가 도중에 끊긴 것) 줄바꿈부터 씁니다. 안 그러면 새 기록이 끊긴 줄 뒤에
+#    이어 붙어 "{잘린 기록{정상 기록}" 한 줄이 되고, 그 줄의 두 기록이 모두 JSON 으로 읽히지 않습니다.
+#  - 줄바꿈 + 한 줄을 한 번의 쓰기로 씁니다(추가 모드라 항상 파일 끝에 붙습니다).
+#  - BOM 없는 UTF-8 로 씁니다(읽는 쪽은 BOM 이 있든 없든 읽습니다).
+function Add-QaLine([string]$Path, [string]$Line) {
+    $needBreak = $false
+    if (Test-Path -LiteralPath $Path) {
+        $rs = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            if ($rs.Length -gt 0) {
+                [void]$rs.Seek(-1, [System.IO.SeekOrigin]::End)
+                $needBreak = ($rs.ReadByte() -ne 10)
+            }
+        } finally { $rs.Dispose() }
+    }
+    $text = $(if ($needBreak) { "`r`n" } else { "" }) + $Line + "`r`n"
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($text)
+    $ws = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+    try {
+        $ws.Write($bytes, 0, $bytes.Length)
+        $ws.Flush()
+    } finally { $ws.Dispose() }
+}
+
 # ============================================================================
 # 세션 연속성 (@session: <이름>)
 # ----------------------------------------------------------------------------
