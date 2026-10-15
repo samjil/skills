@@ -1,2 +1,5 @@
 # Windows PowerShell 5.1 용 스크립트는 CRLF 로 내려받는다. (BOM 과 줄바꿈 섞임은 tests/repo/script-hygiene.tests.ps1 이 지킨다)
 *.ps1 text eol=crlf
+# 셸 스크립트·git 훅은 LF 여야 한다(CRLF 이면 sh 가 "bad interpreter" 로 실패한다)
+.githooks/* text eol=lf
+*.sh text eol=lf

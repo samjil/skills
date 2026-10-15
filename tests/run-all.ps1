@@ -13,6 +13,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# 출력을 UTF-8 로 고정한다(git 훅·Git Bash 에서 한글이 깨지지 않게)
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 # powershell -File 로 부르면 -Only a,b 가 "a,b" 한 덩어리로 오므로 쉼표로 다시 나눈다
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $testsRoot = $PSScriptRoot

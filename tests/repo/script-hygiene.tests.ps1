@@ -80,6 +80,7 @@ Assert-Equal "합치다 남은 충돌 표시가 없다  $(@($markerFiles) -join 
 # 원소 하나를 돌려주는 게 확실한 함수는 아래 허용 목록에 이유와 함께 적는다.
 $allowReturnsScalar = @{
     "Get-Utf8QueryParams" = "해시테이블을 돌려준다(해시테이블은 풀리지 않고 .Count 는 키 개수다)"
+    "Get-ProcTable" = "해시테이블(프로세스 번호 -> 정보)을 돌려준다. 풀리지 않고 [번호] 로 읽는다(tools/watch-console-windows.ps1)"
 }
 
 Write-Host ""
@@ -260,6 +261,37 @@ foreach ($k in $definedIn.Keys) {
     if ($uniqueFiles.Count -gt 1 -and -not $allowDuplicateDefinition.ContainsKey($k)) { $dups += ("{0} -> {1}" -f $k, ($uniqueFiles -join ", ")) }
 }
 Assert-Equal "런타임 함수가 두 파일 이상에 정의돼 있지 않다  $(@($dups) -join ' | ')" 0 @($dups).Count
+
+Write-Host ""
+Write-Host "git 훅(.githooks)"
+# 푸시 전 시험 훅: LF 여야 하고(CRLF 이면 sh 가 'bad interpreter' 로 실패) 첫 줄이 셸 지정이어야 한다.
+$hook = Join-Path $repoRoot ".githooks\pre-push"
+Assert-Equal "푸시 전 시험 훅(.githooks/pre-push)이 있다" $true (Test-Path -LiteralPath $hook)
+if (Test-Path -LiteralPath $hook) {
+    $hb = [System.IO.File]::ReadAllBytes($hook)
+    $firstLine = [System.Text.Encoding]::UTF8.GetString($hb, 0, [Math]::Min(20, $hb.Length)) -split "`n" | Select-Object -First 1
+    Assert-Equal "  첫 줄이 #!/bin/sh 이다(BOM 도 없다)" "#!/bin/sh" $firstLine
+    $hookCr = 0; foreach ($x in $hb) { if ($x -eq 13) { $hookCr++ } }
+    Assert-Equal "  줄바꿈이 LF 뿐이다(CR 없음)" 0 $hookCr
+    $hookText = [System.Text.Encoding]::UTF8.GetString($hb)
+    Assert-Equal "  run-all.ps1 을 부르고 실패하면 푸시를 막는다(exit 1)" $true (($hookText -like "*tests/run-all.ps1*") -and ($hookText -match 'exit 1'))
+}
+$attrs = Join-Path $repoRoot ".gitattributes"
+$attrText = if (Test-Path -LiteralPath $attrs) { [System.IO.File]::ReadAllText($attrs) } else { "" }
+Assert-Equal ".gitattributes 가 훅을 LF 로 고정한다" $true ($attrText -match '\.githooks/\*\s+text\s+eol=lf')
+Assert-Equal ".gitattributes 가 .ps1 을 CRLF 로 고정한다" $true ($attrText -match '\*\.ps1\s+text\s+eol=crlf')
+
+Write-Host ""
+Write-Host "시험·스크립트가 보이는 콘솔 창을 만들지 않는지"
+# WMI(Win32_Process.Create)로 프로세스를 만들면 기본으로 콘솔 창이 떴다 사라진다. 시험을 돌릴 때마다 창이 깜빡이던 원인이었다
+# (tools\watch-console-windows.ps1 로 잡았다). 쓸 때는 ProcessStartupInformation(ShowWindow=0)을 같이 넘겨야 한다.
+$wmiVisible = @()
+foreach ($f in $psFiles) {
+    $txt = [System.IO.File]::ReadAllText($f, [System.Text.Encoding]::UTF8)
+    if ($txt -match 'Win32_Process' -and $txt -match 'MethodName\s+Create' -and $txt -notmatch 'ProcessStartupInformation') { $wmiVisible += (Get-Rel $f) }
+}
+$wmiVisible = @($wmiVisible | Where-Object { $_ -ne "tests\repo\script-hygiene.tests.ps1" })
+Assert-Equal "WMI 로 프로세스를 만들 때 창 없이 만든다(ProcessStartupInformation)  $(@($wmiVisible) -join ', ')" 0 @($wmiVisible).Count
 
 Write-Host ""
 Write-Host ("통과 {0} / 실패 {1}" -f $script:Passed, $script:Failed)
