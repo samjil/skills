@@ -55,7 +55,6 @@ param(
 try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
     $OutputEncoding = [System.Text.Encoding]::UTF8
-    chcp 65001 > $null
 } catch {}
 
 if (-not $RepoRoot) {
@@ -914,69 +913,68 @@ $AgyConversationWindowSeconds = 120
 
 
 # agy를 "백그라운드 작업"으로 한 번 실행하고, 타임아웃을 걸어 기다립니다.
-
-# 백그라운드 작업에는 콘솔이 붙어있지 않기 때문에, agy(또는 agy가 실행한 명령)가 입력을
-
-# 요구해도 즉시 EOF가 되어 무한 대기에 빠지지 않습니다. 이것이 위 사고의 직접적인 방지책이고,
-
+# agy 는 창이 아예 없는 프로세스(CreateNoWindow)로 직접 띄웁니다. 예전처럼 Start-Job 으로 PowerShell 을 한 겹 더 띄우고
+# 그 안에서 chcp·agy 를 부르면, 환경에 따라 콘솔 창이 잠깐 떴다 사라지는 일이 생길 수 있어서입니다.
+# 콘솔이 붙어 있지 않으므로 agy(또는 agy가 실행한 명령)가 입력을 요구해도 즉시 EOF 가 되어 무한 대기에 빠지지 않습니다
+# (표준입력을 바로 닫는다). 이것이 "agy가 콘솔 입력을 기다리며 워처가 13분 넘게 멈춘" 사고의 방지책이고,
 # 타임아웃은 그 밖의 이유로 멈추는 경우를 위한 안전장치입니다.
-
 #
-
-# 반환: @{ TimedOut = $true/$false; Raw = <agy 표준출력> }
-
+# 반환: @{ TimedOut = $true/$false; Raw = <agy 표준출력(문자열)> }
 function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
-
-
-
-    $job = $null
-
-    try {
-
-        $job = Start-Job -ScriptBlock {
-
-            param($a, $ef, $wd)
-
-            if ($wd) { Set-Location -Path $wd }
-
-
-
-            # [중요] 백그라운드 작업은 별도의 PowerShell 프로세스라서, 워처가 위에서 설정해둔
-
-            # UTF-8 인코딩을 물려받지 않습니다. PowerShell은 외부 명령의 표준출력을
-
-            # [Console]::OutputEncoding 기준으로 해석하므로, 이 설정을 안 하면 agy가 돌려준
-
-            # UTF-8 한글을 CP949로 잘못 읽어서 전부 깨집니다.
-
-            try {
-
-                [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-
-                $OutputEncoding = [System.Text.Encoding]::UTF8
-
-                chcp 65001 > $null
-
-            } catch {}
-
-
-
-            & agy @a 2>$ef
-
-        } -ArgumentList (, $agyArgs), $errFile, $workDir
-
-    } catch {
-
-        # 작업 생성 자체가 실패하면 예전 방식(직접 호출)으로 물러섭니다.
-
-        Log "  백그라운드 실행에 실패해 직접 호출로 대체합니다: $($_.Exception.Message)"
-
-        return @{ TimedOut = $false; Raw = (& agy @agyArgs 2>$errFile) }
-
+    # agy 에 넘길 인자 하나를 명령줄 조각으로 만든다(공백·따옴표·끝의 역슬래시를 Windows 규칙대로 감싼다).
+    function ConvertTo-AgyCommandLineArg([string]$Arg) {
+        if ($null -eq $Arg) { return '""' }
+        if ($Arg.Length -gt 0 -and $Arg -notmatch '[\s"]') { return $Arg }
+        $sb = New-Object System.Text.StringBuilder
+        [void]$sb.Append('"')
+        $backslashes = 0
+        foreach ($ch in $Arg.ToCharArray()) {
+            if ($ch -eq [char]92) {
+                $backslashes++
+            } elseif ($ch -eq [char]34) {
+                [void]$sb.Append([string]::new([char]92, $backslashes * 2 + 1))
+                [void]$sb.Append('"')
+                $backslashes = 0
+            } else {
+                if ($backslashes -gt 0) { [void]$sb.Append([string]::new([char]92, $backslashes)); $backslashes = 0 }
+                [void]$sb.Append($ch)
+            }
+        }
+        if ($backslashes -gt 0) { [void]$sb.Append([string]::new([char]92, $backslashes * 2)) }
+        [void]$sb.Append('"')
+        return $sb.ToString()
     }
-
-
-
+    $proc    = $null
+    $outTask = $null
+    $errTask = $null
+    try {
+        $agyCmd = Get-Command agy -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName               = $agyCmd.Source
+        $psi.Arguments              = (@($agyArgs | ForEach-Object { ConvertTo-AgyCommandLineArg ([string]$_) }) -join ' ')
+        $psi.UseShellExecute        = $false
+        $psi.CreateNoWindow         = $true
+        $psi.RedirectStandardInput  = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError  = $true
+        # agy 는 UTF-8 로 돌려준다. 이걸 명시하지 않으면 한글이 시스템 코드페이지(CP949)로 잘못 읽혀 전부 깨진다.
+        $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $psi.StandardErrorEncoding  = [System.Text.Encoding]::UTF8
+        if ($workDir -and (Test-Path -LiteralPath $workDir)) { $psi.WorkingDirectory = $workDir }
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        [void]$proc.Start()
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
+        try { $proc.StandardInput.Close() } catch {}
+    } catch {
+        $startError = "agy 실행 프로세스를 시작하지 못했습니다: $($_.Exception.Message)"
+        if ($errFile) {
+            [System.IO.File]::WriteAllText($errFile, $startError, (New-Object System.Text.UTF8Encoding($true)))
+        }
+        if ($proc) { try { $proc.Dispose() } catch {} }
+        return @{ TimedOut = $false; Raw = $null; ExecutionError = $startError }
+    }
     # 절대 마감(AgyTimeoutSeconds)까지 기다리되, AgyPollSeconds마다 깨어나 "아직 일하는가"를 봅니다.
     # 대화 기록에 새 단계가 계속 쌓이면 일하는 중이므로 그대로 두고, AgyStallSeconds 동안
     # 하나도 없으면 멈춘 것으로 보고 중단합니다.
@@ -989,16 +987,13 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
     $lastActivity    = $null
     $stopNow         = $null
     $nextProgressLog = $AgyProgressLogSeconds
-    $finished        = $null
-
+    $finished        = $false
     while ($true) {
-        $finished = Wait-Job -Job $job -Timeout $AgyPollSeconds
-        if ($null -ne $finished) { break }
-
+        $finished = $proc.WaitForExit([int]($AgyPollSeconds * 1000))
+        if ($finished) { break }
         $now     = Get-Date
         $elapsed = ($now - $startedAt).TotalSeconds
         if ($elapsed -ge $AgyTimeoutSeconds) { $stopReason = 'cap'; $stopNow = $now; break }
-
         if ($stallCheck -and -not $convId) {
             $found = Resolve-AgyConversation $agyHome $knownConv $startedAt $AgyConversationWindowSeconds $marker
             if ($found.State -eq 'found') {
@@ -1022,14 +1017,12 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
                 Log "  멈춤 점검 불가: 시작 후 $AgyConversationWindowSeconds 초 안에 새 대화가 보이지 않습니다. 절대 마감 $AgyTimeoutSeconds 초만 적용합니다."
             }
         }
-
         if ($stallCheck -and $convId) {
             $lastActivity = Get-AgyConversationActivity $agyHome $convId
             if (Test-AgyStalled $lastActivity $startedAt $now $AgyStallSeconds) {
                 $stopReason = 'stall'; $stopNow = $now; break
             }
         }
-
         if ($elapsed -ge $nextProgressLog) {
             $nextProgressLog += $AgyProgressLogSeconds
             if ($convId -and $lastActivity) {
@@ -1040,8 +1033,7 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
             }
         }
     }
-
-    if ($null -eq $finished) {
+    if (-not $finished) {
         $idleSeconds = $null
         $lastText    = "확인 불가"
         if ($stopReason -eq 'stall') {
@@ -1050,38 +1042,31 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
             $idleSeconds = ($stopNow - $ref).TotalSeconds
             $lastText    = $ref.ToString("HH:mm:ss")
         }
-
-        # 순서가 중요합니다: agy를 먼저 죽이고 나서 작업을 정리합니다. Stop-Job 은 작업 안의 agy가
-        # 끝날 때까지 돌아오지 않으므로(실측: 60초짜리 가짜 agy에서 65초 뒤에야 반환), 먼저 부르면
-        # 멈춘 agy 앞에서 워처가 그대로 묶여 멈춤 판정이 소용없어집니다.
         # 대상은 "이 워처의 자손인 agy"만입니다. 이름만으로 고르면 사용자가 직접 띄운 다른 agy까지 죽입니다.
         foreach ($agyPid in @(Get-DescendantProcessIdsByName $PID "agy")) {
             Stop-ProcessTree $agyPid
         }
-        Stop-Job   -Job $job -ErrorAction SilentlyContinue
-        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        try { if (-not $proc.HasExited) { Stop-ProcessTree $proc.Id } } catch {}
+        try { $proc.Dispose() } catch {}
         return @{ TimedOut = $true; Raw = $null; Reason = $stopReason; IdleSeconds = $idleSeconds; LastActivity = $lastText; ConversationId = $convId }
     }
-
-
-
-    $out = Receive-Job -Job $job -ErrorAction SilentlyContinue
-    $jobErrors = @($job.ChildJobs[0].Error)
-    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-
-    if (-not $out -and $jobErrors.Count -gt 0) {
-        $errText = ($jobErrors | ForEach-Object { $_.ToString() }) -join "`n"
-        if ($errFile) {
-            Add-Content -Path $errFile -Value "PowerShell 프로세스 실행 오류: $errText" -Encoding UTF8 -ErrorAction SilentlyContinue
-        }
-        return @{ TimedOut = $false; Raw = $null; ExecutionError = $errText }
+    # 끝났다: 남은 출력을 마저 받는다(비동기로 읽던 스트림이 닫힐 때까지).
+    try { $proc.WaitForExit() } catch {}
+    $outText = ""
+    $errText = ""
+    try { $outText = [string]$outTask.Result } catch {}
+    try { $errText = [string]$errTask.Result } catch {}
+    try { $proc.Dispose() } catch {}
+    if ($errFile) {
+        # 예전에는 표준오류가 이 파일로 곧바로 흘러들어 갔다. 지금은 끝나고 한 번에 쓴다(없어도 빈 파일을 남겨 기존 동작을 유지한다).
+        try { [System.IO.File]::WriteAllText($errFile, $errText, (New-Object System.Text.UTF8Encoding($true))) } catch {}
     }
-
-    return @{ TimedOut = $false; Raw = $out }
-
+    if ([string]::IsNullOrWhiteSpace($outText)) {
+        return @{ TimedOut = $false; Raw = $null }
+    }
+    # 하나의 문자열로 돌려준다(줄 배열로 넘기면 ConvertFrom-Json 이 줄마다 따로 해석해 배열이 되어 필드를 못 읽는다).
+    return @{ TimedOut = $false; Raw = $outText.Trim() }
 }
-
-
 
 # $conversationId가 없으면: $ModelPriority 목록을 순서대로 시도합니다(기존 동작).
 
@@ -1150,7 +1135,7 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
         }
 
         # 프롬프트 인자: 임시 프롬프트 파일(@경로)이 제공되면 파일 참조 문법 사용
-        $promptArg = if ($promptFile -and (Test-Path -LiteralPath $promptFile)) { "@$promptFile" } else { $safePrompt }
+        $promptArg = if ($promptFile -and (Test-Path -LiteralPath $promptFile)) { "@$promptFile" } else { ([string]$safePrompt).Replace('\"', '"') }
         $agyArgs = @('-p', $promptArg, '--output-format', 'json')
 
         if ($conversationId) { $agyArgs += @('--conversation', $conversationId) } else { $agyArgs += @('--model', $candidate) }

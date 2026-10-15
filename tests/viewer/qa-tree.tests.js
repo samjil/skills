@@ -452,19 +452,19 @@ const sortSampleNodes = [
 ];
 
 const sortRecentDesc = api.sortTreeNodes(sortSampleNodes, "recent-desc");
-eq("날짜 최신순: 세션 lastActivity 가 더 늦은 pA 가 앞", "pA", sortRecentDesc[0].id);
-eq("날짜 최신순: 두 번째 pB", "pB", sortRecentDesc[1].id);
-eq("날짜 최신순: 세 번째 pC (날짜 없음)", "pC", sortRecentDesc[2].id);
-eq("날짜 최신순: 특별 노드 그룹 없음 뒤", QA_UNGROUPED, sortRecentDesc[3].id);
-eq("날짜 최신순: 특별 노드 연결 안 됨 맨 뒤", QA_UNLINKED, sortRecentDesc[4].id);
-eq("날짜 최신순: pA 내부 세션도 최신순(sA1 앞)", ["sA1", "sA2"], sortRecentDesc[0].sessions.map(s => s.id));
+eq("날짜 최신순: 가장 최근인 연결 안 됨이 맨 앞", QA_UNLINKED, sortRecentDesc[0].id);
+eq("날짜 최신순: 두 번째 그룹 없음", QA_UNGROUPED, sortRecentDesc[1].id);
+eq("날짜 최신순: 세 번째 세션 lastActivity 가 늦은 pA", "pA", sortRecentDesc[2].id);
+eq("날짜 최신순: 네 번째 pB", "pB", sortRecentDesc[3].id);
+eq("날짜 최신순: 다섯 번째 pC (날짜 없음)", "pC", sortRecentDesc[4].id);
+eq("날짜 최신순: pA 내부 세션도 최신순(sA1 앞)", ["sA1", "sA2"], sortRecentDesc[2].sessions.map(s => s.id));
 
 const sortRecentAsc = api.sortTreeNodes(sortSampleNodes, "recent-asc");
 eq("날짜 오래된순: 날짜 없는 pC 가 가장 앞", "pC", sortRecentAsc[0].id);
 eq("날짜 오래된순: 두 번째 pB", "pB", sortRecentAsc[1].id);
 eq("날짜 오래된순: 세 번째 pA", "pA", sortRecentAsc[2].id);
-eq("날짜 오래된순: 특별 노드는 여전히 맨 뒤 (그룹 없음)", QA_UNGROUPED, sortRecentAsc[3].id);
-eq("날짜 오래된순: 특별 노드는 여전히 맨 뒤 (연결 안 됨)", QA_UNLINKED, sortRecentAsc[4].id);
+eq("날짜 오래된순: 네 번째 그룹 없음", QA_UNGROUPED, sortRecentAsc[3].id);
+eq("날짜 오래된순: 가장 최근인 연결 안 됨이 맨 뒤", QA_UNLINKED, sortRecentAsc[4].id);
 
 const sortNameAsc = api.sortTreeNodes(sortSampleNodes, "name-asc");
 eq("이름순: 자연수 정렬 '가 프로젝트 2' 앞", "pC", sortNameAsc[0].id);
