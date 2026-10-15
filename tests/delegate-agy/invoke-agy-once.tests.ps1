@@ -50,6 +50,8 @@ if ($mode -ne "no-conversation") {
     Touch
 }
 switch ($mode) {
+    "background-wait"  { Set-Content -LiteralPath $tr -Value ('{"step_index":4,"source":"MODEL","type":"GENERIC","status":"RUNNING","content":"Tool is running as a background task with task id: ' + $id + '/task-4\nTask Description: x"}'); Start-Sleep 14; Add-Content -LiteralPath $tr -Value ('{"step_index":6,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE","content":"<SYSTEM_MESSAGE> sender=' + $id + '/task-4 priority=H content=Task finished"}'); '{"status":"SUCCESS","response":"done","conversation_id":"' + $id + '"}' }
+    "background-hung"  { Set-Content -LiteralPath $tr -Value ('{"step_index":4,"source":"MODEL","type":"GENERIC","status":"RUNNING","content":"Tool is running as a background task with task id: ' + $id + '/task-4\nTask Description: x"}'); Start-Sleep 60 }
     "stderr-finish"    { [Console]::Error.WriteLine("noise-from-agy"); '{"status":"SUCCESS","response":"done","conversation_id":"' + $id + '"}' }
     "work-then-finish" { for ($i = 0; $i -lt 7; $i++) { Start-Sleep 2; Touch }; '{"status":"SUCCESS","response":"done","conversation_id":"' + $id + '"}' }
     "work-then-silent" { for ($i = 0; $i -lt 2; $i++) { Start-Sleep 2; Touch }; Start-Sleep 60 }
@@ -107,6 +109,20 @@ Assert-Equal "  여기서는 error.log 파일을 만들지 않는다" $false (Te
 
 Write-Host "F) 멈춤 판정에는 마지막 단계 진단 글(LastStep)이 붙는다 (B 의 결과로 확인)"
 Assert-True  "  LastStep 이 돌아온다(가짜 agy 의 기록은 단계 번호가 없는 글이라 내용은 비어 있다)" ($b.Result.ContainsKey("LastStep"))
+
+Start-Sleep -Seconds 6   # 앞 시험이 방금 만든 대화가 이번 호출의 "시작 직후 새 대화"로 같이 잡히지 않게 한다
+Write-Host "G) agy 가 오래 걸리는 명령을 백그라운드로 돌려 두고 기다림 -> 새 단계가 없어도(멈춤 기준 8초 초과) 끊지 않는다"
+$g = Run-Fake "background-wait"
+Assert-Equal "  타임아웃 아님" $false $g.Result.TimedOut
+Assert-True  "  결과(JSON)를 받음" ($g.Result.Raw -match "SUCCESS")
+Assert-True  "  멈춤 기준보다 오래 기다렸다 ($([int]$g.Seconds)초)" ($g.Seconds -gt 12)
+Assert-True  "  백그라운드 도구를 기다린다는 로그를 남김" (($script:LogLines -join "`n") -match "백그라운드로 돌린 도구")
+
+Write-Host "H) 백그라운드 도구가 영영 안 끝나면 -> 멈춤이 아니라 절대 마감(24초)이 끊는다"
+$h = Run-Fake "background-hung"
+Assert-Equal "  타임아웃" $true $h.Result.TimedOut
+Assert-Equal "  사유는 cap" "cap" $h.Result.Reason
+Assert-True  "  마감 근처에서 중단 ($([int]$h.Seconds)초)" ($h.Seconds -ge 23 -and $h.Seconds -lt 34)
 
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""

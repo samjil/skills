@@ -19,9 +19,11 @@
 # 멈춤 기준(워처의 $AgyStallSeconds)의 근거:
 #   정상 작업에서 새 단계 사이가 가장 길게 비었던 것은 113초였습니다(5건, 약 640단계 관찰).
 #   관찰이 5건뿐이라 이보다 오래 조용한 정상 작업이 없다고 보장하지는 못합니다.
-#   실제로 5.4분(324초) 동안 새 단계가 없어 끊은 적이 있다(2026-10-14 22:25). 마지막 단계는 도구 결과였으므로 모델이 긴 응답을
-#   만드는 중이었을 가능성이 있지만, 정말 멈춘 것과 구분할 방법은 없었다. 그래서 끊을 때 마지막 단계를 로그에 남기고(Get-AgyLastStepSummary),
+#   실제로 5.4분(324초) 동안 새 단계가 없어 끊은 적이 있다(2026-10-14 22:25). 마지막 단계는 도구 결과였지만 agy 의 자체 로그(cli-*.log)에는
+#   그 뒤 모델 요청이 하나도 없어서, 그 건은 agy 가 실제로 멈춘 것이었다(끊은 게 맞다). 끊을 때 마지막 단계를 로그에 남기고(Get-AgyLastStepSummary),
 #   기준은 환경변수 AGY_STALL_SECONDS(기본 300)로 바꿀 수 있게 했다.
+#   반대로 오탐은 따로 있었다: 오래 걸리는 명령을 agy 가 백그라운드로 돌려 두고 기다리는 동안은 새 단계가 없다(7분짜리 명령을 5분 시점에 끊는 것을
+#   재현). 그래서 "끝났다는 알림이 아직 없는 백그라운드 도구"가 있으면 멈춤으로 보지 않는다(Get-AgyPendingBackgroundTasks).
 #
 # 대화를 못 찾거나 어느 것인지 모호하면 멈춤 판정을 하지 않습니다(절대 마감만 적용).
 # 멀쩡히 일하는 작업을 잘못 끊는 쪽이 이 개선이 막으려던 바로 그 피해이기 때문입니다.
@@ -101,11 +103,41 @@ function Get-AgyConversationActivity($AgyHome, $Id) {
     return $latest
 }
 
+# agy 가 "백그라운드 작업"으로 돌려 둔 도구 중 아직 끝났다는 알림이 없는 것의 목록(작업 ID 들). 없으면 빈 배열.
+# 오래 걸리는 명령(빌드·시험·긴 대기 등)은 agy 가 10초쯤 기다리다 백그라운드로 넘기고, 그 명령이 끝날 때까지 새 단계를 하나도 쓰지 않고 기다린다.
+# 이때는 멈춘 것이 아니므로 멈춤 판정에서 빼야 한다. 실제로 7분 걸리는 명령을 돌리던 정상 작업이 5분 시점에 "멈춤"으로 끊긴 것을 재현했다.
+# 대화 기록(transcript_full.jsonl)에 agy 가 직접 남기는 짝으로 판단한다(여러 대화의 기록에서 시작:끝 건수가 거의 1:1 임을 확인):
+#   시작: "status":"RUNNING" 단계의 글에 "Tool is running as a background task with task id: <대화 ID>/task-N"
+#   끝:   SYSTEM_MESSAGE 단계의 글에 "sender=<대화 ID>/task-N ... finished with result: ..."
+# 시작은 있는데 같은 task-N 의 끝이 아직 없으면 "도는 중"이다. 도는 중인 명령이 영영 안 끝나는 경우는 절대 마감(AgyTimeoutSeconds)이 끊는다.
+function Get-AgyPendingBackgroundTasks($AgyHome, $Id) {
+    $tp = Get-AgyTranscriptPath $AgyHome $Id
+    if (-not $tp -or -not (Test-Path -LiteralPath $tp)) { return @() }
+    $started = [ordered]@{}
+    $finished = @{}
+    try {
+        $fs = New-Object System.IO.FileStream($tp, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+            while (($line = $sr.ReadLine()) -ne $null) {
+                if ($line.IndexOf('"status":"RUNNING"', [System.StringComparison]::Ordinal) -ge 0 -or $line -match '"status"\s*:\s*"RUNNING"') {
+                    if ($line -match 'Tool is running as a background task with task id: ([A-Za-z0-9-]+/task-\d+)') { $started[$Matches[1]] = $true }
+                } elseif ($line.IndexOf('SYSTEM_MESSAGE', [System.StringComparison]::Ordinal) -ge 0) {
+                    foreach ($m in [regex]::Matches($line, 'sender=([A-Za-z0-9-]+/task-\d+)')) { $finished[$m.Groups[1].Value] = $true }
+                }
+            }
+        } finally { $fs.Dispose() }
+    } catch { return @() }
+    $pending = @()
+    foreach ($k in $started.Keys) { if (-not $finished.ContainsKey($k)) { $pending += $k } }
+    return @($pending)
+}
+
 # 멈춤으로 판정했을 때 남길 진단: 대화 기록의 마지막 단계가 무엇이었는가.
 # "새 단계가 안 쌓인다"만으로는 agy 가 정말 멈췄는지, 모델이 긴 응답을 만드는 중인지, 도구(오래 걸리는 명령)가 도는 중인지 가릴 수 없다.
 # 마지막 단계의 모양으로 짐작만 해서 로그에 남긴다(판정에는 쓰지 않는다):
 #   도구를 부르는 모델 응답(PLANNER_RESPONSE + tool_calls)이 마지막   -> 'tool-running'    그 도구가 아직 도는 중일 수 있다
-#   도구 결과·사용자 입력 같은 다른 단계가 마지막                       -> 'model-generating' 모델이 다음 응답을 만드는 중일 수 있다
+#   도구 결과·사용자 입력 같은 다른 단계가 마지막                       -> 'model-generating' 모델 응답을 기다리는 중이거나 agy 가 멈춘 것일 수 있다(어제 사례는 agy 의 로그에 다음 모델 요청이 아예 없었다)
 #   도구 없이 끝난 모델 응답이 마지막                                   -> 'model-finishing'
 # 마지막 줄이 아주 클 수 있어(긴 응답) 줄 전체를 JSON 으로 읽지 않고 필요한 글자만 정규식으로 뽑는다.
 # 반환: @{ Index; Type; Status; Tools = @(도구 이름); Hint } 또는 읽을 수 없으면 $null.
@@ -152,7 +184,7 @@ function Format-AgyLastStep($Summary) {
     if ($null -eq $Summary) { return "" }
     $hintText = switch ($Summary.Hint) {
         'tool-running'     { "도구가 아직 도는 중일 수 있음" }
-        'model-generating' { "모델이 다음 응답을 만드는 중일 수 있음" }
+        'model-generating' { "모델 응답을 기다리는 중이거나 agy 가 멈춘 것일 수 있음" }
         'model-finishing'  { "모델이 응답을 마무리하는 중일 수 있음" }
         default            { "" }
     }

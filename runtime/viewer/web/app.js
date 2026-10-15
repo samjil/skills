@@ -1303,46 +1303,6 @@
       return copy;
     }
 
-    var isDateSort = (sortMode === "recent-desc" || sortMode === "recent-asc");
-
-    if (isDateSort) {
-      // 시간 정렬(최신순·오래된순)에는 "연결 안 됨"과 "그룹 없음"도 포함하여 최근 활동 시각 기준으로 정렬한다.
-      var allList = [];
-      for (var i = 0; i < nodes.length; i++) {
-        if (nodes[i]) allList.push({ node: nodes[i], idx: i });
-      }
-
-      allList.sort(function (itemA, itemB) {
-        var a = itemA.node;
-        var b = itemB.node;
-        var isDesc = (sortMode === "recent-desc");
-        var tA = projectDateKey(a);
-        var tB = projectDateKey(b);
-        var dDiff = compareDates(tA, tB, isDesc);
-        if (dDiff !== 0) return dDiff;
-        if (recordsOnly) {
-          var aDiffP = compareDates(projectActivityKey(a), projectActivityKey(b), isDesc);
-          if (aDiffP !== 0) return aDiffP;
-        }
-        var nameA = (a && a.name != null) ? String(a.name) : "";
-        var nameB = (b && b.name != null) ? String(b.name) : "";
-        var nDiff = nameA.localeCompare(nameB, "ko", { numeric: true, sensitivity: "base" });
-        if (nDiff !== 0) return nDiff;
-        var idA = (a && a.id != null) ? String(a.id) : "";
-        var idB = (b && b.id != null) ? String(b.id) : "";
-        if (idA !== idB) return idA < idB ? -1 : 1;
-        return itemA.idx - itemB.idx;
-      });
-
-      var dateResult = [];
-      for (var j = 0; j < allList.length; j++) {
-        dateResult.push(cloneNode(allList[j].node, sortMode));
-      }
-      return dateResult;
-    }
-
-    // 이름순(name-asc / name-desc) 및 Desktop 순서(desktop)는 기존처럼 일반 프로젝트만 정렬하고
-    // 메타 노드(그룹 없음, 연결 안 됨)는 맨 뒤에 둔다.
     var normalList = [];
     var ungroupedNode = null;
     var unlinkedNode = null;
@@ -1363,7 +1323,25 @@
       normalList.sort(function (itemA, itemB) {
         var a = itemA.node;
         var b = itemB.node;
-        if (sortMode === "name-asc") {
+        if (sortMode === "recent-desc" || sortMode === "recent-asc") {
+          var isDesc = (sortMode === "recent-desc");
+          var tA = projectDateKey(a);
+          var tB = projectDateKey(b);
+          var dDiff = compareDates(tA, tB, isDesc);
+          if (dDiff !== 0) return dDiff;
+          if (recordsOnly) {
+            var aDiffP = compareDates(projectActivityKey(a), projectActivityKey(b), isDesc);
+            if (aDiffP !== 0) return aDiffP;
+          }
+          var nameA = (a && a.name != null) ? String(a.name) : "";
+          var nameB = (b && b.name != null) ? String(b.name) : "";
+          var nDiff = nameA.localeCompare(nameB, "ko", { numeric: true, sensitivity: "base" });
+          if (nDiff !== 0) return nDiff;
+          var idA = (a && a.id != null) ? String(a.id) : "";
+          var idB = (b && b.id != null) ? String(b.id) : "";
+          if (idA !== idB) return idA < idB ? -1 : 1;
+          return itemA.idx - itemB.idx;
+        } else if (sortMode === "name-asc") {
           var nA1 = (a && a.name != null) ? String(a.name) : "";
           var nB1 = (b && b.name != null) ? String(b.name) : "";
           var diff1 = nA1.localeCompare(nB1, "ko", { numeric: true, sensitivity: "base" });
