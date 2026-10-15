@@ -11,6 +11,7 @@ function Assert-Equal($name, $expected, $actual) {
     if ($expected -eq $actual) { $script:Passed++; Write-Host "  PASS  $name" -ForegroundColor Green }
     else { $script:Failed++; Write-Host "  FAIL  $name  (기대: [$expected] / 실제: [$actual])" -ForegroundColor Red }
 }
+function Assert-True($name, $cond) { Assert-Equal $name $true [bool]$cond }
 
 function Get-FunctionText($path, $name) {
     $tokens = $null; $errs = $null
@@ -28,8 +29,8 @@ $SessionsDir = Join-Path $work "sessions"
 New-Item -ItemType Directory -Force -Path $SessionsDir | Out-Null
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
-# common.ps1 의 함수들(세션 읽기/쓰기와 폴더 목록)만 꺼내 온다
-foreach ($name in @("ConvertTo-ReadableJson", "Get-SafeSessionFileName", "Get-SessionPath", "Read-Session", "Write-Session", "ConvertTo-CwdList", "Resolve-TaskCwds", "Get-MissingCwds")) {
+# common.ps1 의 함수들(세션 읽기/쓰기와 폴더 목록, QA 기록)을 꺼내 온다
+foreach ($name in @("ConvertTo-ReadableJson", "Get-SafeSessionFileName", "Get-SessionPath", "Read-Session", "Write-Session", "ConvertTo-CwdList", "Resolve-TaskCwds", "Get-MissingCwds", "Get-QaShardFiles", "Get-QaShardPath", "Test-QaTaskIdExists", "Add-QaRecordUnlocked")) {
     Invoke-Expression (Get-FunctionText $commonPath $name)
 }
 # 뷰어의 같은 이름 함수(사본)는 다른 이름으로 불러 와서 비교한다
@@ -87,6 +88,62 @@ Write-Host "이어가기 규칙(세션 고정)"
 $sess = Read-Session "multi"
 Assert-Equal "이번 호출에 @cwd 가 없으면 세션의 두 폴더를 그대로 쓴다" "D:\a\repo|D:\b\docs" (@(Resolve-TaskCwds @() $sess.cwd) -join "|")
 Assert-Equal "이번 호출에 @cwd 가 하나라도 있으면 이번 목록만 쓴다(합치지 않는다)" "D:\c" (@(Resolve-TaskCwds @("D:\c") $sess.cwd) -join "|")
+
+Write-Host "Add-QaRecordUnlocked 및 log-qa.ps1 검증"
+$qaDataDir = Join-Path $work "logs\data"
+New-Item -ItemType Directory -Force -Path $qaDataDir | Out-Null
+$script:DataDir = $qaDataDir
+$qaIdxFile = Join-Path $qaDataDir "index.json"
+
+$rec1 = [ordered]@{
+    timestamp = "2026-10-15 12:00:00"
+    task_id   = "task_dup_1"
+    question  = "q1"
+    answer    = "a1"
+}
+$w1 = Add-QaRecordUnlocked $rec1 $qaIdxFile 12
+Assert-True "첫 번째 task_id 기록 성공" ($null -ne $w1)
+Assert-True "기록된 샤드 경로가 .jsonl 파일임" ($w1.EndsWith(".jsonl"))
+
+$w2 = Add-QaRecordUnlocked $rec1 $qaIdxFile 12
+Assert-Equal "동일 task_id 두 번째 시도는 건너뛰고 null 반환" $null $w2
+
+# index.json total 어긋남 보정 검증: total을 99로 조작
+$idxObj = Get-Content -Raw $qaIdxFile -Encoding UTF8 | ConvertFrom-Json
+$idxObj.total = 99
+# 바이트 합산 불일치를 유도하기 위해 dummy 샤드 추가 조작
+$idxObj.shards = @(@{ file = "qa-dummy.jsonl"; bytes = 12345; modified = "2026-10-15 00:00:00" })
+[System.IO.File]::WriteAllText($qaIdxFile, ($idxObj | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
+
+$rec2 = [ordered]@{
+    timestamp = "2026-10-15 12:01:00"
+    task_id   = "task_dup_2"
+    question  = "q2"
+    answer    = "a2"
+}
+$w3 = Add-QaRecordUnlocked $rec2 $qaIdxFile 12
+Assert-True "새 task_id 기록 성공" ($null -ne $w3)
+
+$recalcedIdx = Get-Content -Raw $qaIdxFile -Encoding UTF8 | ConvertFrom-Json
+Assert-Equal "어긋난 total이 실제 샤드 줄 수(2건)로 자동 보정됨" 2 $recalcedIdx.total
+
+# log-qa.ps1 실행 시 출력 문자열 끝에 실제 파일 경로가 비어 있지 않은지 검증
+$logQaScript = Join-Path $repoRoot "runtime\delegate-agy\scripts\sub\log-qa.ps1"
+$qFile = Join-Path $work "q.txt"
+$aFile = Join-Path $work "a.txt"
+[System.IO.File]::WriteAllText($qFile, "질문", [System.Text.Encoding]::UTF8)
+[System.IO.File]::WriteAllText($aFile, "답변", [System.Text.Encoding]::UTF8)
+
+$logOut = powershell.exe -NoProfile -ExecutionPolicy Bypass -File $logQaScript -RuntimeDir $work -TaskId "task_log_qa_test" -Source "mcp" -QuestionFile $qFile -AnswerFile $aFile
+$logOutStr = ($logOut -join "`n").Trim()
+Assert-True "log-qa.ps1 출력에 '기록 저장:' 포함" ($logOutStr -match '기록 저장:\s*task_id=task_log_qa_test')
+Assert-True "log-qa.ps1 출력 경로가 .jsonl 로 끝남" ($logOutStr -match '->\s*.+\.jsonl$')
+
+# uninstall.ps1 BOM 없음 검증
+$unPath = Join-Path $repoRoot "uninstall.ps1"
+$unBytes = [System.IO.File]::ReadAllBytes($unPath)
+$hasBom = ($unBytes.Length -ge 3 -and $unBytes[0] -eq 0xEF -and $unBytes[1] -eq 0xBB -and $unBytes[2] -eq 0xBF)
+Assert-Equal "uninstall.ps1 파일 맨 앞에 UTF-8 BOM 없음" $false $hasBom
 
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""

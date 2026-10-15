@@ -233,7 +233,17 @@
   function pendingKeyOf(list) {
     if (!list || !list.length) { return ""; }
     return list.map(function (p) {
-      return (p.task_id || "") + ":" + (p.state || "");
+      var pg = p.progress || {};
+      var tok = (pg.tokens && pg.tokens.total) ? pg.tokens.total : 0;
+      return [
+        p.task_id || "",
+        p.state || "",
+        p.model || "",
+        p.started_at || "",
+        pg.step != null ? pg.step : "",
+        pg.last_activity_ms || "",
+        tok
+      ].join(":");
     }).join(",");
   }
 
@@ -547,8 +557,13 @@
   }
 
   // 위임 완료 레코드 전체 로드
+  var shardDataCache = {};
+
   function loadAllQa(force) {
-    if (force) { knownShardKey = ""; }
+    if (force) {
+      knownShardKey = "";
+      shardDataCache = {};
+    }
     return fetchJson("/data/index.json").then(function (index) {
       var key = shardKeyOf(index);
       var changed = (key !== knownShardKey);
@@ -559,10 +574,24 @@
       }
 
       var shards = (index && index.shards) ? index.shards : [];
+      var activeFiles = {};
       var loaders = shards.map(function (s) {
+        activeFiles[s.file] = true;
+        var cached = shardDataCache[s.file];
+        if (!force && cached && cached.bytes === s.bytes) {
+          return Promise.resolve(cached.items);
+        }
         return fetchText("/data/" + encodeURIComponent(s.file))
           .then(parseJsonl)
-          .catch(function () { return []; });
+          .then(function (parsed) {
+            shardDataCache[s.file] = { bytes: s.bytes, items: parsed };
+            return parsed;
+          })
+          .catch(function () { return cached ? cached.items : []; });
+      });
+
+      Object.keys(shardDataCache).forEach(function (f) {
+        if (!activeFiles[f]) { delete shardDataCache[f]; }
       });
 
       return Promise.all(loaders).then(function (chunks) {
@@ -3353,9 +3382,15 @@
     });
 
     // 3. 인라인 수식 ($...$ 또는 \(...\)) 보호
-    s = s.replace(/(?:\$([^\$\n]+?)\$|\\\(([\s\S]*?)\\\))/g, function (match, m1, m2) {
+    // 절충: PowerShell 변수($env:..., $PSScriptRoot)나 가격($5 ~ $10), 일반 한글 문장이 수식으로
+    // 깨지는 오탐을 막기 위해, $...$ 안에 한글이나 $식별자가 들어 있으면 수식으로 보지 않는다.
+    // (수식 안에 한글이 꼭 필요하면 \( \text{정답} \) 또는 $$ 블록 수식을 쓴다.)
+    s = s.replace(/(?:(?<!\\|\w)\$(?!\s)([^\$\n]+?)(?<!\s)\$(?![A-Za-z0-9_:])|\\\(([\s\S]*?)\\\))/g, function (match, m1, m2) {
       var math = (m1 || m2 || "").trim();
       if (!math) return match;
+      if (m1 && (/[\uAC00-\uD7A3]/.test(math) || /(?:^|\s)\$[A-Za-z_]/.test(math))) {
+        return match;
+      }
       var ph = "%%%MATH_I_" + mathList.length + "%%%";
       mathList.push({ type: "inline", math: math });
       return ph;
@@ -4957,14 +4992,53 @@
   // Full Refresh Cycle
   // ==========================================================================
 
+  var lastClaudeTreeKey = "";
+
+  function claudeTreeKeyOf(data) {
+    if (!data || typeof data !== "object") return "";
+    var pParts = [];
+    var projects = Array.isArray(data.projects) ? data.projects : [];
+    for (var i = 0; i < projects.length; i++) {
+      var p = projects[i] || {};
+      var sParts = [];
+      var sessions = Array.isArray(p.sessions) ? p.sessions : [];
+      for (var j = 0; j < sessions.length; j++) {
+        var s = sessions[j] || {};
+        sParts.push([s.id || "", s.title || "", s.cwd || "", s.lastActivity || "", s.archived ? 1 : 0].join("~"));
+      }
+      pParts.push((p.id || "") + ":" + (p.name || "") + "[" + sParts.join(",") + "]");
+    }
+    var uParts = [];
+    var ungrouped = Array.isArray(data.ungrouped) ? data.ungrouped : [];
+    for (var u = 0; u < ungrouped.length; u++) {
+      var us = ungrouped[u] || {};
+      uParts.push([us.id || "", us.title || "", us.cwd || "", us.lastActivity || "", us.archived ? 1 : 0].join("~"));
+    }
+    var tl = data.taskLinks || {};
+    var tlKeys = Object.keys(tl).sort();
+    var tlParts = [];
+    for (var t = 0; t < tlKeys.length; t++) { tlParts.push(tlKeys[t] + "=" + tl[tlKeys[t]]); }
+
+    var hl = data.handoffLinks || {};
+    var hlKeys = Object.keys(hl).sort();
+    var hlParts = [];
+    for (var h = 0; h < hlKeys.length; h++) { hlParts.push(hlKeys[h] + "=" + hl[hlKeys[h]]); }
+
+    return [pParts.join("|"), uParts.join("|"), tlParts.join(","), hlParts.join(",")].join("#");
+  }
+
   function loadClaudeTree() {
     return fetchJson("/api/claude/tree").then(function (data) {
       if (data && typeof data === "object") {
+        var newKey = claudeTreeKeyOf(data);
+        var changed = (newKey !== lastClaudeTreeKey);
+        lastClaudeTreeKey = newKey;
         claudeTree = data;
+        return { tree: claudeTree, changed: changed };
       }
-      return claudeTree;
+      return { tree: claudeTree, changed: false };
     }).catch(function () {
-      return claudeTree;
+      return { tree: claudeTree, changed: false };
     });
   }
 
@@ -4976,23 +5050,37 @@
       loadHandoffProjects(force),
       loadClaudeTree()
     ]).then(function (results) {
-      var qaRes = results[1];
-      var pList = results[2];
+      var qaRes = results[1] || { changed: false };
+      var pList = results[2] || [];
+      var treeRes = results[4] || { changed: false };
+
       var pKey = pendingKeyOf(pList);
       var pChanged = (pKey !== lastPendingKey);
       lastPendingKey = pKey;
       pendingItems = pList;
 
-      populateModelFilter();
+      var qaNeedsRender = Boolean(force || qaRes.changed || pChanged || treeRes.changed);
+
+      if (qaNeedsRender) {
+        populateModelFilter();
+      }
+      // 사이드바 트리는 스크롤을 보존하며 상대 시간("3분 전" 등)을 매번 최신으로 갱신한다
       renderQaTree();
       renderHandoffTree();
 
       if (currentNav === "dashboard") {
         renderDashboard();
       } else if (currentNav === "qa") {
-        applyQaFilters();
+        if (qaNeedsRender) {
+          applyQaFilters();
+        } else {
+          updateQaHeader();
+          renderProcessDialog();
+        }
       } else if (currentNav === "handoff") {
-        renderHandoffView();
+        if (force || treeRes.changed) {
+          renderHandoffView();
+        }
       }
       updateTopbarMeta();
     }).catch(function (err) {
@@ -5000,7 +5088,6 @@
       if (els.topbarCount) {
         els.topbarCount.textContent = "갱신 실패: " + err.message;
       }
-      // 서버가 내려가 있으면 "지금" 패널이 연결 끊김 상태를 보여 주게 한다.
       if (currentNav === "dashboard") { renderNow(); }
     });
   }

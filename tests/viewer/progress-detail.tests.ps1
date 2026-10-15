@@ -19,6 +19,7 @@ function Assert-Equal($name, $expected, $actual) {
 $tokens = $null; $errs = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $repoRoot "runtime\viewer\serve-viewer.ps1"), [ref]$tokens, [ref]$errs)
 $script:ProcessCache = @{}
+$script:TokenCache = @{}
 foreach ($name in @("Get-AgyProcessStepsCached", "Get-AgyProgress")) {
     $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
     if (-not $fn) { throw "$name 를 serve-viewer.ps1 에서 찾지 못했습니다." }
@@ -159,6 +160,29 @@ $g5 = Get-AgyProgress $sid $null
 Assert-Equal "파일이 더 짧아지면(새로 만들어짐) 처음부터 다시 읽는다" 1 @($g5.steps).Count
 Assert-Equal "  새 내용이다" "new1" @($g5.steps)[0].detail
 Assert-Equal "도구를 부르지 않은 최종 답변뿐이면 steps 는 빈 목록" 0 @($final.steps).Count
+
+Write-Host "실시간 누적 토큰 증분 읽기 검증"
+$tokConvId = "conv-token-test"
+$tokDir = Join-Path $work "brain\$tokConvId\.system_generated\logs"
+New-Item -ItemType Directory -Force -Path $tokDir | Out-Null
+$tokFullFile = Join-Path $tokDir "transcript_full.jsonl"
+[System.IO.File]::WriteAllText($tokFullFile, ((PlannerLine 1 "dummy") + "`n"), $u8)
+$tokFile = Join-Path $tokDir "transcript.jsonl"
+$line1 = '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","input_tokens":100,"output_tokens":50}' + "`n"
+[System.IO.File]::WriteAllText($tokFile, $line1, $u8)
+
+$tokProg1 = Get-AgyProgress $tokConvId $null
+Assert-Equal "첫 호출 시 input_tokens 100" 100 $tokProg1.tokens.input
+Assert-Equal "첫 호출 시 output_tokens 50" 50 $tokProg1.tokens.output
+Assert-Equal "첫 호출 시 total 150" 150 $tokProg1.tokens.total
+
+$line2 = '{"step_index":2,"source":"MODEL","type":"PLANNER_RESPONSE","input_tokens":200,"cache_read_tokens":30,"output_tokens":70}' + "`n"
+[System.IO.File]::AppendAllText($tokFile, $line2, $u8)
+
+$tokProg2 = Get-AgyProgress $tokConvId $null
+Assert-Equal "증분 읽기 후 input_tokens 330 (100 + 200 + 30)" 330 $tokProg2.tokens.input
+Assert-Equal "증분 읽기 후 output_tokens 120 (50 + 70)" 120 $tokProg2.tokens.output
+Assert-Equal "증분 읽기 후 total 450" 450 $tokProg2.tokens.total
 
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 $env:AGY_HOME = $null

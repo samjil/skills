@@ -21,8 +21,14 @@ function extractFunction(name) {
   throw new Error(name + " 의 끝을 찾지 못했습니다.");
 }
 
-const names = ["stripEmphasis", "cleanTextForPreview", "extractQuestionKeyword", "extractAnswerKeyword"];
-const api = new Function(names.map(extractFunction).join("\n") + "\nreturn { stripEmphasis, cleanTextForPreview, extractQuestionKeyword, extractAnswerKeyword };")();
+global.window = {
+  marked: { parse: s => s },
+  katex: { renderToString: math => `<katex>${math}</katex>` },
+  DOMPurify: { sanitize: s => s }
+};
+
+const names = ["stripEmphasis", "cleanTextForPreview", "extractQuestionKeyword", "extractAnswerKeyword", "claudeTreeKeyOf", "pendingKeyOf", "renderMarkdownWithMath"];
+const api = new Function(names.map(extractFunction).join("\n") + "\nreturn { stripEmphasis, cleanTextForPreview, extractQuestionKeyword, extractAnswerKeyword, claudeTreeKeyOf, pendingKeyOf, renderMarkdownWithMath };")();
 
 let passed = 0, failed = 0;
 function eq(name, expected, actual) {
@@ -81,6 +87,63 @@ console.log("extractAnswerKeyword");
 const a1 = api.extractAnswerKeyword("### 버그\n1. merge_intervals 에서 정렬을 하지 않음");
 ok("답변 미리보기도 snake_case 를 지킨다", a1.indexOf("merge_intervals") >= 0);
 eq("표 답변은 항목: 값 으로 요약한다(기존 동작)", "파일: ~/.samjil/x · 개수: 3", api.extractAnswerKeyword("| 항목 | 값 |\n|---|---|\n| 파일 | ~/.samjil/x |\n| 개수 | 3 |"));
+
+console.log("claudeTreeKeyOf: 세션 내용 및 링크 변경 감지");
+const baseTree = {
+  projects: [{ id: "p1", name: "프로젝트1", sessions: [{ id: "s1", title: "제목1", cwd: "C:/a", lastActivity: "2026-10-15 10:00:00", archived: false }] }],
+  ungrouped: [],
+  taskLinks: { t1: "s1" },
+  handoffLinks: { h1: "s1" }
+};
+const baseKey = api.claudeTreeKeyOf(baseTree);
+ok("기본 트리 키 생성됨", baseKey.length > 0);
+
+const treeTitleChanged = JSON.parse(JSON.stringify(baseTree));
+treeTitleChanged.projects[0].sessions[0].title = "제목 변경";
+ok("세션 title 변경 시 키 변경", api.claudeTreeKeyOf(treeTitleChanged) !== baseKey);
+
+const treeActivityChanged = JSON.parse(JSON.stringify(baseTree));
+treeActivityChanged.projects[0].sessions[0].lastActivity = "2026-10-15 11:00:00";
+ok("세션 lastActivity 변경 시 키 변경", api.claudeTreeKeyOf(treeActivityChanged) !== baseKey);
+
+const treeArchivedChanged = JSON.parse(JSON.stringify(baseTree));
+treeArchivedChanged.projects[0].sessions[0].archived = true;
+ok("세션 archived 변경 시 키 변경", api.claudeTreeKeyOf(treeArchivedChanged) !== baseKey);
+
+const treeTaskLinkChanged = JSON.parse(JSON.stringify(baseTree));
+treeTaskLinkChanged.taskLinks.t1 = "s2";
+ok("taskLinks 매핑 세션 변경 시 키 변경", api.claudeTreeKeyOf(treeTaskLinkChanged) !== baseKey);
+
+console.log("pendingKeyOf: 진행 단계 및 누적 토큰 변경 감지");
+const basePending = [{ task_id: "task-1", state: "running", model: "m1", started_at: "2026-10-15 10:00:00", progress: { step: 1, last_activity_ms: 1000, tokens: { total: 100 } } }];
+const basePKey = api.pendingKeyOf(basePending);
+ok("기본 pending 키 생성됨", basePKey.length > 0);
+
+const pStepChanged = JSON.parse(JSON.stringify(basePending));
+pStepChanged[0].progress.step = 2;
+ok("progress.step 변경 시 키 변경", api.pendingKeyOf(pStepChanged) !== basePKey);
+
+const pTokChanged = JSON.parse(JSON.stringify(basePending));
+pTokChanged[0].progress.tokens.total = 150;
+ok("progress.tokens.total 변경 시 키 변경", api.pendingKeyOf(pTokChanged) !== basePKey);
+
+console.log("renderMarkdownWithMath: PowerShell 변수/금액 보존 및 수식 렌더링");
+const rMath = api.renderMarkdownWithMath;
+const psText = "변수 $env:USERPROFILE 및 $PSScriptRoot 확인";
+const psRendered = rMath(psText);
+ok("PowerShell 변수는 수식으로 치환되지 않음", psRendered.indexOf("katex") === -1 && psRendered.indexOf("$env:USERPROFILE") >= 0);
+
+const priceText = "가격은 $5 ~ $10 사이입니다";
+const priceRendered = rMath(priceText);
+ok("금액 표기는 수식으로 치환되지 않음", priceRendered.indexOf("katex") === -1);
+
+const mathText = "수식 $x^2 + y^2 = z^2$ 입니다";
+const mathRendered = rMath(mathText);
+ok("정상 인라인 수식은 katex 렌더링됨", mathRendered.indexOf("<katex>") >= 0 && mathRendered.indexOf("x^2 + y^2 = z^2") >= 0);
+
+const parenMathText = "답은 \\(\\text{정답}\\) 입니다";
+const parenRendered = rMath(parenMathText);
+ok("\\(...\\) 수식은 katex 렌더링됨", parenRendered.indexOf("<katex>") >= 0 && parenRendered.indexOf("\\text{정답}") >= 0);
 
 console.log("\n통과 " + passed + " / 실패 " + failed);
 process.exit(failed > 0 ? 1 : 0);

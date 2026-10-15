@@ -622,11 +622,20 @@ function Update-ClaudeLinkIndex([string]$IndexFile, [string]$DesktopDir, [string
     }
 }
 
+$script:ClaudeLinkIndexCache = @{}
+
 function Read-ClaudeLinkIndex([string]$IndexFile) {
     if ([string]::IsNullOrEmpty($IndexFile) -or -not (Test-Path -LiteralPath $IndexFile)) {
         return @{ Tasks = @{}; Msgs = @{}; Updated = '' }
     }
     try {
+        $item = Get-Item -LiteralPath $IndexFile -ErrorAction Stop
+        $cacheKey = $item.FullName.ToLowerInvariant()
+        $cached = $script:ClaudeLinkIndexCache[$cacheKey]
+        if ($null -ne $cached -and $cached.Ticks -eq $item.LastWriteTimeUtc.Ticks -and $cached.Length -eq $item.Length) {
+            return $cached.Data
+        }
+
         $raw = [System.IO.File]::ReadAllText($IndexFile, [System.Text.Encoding]::UTF8)
         $obj = ConvertFrom-Json -InputObject $raw
         if ($null -eq $obj) {
@@ -656,11 +665,17 @@ function Read-ClaudeLinkIndex([string]$IndexFile) {
             $updated = [string]$obj.updated
         }
 
-        return @{
+        $result = @{
             Tasks   = $tasks
             Msgs    = $msgs
             Updated = $updated
         }
+        $script:ClaudeLinkIndexCache[$cacheKey] = @{
+            Ticks  = $item.LastWriteTimeUtc.Ticks
+            Length = $item.Length
+            Data   = $result
+        }
+        return $result
     }
     catch {
         return @{ Tasks = @{}; Msgs = @{}; Updated = '' }
