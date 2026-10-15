@@ -81,7 +81,7 @@ function Get-ViewerProcesses([int]$Port) {
 # ---- 본체: 인자 없이 dot-source 하면 함수만 정의합니다(시험용). 점(.)으로 불렀는지는 InvocationName 으로 구분합니다. ----
 if ($MyInvocation.InvocationName -ne '.') {
     if ($Stop) {
-        $procs = Get-ViewerProcesses $Port
+        $procs = @(Get-ViewerProcesses $Port)   # 뷰어가 하나뿐이면 함수가 배열을 풀어 돌려주므로 배열로 받는다
         if ($procs.Count -eq 0) { Write-Output "NONE"; exit 0 }
         foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
         Start-Sleep -Seconds 1

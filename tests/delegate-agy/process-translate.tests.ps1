@@ -68,7 +68,7 @@ Assert-Equal "혼자 한도를 넘는 항목은 따로 한 덩어리로 보낸�
 Assert-Equal "할 일이 없으면 덩어리도 없다" 0 @(Split-TranslationChunks @() 5000).Count
 
 Write-Host "ConvertFrom-TranslationReply / Merge-TranslationReply"
-$r1 = ConvertFrom-TranslationReply '[{"i":0,"think":"안녕"}]'
+$r1 = @(ConvertFrom-TranslationReply '[{"i":0,"think":"안녕"}]')   # 한 건이면 배열이 풀리므로 배열로 받는다
 Assert-Equal "깨끗한 JSON 배열" "안녕" $r1[0].think
 $r2 = ConvertFrom-TranslationReply ("여기 번역입니다:`n``````json`n" + '[{"i":0,"think":"가"},{"i":2,"label":"나"}]' + "`n``````")
 Assert-Equal "코드블록과 앞뒤 설명이 섞여도 배열을 꺼낸다" 2 @($r2).Count
