@@ -168,5 +168,99 @@ foreach ($fn in $sampleAst.FindAll({ param($n) $n -is [System.Management.Automat
 Assert-Equal "위험한 모양(@() 없이 받고 .Count)만 잡는다" "Use-Bad" ($found -join ",")
 
 Write-Host ""
+Write-Host "문서·스크립트 전체: 홀로 있는 CR 문자"
+# .ps1 은 위에서 봤다. 나머지 글 파일(문서·화면 코드 등)에 CR 만 있는 줄이 있으면 경로의 \r 이 글자로 둔갑한 것처럼 보이는 일이 생긴다
+# (실제로 README 의 `tests\repo` 가 `tests` + CR + `epo` 로 깨져 올라간 적이 있다).
+$loneCr = @()
+foreach ($f in $textFiles) {
+    $b = [System.IO.File]::ReadAllBytes($f)
+    for ($i = 0; $i -lt $b.Length; $i++) {
+        if ($b[$i] -eq 13 -and -not ($i + 1 -lt $b.Length -and $b[$i + 1] -eq 10)) { $loneCr += (Get-Rel $f); break }
+    }
+}
+Assert-Equal "글 파일에 CR 만 있는 줄이 없다  $(@($loneCr) -join ', ')" 0 @($loneCr).Count
+
+Write-Host ""
+Write-Host "README 가 가리키는 시험 파일이 실제로 있는지"
+$readme = Join-Path $repoRoot "README.md"
+$missingTests = @()
+if (Test-Path -LiteralPath $readme) {
+    $readmeText = [System.IO.File]::ReadAllText($readme, [System.Text.Encoding]::UTF8)
+    $allTests = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot "tests") -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    foreach ($m in [regex]::Matches($readmeText, '`([A-Za-z0-9_.\\/-]+\.tests\.(?:ps1|js))`')) {
+        $leaf = ($m.Groups[1].Value -split '[\\/]')[-1]
+        if ($allTests -notcontains $leaf) { $missingTests += $m.Groups[1].Value }
+    }
+}
+Assert-Equal "README 에 적힌 시험 파일이 모두 tests 아래에 있다  $(@($missingTests | Select-Object -Unique) -join ', ')" 0 @($missingTests | Select-Object -Unique).Count
+
+Write-Host ""
+Write-Host "시험이 함수를 뜯어 올 때 쓰는 이름 목록이 실제 함수와 맞는지"
+# 시험은 `foreach ($name in @("A","B",...)) { ... FunctionDefinitionAst ... -eq $name ... }` 모양으로 다른 파일에서 함수를 꺼내 온다.
+# 함수를 옮기거나 지웠는데 목록이 그대로면 시험이 깨지거나(이번에도 겪음) 조용히 건너뛴다. 목록의 모든 이름이 저장소 어딘가에 정의돼 있어야 한다.
+function Get-StaleExtractNames($Ast, $KnownFunctions) {
+    $stale = @()
+    foreach ($fe in $Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.ForEachStatementAst] }, $true)) {
+        if ($fe.Body.Extent.Text -notmatch 'FunctionDefinitionAst') { continue }
+        # 배열 글자(@("A","B"))의 원소만 이름으로 본다. 조건 안의 코드(예: .FindAll(...) 의 메서드 이름)는 이름이 아니다.
+        $names = @()
+        foreach ($arr in $fe.Condition.FindAll({ param($n) $n -is [System.Management.Automation.Language.ArrayExpressionAst] }, $true)) {
+            foreach ($s in $arr.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true)) {
+                $inCode = $false; $p = $s.Parent
+                while ($p -and $p -ne $arr) { if ($p -is [System.Management.Automation.Language.ScriptBlockExpressionAst] -or $p -is [System.Management.Automation.Language.InvokeMemberExpressionAst]) { $inCode = $true; break }; $p = $p.Parent }
+                if (-not $inCode) { $names += [string]$s.Value }
+            }
+        }
+        foreach ($n in $names) { if (-not $KnownFunctions.ContainsKey($n)) { $stale += $n } }
+    }
+    return @($stale)
+}
+$testAsts = @{}
+$staleAll = @()
+foreach ($f in $psFiles) {
+    if ((Get-Rel $f) -notlike "tests\*") { continue }
+    $stale = @(Get-StaleExtractNames $asts[$f] $userFunctions)
+    foreach ($n in $stale) { $staleAll += ("{0}: {1}" -f (Get-Rel $f), $n) }
+}
+Assert-Equal "함수 꺼내 오기 목록의 이름이 모두 저장소에 정의돼 있다  $(@($staleAll) -join ' | ')" 0 @($staleAll).Count
+$sampleStale = @'
+foreach ($name in @("Exists-Func", "Gone-Func")) {
+    $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+}
+'@
+$t3 = $null; $e3 = $null
+$sampleStaleAst = [System.Management.Automation.Language.Parser]::ParseInput($sampleStale, [ref]$t3, [ref]$e3)
+Assert-Equal "점검 규칙 자체: 없는 이름만 잡는다" "Gone-Func" ((Get-StaleExtractNames $sampleStaleAst @{ "Exists-Func" = $true }) -join ",")
+
+Write-Host ""
+Write-Host "런타임에서 같은 이름의 함수를 두 파일에 정의하지 않았는지"
+# 같은 함수를 두 곳에 두면 한쪽만 고치고 놓친다(주석에도 그런 사고가 적혀 있다). 나중에 읽힌 쪽이 이겨서 어느 쪽이 도는지도 헷갈린다.
+$definedIn = @{}
+foreach ($f in $psFiles) {
+    if ((Get-Rel $f) -notlike "runtime\*") { continue }
+    foreach ($fn in $asts[$f].FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+        # 함수 안에 정의된 함수(중첩)는 바깥 함수에서만 보이므로 제외한다
+        $p = $fn.Parent; $nested = $false
+        while ($p) { if ($p -is [System.Management.Automation.Language.FunctionDefinitionAst]) { $nested = $true; break }; $p = $p.Parent }
+        if ($nested) { continue }
+        if (-not $definedIn.ContainsKey($fn.Name)) { $definedIn[$fn.Name] = @() }
+        $definedIn[$fn.Name] += (Get-Rel $f)
+    }
+}
+# 의도해서 여러 곳에 둔 함수는 여기에 이유와 함께 적는다. (예: 독립 실행 스크립트마다 필요한 작은 로그 함수)
+$allowDuplicateDefinition = @{
+    "Log" = "스크립트마다 따로 도는 독립 실행 파일이라 각자 로그 함수를 가진다"
+    "Write-WatchdogLog" = "ensure-agy-running.ps1 안에서만 쓰는 로그 함수"
+    "ConvertTo-CwdList" = "뷰어(serve-viewer.ps1)는 위임 스크립트가 없어도 떠야 해서 사본을 두고, cwd-list.tests.ps1 이 common.ps1 과 같은 규칙인지 확인한다"
+    "Test-WatcherAlive" = "start-agy.ps1(워처를 켜는 독립 스크립트)과 뷰어의 watcher-health.ps1 은 따로 도는 스크립트이고 서명도 다르다"
+}
+$dups = @()
+foreach ($k in $definedIn.Keys) {
+    $uniqueFiles = @($definedIn[$k] | Select-Object -Unique)
+    if ($uniqueFiles.Count -gt 1 -and -not $allowDuplicateDefinition.ContainsKey($k)) { $dups += ("{0} -> {1}" -f $k, ($uniqueFiles -join ", ")) }
+}
+Assert-Equal "런타임 함수가 두 파일 이상에 정의돼 있지 않다  $(@($dups) -join ' | ')" 0 @($dups).Count
+
+Write-Host ""
 Write-Host ("통과 {0} / 실패 {1}" -f $script:Passed, $script:Failed)
 if ($script:Failed -gt 0) { exit 1 }

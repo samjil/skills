@@ -19,6 +19,9 @@
 # 멈춤 기준(워처의 $AgyStallSeconds)의 근거:
 #   정상 작업에서 새 단계 사이가 가장 길게 비었던 것은 113초였습니다(5건, 약 640단계 관찰).
 #   관찰이 5건뿐이라 이보다 오래 조용한 정상 작업이 없다고 보장하지는 못합니다.
+#   실제로 5.4분(324초) 동안 새 단계가 없어 끊은 적이 있다(2026-10-14 22:25). 마지막 단계는 도구 결과였으므로 모델이 긴 응답을
+#   만드는 중이었을 가능성이 있지만, 정말 멈춘 것과 구분할 방법은 없었다. 그래서 끊을 때 마지막 단계를 로그에 남기고(Get-AgyLastStepSummary),
+#   기준은 환경변수 AGY_STALL_SECONDS(기본 300)로 바꿀 수 있게 했다.
 #
 # 대화를 못 찾거나 어느 것인지 모호하면 멈춤 판정을 하지 않습니다(절대 마감만 적용).
 # 멀쩡히 일하는 작업을 잘못 끊는 쪽이 이 개선이 막으려던 바로 그 피해이기 때문입니다.
@@ -96,6 +99,65 @@ function Get-AgyConversationActivity($AgyHome, $Id) {
         }
     }
     return $latest
+}
+
+# 멈춤으로 판정했을 때 남길 진단: 대화 기록의 마지막 단계가 무엇이었는가.
+# "새 단계가 안 쌓인다"만으로는 agy 가 정말 멈췄는지, 모델이 긴 응답을 만드는 중인지, 도구(오래 걸리는 명령)가 도는 중인지 가릴 수 없다.
+# 마지막 단계의 모양으로 짐작만 해서 로그에 남긴다(판정에는 쓰지 않는다):
+#   도구를 부르는 모델 응답(PLANNER_RESPONSE + tool_calls)이 마지막   -> 'tool-running'    그 도구가 아직 도는 중일 수 있다
+#   도구 결과·사용자 입력 같은 다른 단계가 마지막                       -> 'model-generating' 모델이 다음 응답을 만드는 중일 수 있다
+#   도구 없이 끝난 모델 응답이 마지막                                   -> 'model-finishing'
+# 마지막 줄이 아주 클 수 있어(긴 응답) 줄 전체를 JSON 으로 읽지 않고 필요한 글자만 정규식으로 뽑는다.
+# 반환: @{ Index; Type; Status; Tools = @(도구 이름); Hint } 또는 읽을 수 없으면 $null.
+function Get-AgyLastStepSummary($AgyHome, $Id) {
+    $tp = Get-AgyTranscriptPath $AgyHome $Id
+    if (-not $tp -or -not (Test-Path -LiteralPath $tp)) { return $null }
+    $text = $null
+    try {
+        $fs = New-Object System.IO.FileStream($tp, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $len = $fs.Length
+            if ($len -le 0) { return $null }
+            $take = [int][Math]::Min([long]1048576, $len)
+            [void]$fs.Seek($len - $take, [System.IO.SeekOrigin]::Begin)
+            $buf = New-Object byte[] $take
+            $got = 0
+            while ($got -lt $take) { $n = $fs.Read($buf, $got, $take - $got); if ($n -le 0) { break }; $got += $n }
+            $text = [System.Text.Encoding]::UTF8.GetString($buf, 0, $got)
+        } finally { $fs.Dispose() }
+    } catch { return $null }
+    $lines = @($text -split "\r?\n" | Where-Object { $_.Trim() })
+    if ($lines.Count -eq 0) { return $null }
+    # 파일 끝에서 쓰는 중이라 줄이 끊겨 있을 수 있으니, 단계 번호가 읽히는 가장 마지막 줄을 쓴다
+    $line = $null
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        if ($lines[$i] -match '"step_index"\s*:\s*\d+') { $line = $lines[$i]; break }
+    }
+    if (-not $line) { return $null }
+    $idx = $null; if ($line -match '"step_index"\s*:\s*(\d+)') { $idx = [int]$Matches[1] }
+    $type = ""; if ($line -match '"type"\s*:\s*"([A-Z_]+)"') { $type = $Matches[1] }
+    $status = ""; if ($line -match '"status"\s*:\s*"([A-Z_]+)"') { $status = $Matches[1] }
+    $tools = @()
+    $tc = $line.IndexOf('"tool_calls"', [System.StringComparison]::Ordinal)
+    if ($tc -ge 0) {
+        foreach ($m in [regex]::Matches($line.Substring($tc), '"name"\s*:\s*"([A-Za-z0-9_]+)"')) { $tools += $m.Groups[1].Value }
+    }
+    $hint = 'model-generating'
+    if ($type -eq 'PLANNER_RESPONSE') { $hint = $(if ($tools.Count -gt 0) { 'tool-running' } else { 'model-finishing' }) }
+    return @{ Index = $idx; Type = $type; Status = $status; Tools = @($tools); Hint = $hint }
+}
+
+# 위 요약을 로그 한 줄로 만든다. 요약이 없으면 빈 문자열.
+function Format-AgyLastStep($Summary) {
+    if ($null -eq $Summary) { return "" }
+    $hintText = switch ($Summary.Hint) {
+        'tool-running'     { "도구가 아직 도는 중일 수 있음" }
+        'model-generating' { "모델이 다음 응답을 만드는 중일 수 있음" }
+        'model-finishing'  { "모델이 응답을 마무리하는 중일 수 있음" }
+        default            { "" }
+    }
+    $toolText = if (@($Summary.Tools).Count -gt 0) { " 도구: " + (@($Summary.Tools) -join ",") } else { "" }
+    return ("마지막 단계 #{0} {1} {2}{3} ({4})" -f $Summary.Index, $Summary.Type, $Summary.Status, $toolText, $hintText).Trim()
 }
 
 # 멈췄는가: 마지막 활동(없으면, 또는 호출 시작보다 옛날이면 호출 시작 시각)으로부터

@@ -26,7 +26,7 @@ $assign = $astWatch.Find({ param($n) $n -is [System.Management.Automation.Langua
         $n.Left.VariablePath.UserPath -eq "UsageCsvHeader" }, $true)
 Invoke-Expression $assign.Extent.Text
 foreach ($name in @("Truncate-Text", "Write-UsageRowUnlocked", "Initialize-QaStore", "New-QaRecordFromRow", "Sync-QaStore",
-        "Update-QaIndex", "Update-QAReportUnlocked", "Test-QaTaskIdInShardTail", "Get-QaIndexTotal", "Complete-TaskQaRecord")) {
+        "Update-QaIndex", "Update-QAReportUnlocked", "Get-QaIndexTotal", "Complete-TaskQaRecord")) {
     $fn = $astWatch.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
     if (-not $fn) { throw "$name 를 watch-agy.ps1 에서 찾지 못했습니다." }
     Invoke-Expression $fn.Extent.Text
