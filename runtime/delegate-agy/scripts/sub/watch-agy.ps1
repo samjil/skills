@@ -378,6 +378,9 @@ function Get-JsonField($obj, [string[]]$paths) {
 # session_id: agy 응답의 conversation_id (동일 세션 식별용).
 
 $UsageCsvHeader = "timestamp,computer_name,task_id,model,attempts,tried_models,input_tokens,output_tokens,thinking_tokens,total_tokens,elapsed_sec,status,session,session_id"
+# 이 프로세스가 usage.csv 에 처음 쓴 행. 작업자는 작업 하나만 하므로 그 작업의 행이고, Complete-TaskQaRecord 가
+# 기록 저장소에 넣을 레코드를 만들 때 usage.csv 를 다시 읽지 않고 이걸 쓴다.
+$script:FirstUsageRow = $null
 
 
 
@@ -424,6 +427,13 @@ function Write-UsageRowUnlocked($taskId, $model, $attempts, $triedModels, $input
             ForEach-Object { if ($null -eq $_) { "" } else { ($_ -replace ',', ';') } }
 
         ($row -join ",") | Add-Content -Path $UsageCsv -Encoding UTF8
+        if ($null -eq $script:FirstUsageRow) {
+            $script:FirstUsageRow = [PSCustomObject]([ordered]@{
+                timestamp = $row[0]; computer_name = $row[1]; task_id = $row[2]; model = $row[3]; attempts = $row[4]; tried_models = $row[5]
+                input_tokens = $row[6]; output_tokens = $row[7]; thinking_tokens = $row[8]; total_tokens = $row[9]
+                elapsed_sec = $row[10]; status = $row[11]; session = $row[12]; session_id = $row[13]
+            })
+        }
 
     } catch {
 
@@ -673,129 +683,84 @@ function Initialize-QaStore {
 
 
 
-# usage.csv에 있는데 아직 jsonl에 없는 작업을 찾아서 이어붙입니다.
+# usage.csv 의 행 하나(없는 칸은 빈 문자열)로 기록 저장소(jsonl)에 넣을 레코드를 만듭니다.
+# Sync-QaStore(usage.csv 를 읽어 빠진 것을 채움)와 작업자의 단일 추가(Complete-TaskQaRecord)가 같은 레코드를 만들도록 한 곳에 둡니다.
+# $QuestionPath 를 주면 그 지시파일을 질문으로 쓰고, 안 주면 processed 폴더에서 작업 ID 로 찾습니다.
+function New-QaRecordFromRow($r, [string]$QuestionPath = "") {
+    $taskId = [string]$r.task_id
 
-function Sync-QaStore {
+    if (-not $QuestionPath) {
+        $qFile = Get-ChildItem -Path $ProcessedDir -Filter "$taskId.*" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($qFile) { $QuestionPath = $qFile.FullName }
+    }
+    $qText = if ($QuestionPath -and (Test-Path -LiteralPath $QuestionPath)) {
+        Get-Content -Raw -LiteralPath $QuestionPath -Encoding UTF8 -ErrorAction SilentlyContinue
+    } else { "(원본 지시파일을 찾을 수 없음 - 이미 정리되었을 수 있습니다)" }
 
-    if ($null -eq $script:QaKnownIds) { Initialize-QaStore }
+    $aPath = Join-Path $OutboxDir "$taskId.response.md"
+    $aText = if (Test-Path $aPath) {
+        Get-Content -Raw -Path $aPath -Encoding UTF8 -ErrorAction SilentlyContinue
+    } else { "(응답 파일 없음)" }
 
-    if (-not (Test-Path $UsageCsv)) { return 0 }
-
-    $added = 0
-
-    try {
-
-        $rows = @(Import-Csv -Path $UsageCsv -Encoding UTF8 | Sort-Object timestamp)
-
-        foreach ($r in $rows) {
-
-            $taskId = [string]$r.task_id
-
-            if ([string]::IsNullOrWhiteSpace($taskId)) { continue }
-
-            if ($script:QaKnownIds.Contains($taskId)) { continue }
-
-
-
-            $qFile = Get-ChildItem -Path $ProcessedDir -Filter "$taskId.*" -ErrorAction SilentlyContinue | Select-Object -First 1
-
-            $qText = if ($qFile) {
-
-                Get-Content -Raw -Path $qFile.FullName -Encoding UTF8 -ErrorAction SilentlyContinue
-
-            } else { "(원본 지시파일을 찾을 수 없음 - 이미 정리되었을 수 있습니다)" }
-
-
-
-            $aPath = Join-Path $OutboxDir "$taskId.response.md"
-
-            $aText = if (Test-Path $aPath) {
-
-                Get-Content -Raw -Path $aPath -Encoding UTF8 -ErrorAction SilentlyContinue
-
-            } else { "(응답 파일 없음)" }
-
-
-
-            # 과정(agy 가 부른 도구 목록)도 같이 기록한다. agy 의 대화 기록은 나중에 정리될 수 있어서 작업이 끝난 직후에
-            # 저장해 둔다. 대화 기록을 못 읽으면(대화 id 없음/파일 없음) $null = "모름", 읽었는데 도구를 안 썼으면 @() = "없음".
-            $processSteps = $null
-            if ($r.session_id) {
-                $tPath = Get-AgyTranscriptPath (Get-AgyHomeDir) ([string]$r.session_id)
-                if ($tPath -and (Test-Path -LiteralPath $tPath)) {
-                    $processSteps = @((Read-AgyProcessSteps $tPath 0 $QaProcessMaxSteps).Steps)
-                }
-            }
-
-            $rec = [ordered]@{
-
-                timestamp       = [string]$r.timestamp
-
-                computer_name   = [string]$r.computer_name
-
-                task_id         = $taskId
-
-                model           = [string]$r.model
-
-                attempts        = [string]$r.attempts
-
-                tried_models    = [string]$r.tried_models
-
-                input_tokens    = [string]$r.input_tokens
-
-                output_tokens   = [string]$r.output_tokens
-
-                thinking_tokens = [string]$r.thinking_tokens
-
-                total_tokens    = [string]$r.total_tokens
-
-                elapsed_sec     = [string]$r.elapsed_sec
-
-                status          = [string]$r.status
-
-                session         = [string]$r.session
-
-                session_id      = [string]$r.session_id
-
-                question        = (Truncate-Text ([string]$qText) 20000)
-
-                answer          = (Truncate-Text ([string]$aText) 20000)
-
-                process         = $processSteps
-
-            }
-
-
-
-            $line = ConvertTo-ReadableJson $rec 6
-
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-
-            Add-Content -Path (Get-QaShardPath) -Value $line -Encoding UTF8
-
-
-
-            [void]$script:QaKnownIds.Add($taskId)
-
-            $script:QaTotal++
-
-            $added++
-
+    # 과정(agy 가 부른 도구 목록)도 같이 기록한다. agy 의 대화 기록은 나중에 정리될 수 있어서 작업이 끝난 직후에
+    # 저장해 둔다. 대화 기록을 못 읽으면(대화 id 없음/파일 없음) $null = "모름", 읽었는데 도구를 안 썼으면 @() = "없음".
+    $processSteps = $null
+    if ($r.session_id) {
+        $tPath = Get-AgyTranscriptPath (Get-AgyHomeDir) ([string]$r.session_id)
+        if ($tPath -and (Test-Path -LiteralPath $tPath)) {
+            $processSteps = @((Read-AgyProcessSteps $tPath 0 $QaProcessMaxSteps).Steps)
         }
-
-    } catch {
-
-        Log "기록 저장소 동기화 중 오류: $($_.Exception.Message)"
-
     }
 
-    return $added
-
+    return [ordered]@{
+        timestamp       = [string]$r.timestamp
+        computer_name   = [string]$r.computer_name
+        task_id         = $taskId
+        model           = [string]$r.model
+        attempts        = [string]$r.attempts
+        tried_models    = [string]$r.tried_models
+        input_tokens    = [string]$r.input_tokens
+        output_tokens   = [string]$r.output_tokens
+        thinking_tokens = [string]$r.thinking_tokens
+        total_tokens    = [string]$r.total_tokens
+        elapsed_sec     = [string]$r.elapsed_sec
+        status          = [string]$r.status
+        session         = [string]$r.session
+        session_id      = [string]$r.session_id
+        question        = (Truncate-Text ([string]$qText) 20000)
+        answer          = (Truncate-Text ([string]$aText) 20000)
+        process         = $processSteps
+    }
 }
 
+# usage.csv에 있는데 아직 jsonl에 없는 작업을 찾아서 이어붙입니다.
+function Sync-QaStore {
+    if ($null -eq $script:QaKnownIds) { Initialize-QaStore }
+    if (-not (Test-Path $UsageCsv)) { return 0 }
+    $added = 0
+    try {
+        $rows = @(Import-Csv -Path $UsageCsv -Encoding UTF8 | Sort-Object timestamp)
+        foreach ($r in $rows) {
+            $taskId = [string]$r.task_id
+            if ([string]::IsNullOrWhiteSpace($taskId)) { continue }
+            if ($script:QaKnownIds.Contains($taskId)) { continue }
 
+            $rec = New-QaRecordFromRow $r
+            $line = ConvertTo-ReadableJson $rec 6
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            Add-QaLine (Get-QaShardPath) $line
 
-function Update-QaIndex {
+            [void]$script:QaKnownIds.Add($taskId)
+            $script:QaTotal++
+            $added++
+        }
+    } catch {
+        Log "기록 저장소 동기화 중 오류: $($_.Exception.Message)"
+    }
+    return $added
+}
+
+function Update-QaIndex([int]$Total = -1) {
 
     try {
 
@@ -819,7 +784,7 @@ function Update-QaIndex {
 
             updated     = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 
-            total       = $script:QaTotal
+            total       = $(if ($Total -ge 0) { $Total } else { $script:QaTotal })
 
             keep_months = $QaKeepMonths
 
@@ -841,6 +806,79 @@ function Update-QaIndex {
 
 
 
+# 기록 저장소의 현재 파일(ShardPath) 맨 끝 TailBytes 바이트 안에 이 작업 ID 의 레코드가 있는지 봅니다.
+# 방금 끝난 작업의 레코드가 다른 프로세스(워처가 켜질 때의 전체 동기화 등)에 의해 이미 들어갔는지 확인하는 용도라
+# 파일 전체를 읽지 않습니다. 작업 ID 가 든 줄만 엄격하게(ConvertFrom-Json) 읽어서, 깨진 줄이나 다른 레코드의 본문에
+# 우연히 적힌 같은 글자는 "있음"으로 치지 않습니다.
+function Test-QaTaskIdInShardTail([string]$ShardPath, [string]$TaskId, [int]$TailBytes = 262144) {
+    if (-not (Test-Path -LiteralPath $ShardPath)) { return $false }
+    $buf = $null
+    $got = 0
+    $start = [long]0
+    $fs = New-Object System.IO.FileStream($ShardPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $len = $fs.Length
+        $start = [Math]::Max([long]0, $len - $TailBytes)
+        [void]$fs.Seek($start, [System.IO.SeekOrigin]::Begin)
+        $buf = [byte[]]::new([int]($len - $start))
+        while ($got -lt $buf.Length) {
+            $n = $fs.Read($buf, $got, $buf.Length - $got)
+            if ($n -le 0) { break }
+            $got += $n
+        }
+    } finally { $fs.Dispose() }
+    $lines = [System.Text.Encoding]::UTF8.GetString($buf, 0, $got) -split "\r?\n"
+    for ($i = 0; $i -lt $lines.Length; $i++) {
+        if ($i -eq 0 -and $start -gt 0) { continue }    # 읽기 시작 지점에서 잘린 첫 줄
+        $l = $lines[$i].Trim().TrimStart([char]0xFEFF)
+        if (-not $l) { continue }
+        if ($l.IndexOf($TaskId, [System.StringComparison]::Ordinal) -lt 0) { continue }
+        $rec = $null
+        try { $rec = $l | ConvertFrom-Json } catch { continue }
+        if ($null -ne $rec -and [string]$rec.task_id -ceq $TaskId) { return $true }
+    }
+    return $false
+}
+
+# index.json 에 적힌 기록 건수(없거나 읽을 수 없으면 0). 작업자가 건수를 +1 할 때 쓴다.
+function Get-QaIndexTotal {
+    try {
+        if (-not (Test-Path -LiteralPath $QaIndexFile)) { return 0 }
+        $o = Get-Content -Raw -LiteralPath $QaIndexFile -Encoding UTF8 | ConvertFrom-Json
+        if ($o -and $o.total) { return [int]$o.total }
+    } catch {}
+    return 0
+}
+
+# 작업자가 작업 하나를 끝낼 때의 마무리: 지시파일을 processed 로 옮기고, 기록 저장소에 "이 작업 한 건만" 덧붙이고,
+# index.json 을 갱신한다. 전부 뮤텍스 한 번 안에서 한다.
+# 예전에는 여기서 Update-QAReport(전체 동기화)를 불렀다. 작업자는 작업마다 새 프로세스라 그때마다 모든 기록 파일을
+# 처음부터 끝까지 JSON 으로 읽어야 했고, 그것도 뮤텍스를 쥔 채였다. 전체 동기화는 이제 워처가 켜질 때와
+# 사라진 작업을 정리할 때(Resolve-DeadClaim)만 한다.
+# 이 작업의 usage 행을 이 프로세스가 쓰지 못했거나 덧붙이다 오류가 나면 예전 방식(usage.csv 기준 전체 동기화)으로 물러선다.
+function Complete-TaskQaRecord([string]$TaskId, [string]$SourcePath, [string]$DonePath) {
+    Invoke-WithRuntimeLock {
+        Move-Item -Path $SourcePath -Destination $DonePath -Force
+        $row = $script:FirstUsageRow
+        if ($null -eq $row -or [string]$row.task_id -ne $TaskId) {
+            Update-QAReportUnlocked
+            return
+        }
+        try {
+            $shard = Get-QaShardPath
+            if (Test-QaTaskIdInShardTail $shard $TaskId) { return }
+            $line = ConvertTo-ReadableJson (New-QaRecordFromRow $row $DonePath) 6
+            if ([string]::IsNullOrWhiteSpace($line)) { throw "레코드를 JSON으로 변환하지 못했습니다." }
+            Add-QaLine $shard $line
+            if ($null -ne $script:QaKnownIds) { [void]$script:QaKnownIds.Add($TaskId); $script:QaTotal++ }
+            Update-QaIndex ((Get-QaIndexTotal) + 1)
+        } catch {
+            Log "기록 저장소에 작업 한 건을 덧붙이다 오류가 나서 전체 동기화로 대신합니다: $($_.Exception.Message)"
+            Update-QAReportUnlocked
+        }
+    }
+}
+
 function Update-QAReportUnlocked {
     $null = Sync-QaStore
     Update-QaIndex
@@ -853,58 +891,6 @@ function Write-UsageRow($taskId, $model, $attempts, $triedModels, $inputTokens, 
 }
 function Update-UsageSummary { Invoke-WithRuntimeLock { Update-UsageSummaryUnlocked } }
 function Update-QAReport { Invoke-WithRuntimeLock { Update-QAReportUnlocked } }
-
-function Add-SingleTaskToQaStore([string]$taskId, [string]$model, $attempts, [string]$triedStr, $inTok, $outTok, $thinkTok, $totTok, $elapsedSec, [string]$status, [string]$sessionName = "", [string]$sessionId = "") {
-    if ($null -ne $script:QaKnownIds -and $script:QaKnownIds.Contains($taskId)) { return }
-    Invoke-WithRuntimeLock {
-        if ($null -ne $script:QaKnownIds -and $script:QaKnownIds.Contains($taskId)) { return }
-        $qFile = Get-ChildItem -Path $ProcessedDir -Filter "$taskId.*" -ErrorAction SilentlyContinue | Select-Object -First 1
-        $qText = if ($qFile) {
-            Get-Content -Raw -Path $qFile.FullName -Encoding UTF8 -ErrorAction SilentlyContinue
-        } else { "(원본 지시파일을 찾을 수 없음 - 이미 정리되었을 수 있습니다)" }
-
-        $aPath = Join-Path $OutboxDir "$taskId.response.md"
-        $aText = if (Test-Path -LiteralPath $aPath) {
-            Get-Content -Raw -Path $aPath -Encoding UTF8 -ErrorAction SilentlyContinue
-        } else { "(응답 파일 없음)" }
-
-        $processSteps = $null
-        if ($sessionId) {
-            $tPath = Get-AgyTranscriptPath (Get-AgyHomeDir) ([string]$sessionId)
-            if ($tPath -and (Test-Path -LiteralPath $tPath)) {
-                $processSteps = @((Read-AgyProcessSteps $tPath 0 $QaProcessMaxSteps).Steps)
-            }
-        }
-
-        $rec = [ordered]@{
-            timestamp       = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-            computer_name   = [string]$ComputerName
-            task_id         = $taskId
-            model           = [string]$model
-            attempts        = $(if ($null -ne $attempts) { [string]$attempts } else { "" })
-            tried_models    = [string]$triedStr
-            input_tokens    = $(if ($null -ne $inTok) { [string]$inTok } else { "" })
-            output_tokens   = $(if ($null -ne $outTok) { [string]$outTok } else { "" })
-            thinking_tokens = $(if ($null -ne $thinkTok) { [string]$thinkTok } else { "" })
-            total_tokens    = $(if ($null -ne $totTok) { [string]$totTok } else { "" })
-            elapsed_sec     = $(if ($null -ne $elapsedSec) { [string]$elapsedSec } else { "" })
-            status          = [string]$status
-            session         = [string]$sessionName
-            session_id      = [string]$sessionId
-            question        = (Truncate-Text ([string]$qText) 20000)
-            answer          = (Truncate-Text ([string]$aText) 20000)
-            process         = $processSteps
-        }
-        $written = Add-QaRecordUnlocked $rec $QaIndexFile $QaKeepMonths
-        if ($written -and $null -ne $script:QaKnownIds) {
-            [void]$script:QaKnownIds.Add($taskId)
-            $script:QaTotal++
-        }
-    }
-}
-
-
-
 
 # agy 한 번 호출이 이 시간을 넘기면 강제로 중단하고 그 작업을 실패 처리합니다.
 
@@ -1389,7 +1375,7 @@ function Resolve-DeadClaim($Claim, [string]$ClaimPath) {
         if (-not (Test-Path -LiteralPath $outFile)) { Set-Content -Path $outFile -Value $msg -Encoding UTF8 }
         Write-UsageRow $taskId $null $null $null $null $null $null $null $null "ERROR" ([string]$Claim.session) ""
         Move-Item -LiteralPath $inboxFile -Destination (Join-Path $ProcessedDir (Split-Path $inboxFile -Leaf)) -Force -ErrorAction SilentlyContinue
-        Add-SingleTaskToQaStore $taskId $null $null "" $null $null $null $null $null "ERROR" ([string]$Claim.session) ""
+        Update-QAReport
     }
     Remove-Item -LiteralPath $ClaimPath -Force -ErrorAction SilentlyContinue
 }
@@ -1573,8 +1559,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
         Set-Content -Path $outFile -Value $modelCheck.Error -Encoding UTF8
         Log "실패: $($modelCheck.Error)"
         Write-UsageRow $baseName $null $null $requestedModel $null $null $null $null $null "ERROR" $sessionName $conversationId
-        Move-Item -Path $file.FullName -Destination $doneFile -Force
-        Add-SingleTaskToQaStore $baseName $null $null $requestedModel $null $null $null $null $null "ERROR" $sessionName $conversationId
+        Complete-TaskQaRecord $baseName $file.FullName $doneFile
         return
     }
     $requestedModel = $modelCheck.Model
@@ -1588,8 +1573,9 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
         # 있었는지" 조회할 수 있도록 다른 실패와 똑같이 usage.csv/qa-jsonl에 남깁니다
         # (여기서 기록하지 않으면 outbox에는 파일이 남는데 기록에서는 통째로 빠집니다).
         Write-UsageRow $baseName $null $null $null $null $null $null $null $null "ERROR" $sessionName $conversationId
-        Move-Item -Path $file.FullName -Destination $doneFile -Force
-        Add-SingleTaskToQaStore $baseName $null $null "" $null $null $null $null $null "ERROR" $sessionName $conversationId
+
+        Complete-TaskQaRecord $baseName $file.FullName $doneFile
+
         return
     }
 
@@ -1692,10 +1678,10 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
         }
     }
 
-    Move-Item -Path $file.FullName -Destination $doneFile -Force
 
-    # 방금 처리한 작업 1건만 샤드에 즉시 추가
-    Add-SingleTaskToQaStore $baseName $recModel $recAttempts $recTried $recInTok $recOutTok $recThinkTok $recTotTok $recElapsed $recStatus $sessionName $effectiveSessionId
+
+    # 지시파일을 processed 로 옮긴 뒤에 기록 저장소에 덧붙여야 방금 처리한 작업의 질문 내용도 바로 담긴다.
+    Complete-TaskQaRecord $baseName $file.FullName $doneFile
 }
 
 # 작업자 모드: 지시파일 하나만 처리하고 끝낸다(워처 본체는 시작하지 않는다)
