@@ -348,6 +348,22 @@ try {
     Assert-True "깨진 색인 복구 후 정상 읽힘" ($null -ne $readBroken.Tasks)
     Assert-Equal "복구 후 7777 존재" "cli-session-2" $readBroken.Tasks["claude_1791969860_7777"]
 
+    # (i) Read-ClaudeLinkIndex 캐시 동작 검증
+    $cached1 = Read-ClaudeLinkIndex -IndexFile $indexFile
+    $cached2 = Read-ClaudeLinkIndex -IndexFile $indexFile
+    Assert-Equal "동일 파일 두 번 읽었을 때 캐시된 동일 결과 반환" $cached1.Updated $cached2.Updated
+    Assert-Equal "캐시 결과 객체 키 동일" $cached1.Tasks.Count $cached2.Tasks.Count
+
+    # 인덱스 파일에 새 내용 쓰기 (수정 시각 및 크기 변경)
+    Start-Sleep -Milliseconds 50
+    $newIndexObj = @{ version = 1; files = @{}; tasks = @{ "test_cached_task" = @{ session = "cli-session-test"; ts = "2026-10-15 12:00:00" } }; msgs = @{}; updated = "2026-10-15 12:00:00" }
+    [System.IO.File]::WriteAllText($indexFile, (ConvertTo-Json -InputObject $newIndexObj -Depth 5), $utf8NoBom)
+    (Get-Item -LiteralPath $indexFile).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddSeconds(5)
+
+    $readUpdated = Read-ClaudeLinkIndex -IndexFile $indexFile
+    Assert-Equal "파일 갱신 후 새 작업 즉시 반영" "cli-session-test" $readUpdated.Tasks["test_cached_task"]
+    Assert-Equal "파일 갱신 후 updated 필드 반영" "2026-10-15 12:00:00" $readUpdated.Updated
+
     # (i) scan-claude-links.ps1 를 새 powershell.exe 로 실행
     Write-Host "`n[4. scan-claude-links.ps1 외부 프로세스 실행]"
     $psi = New-Object System.Diagnostics.ProcessStartInfo

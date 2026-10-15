@@ -92,34 +92,13 @@ $rec = [ordered]@{
     answer        = $aText
 }
 
-$line = ConvertTo-ReadableJson $rec 6
-if ([string]::IsNullOrWhiteSpace($line)) { throw "레코드를 JSON으로 변환하지 못했습니다." }
-# 경로를 한 번만 계산해서 씁니다 - Add-Content 이후에 다시 계산하면 방금 쓴 내용 때문에
-# 파일 크기가 달라져 있어(특히 회전 기준을 넘겼다면) 실제로 쓴 파일과 다른 경로를 보고할 수 있습니다.
-$shardPath = Get-QaShardPath
-Add-Content -Path $shardPath -Value $line -Encoding UTF8
-
-# index.json은 실제 shard 파일들을 다시 읽어 총 건수를 새로 계산합니다
-# (watch-agy.ps1이 지금 안 떠 있어도 웹 뷰어가 정확한 총 건수를 보여주도록).
-$total = 0
-$shards = @()
-foreach ($f in (Get-QaShardFiles)) {
-    $lineCount = @(Get-Content -Path $f.FullName -Encoding UTF8 -ErrorAction SilentlyContinue |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
-    $total += $lineCount
-    $shards += [ordered]@{
-        file     = $f.Name
-        bytes    = $f.Length
-        modified = $f.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+$shardPath = Invoke-WithRuntimeLock {
+    $written = Add-QaRecordUnlocked $rec $QaIndexFile 12
+    if (-not $written) {
+        throw "레코드를 JSON으로 변환하지 못했거나 이미 존재하는 task_id입니다."
     }
+    return $written
 }
-$idx = [ordered]@{
-    updated     = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-    total       = $total
-    keep_months = 12
-    note        = "qa-YYYY-MM.jsonl 파일의 한 줄이 작업 한 건입니다. source 필드로 bridge(inbox 위임)/mcp(직접 호출)를 구분합니다."
-    shards      = @($shards)
-}
-Set-Content -Path $QaIndexFile -Value (ConvertTo-ReadableJson $idx 6 -Pretty) -Encoding UTF8
 
 Write-Host "기록 저장: task_id=$TaskId source=$Source -> $shardPath"
+

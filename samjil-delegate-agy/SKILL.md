@@ -199,7 +199,7 @@ echo "exit=$?"
 rm -f "$BASE/logs/manual_stop.flag"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -ConfirmDelaySeconds 0 -StaleThresholdSeconds 0
 # 대시보드 뷰어도 창·브라우저 탭 없이 켠다(이미 떠 있으면 그대로 둔다. 뷰어는 켜질 때 워처도 창 없이 함께 켠다)
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjiliewer\ensure-viewer-running.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\viewer\ensure-viewer-running.ps1"
 for i in $(seq 1 10); do
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -CheckOnly -StaleThresholdSeconds 0 | grep -q ALIVE && echo "켜짐" && break
   sleep 3

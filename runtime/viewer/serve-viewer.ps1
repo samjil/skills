@@ -376,6 +376,7 @@ function Find-DelegateScript([string]$RelPath) {
 # "어디까지 읽었는지(Offset)"와 읽은 단계를 기억해 두고 새로 쌓인 부분만 이어 읽는다(Read-AgyProcessSteps 참고).
 # 기억은 최근 8개 대화까지만 둔다.
 $script:ProcessCache = @{}
+$script:TokenCache = @{}
 function Get-AgyProcessStepsCached([string]$ConversationId) {
     if (-not (Get-Command Read-AgyProcessSteps -ErrorAction SilentlyContinue)) { return @() }
     $tp = Get-AgyTranscriptPath (Get-AgyHomeDir) $ConversationId
@@ -565,21 +566,50 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt, [string]$TaskId = 
         if ($say.Length -gt 300) { $say = $say.Substring(0, 300) + "…" }
         $last = $item.LastWriteTime
 
-        # 실시간 누적 토큰 집계 (transcript.jsonl 우선, 없으면 transcript_full.jsonl)
-        $tInSum = 0; $tOutSum = 0
+        # 실시간 누적 토큰 집계 (transcript.jsonl 우선, 없으면 transcript_full.jsonl — 오프셋 기반 증분 읽기)
+        $tInSum = [int64]0; $tOutSum = [int64]0
         $compactTf = Join-Path $agyHome ("brain\{0}\.system_generated\logs\transcript.jsonl" -f $ConversationId)
         $targetTokenFile = if (Test-Path -LiteralPath $compactTf) { $compactTf } else { $tf }
-        if (Test-Path -LiteralPath $targetTokenFile) {
+        $tItem = Get-Item -LiteralPath $targetTokenFile -ErrorAction SilentlyContinue
+        if ($tItem) {
             try {
-                $tStream = [System.IO.File]::Open($targetTokenFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-                $tReader = New-Object System.IO.StreamReader($tStream, [System.Text.Encoding]::UTF8)
-                while (-not $tReader.EndOfStream) {
-                    $tLine = $tReader.ReadLine()
-                    if ($tLine -match '"input_tokens"\s*:\s*(\d+)') { $tInSum += [int64]$matches[1] }
-                    if ($tLine -match '"cache_read_tokens"\s*:\s*(\d+)') { $tInSum += [int64]$matches[1] }
-                    if ($tLine -match '"output_tokens"\s*:\s*(\d+)') { $tOutSum += [int64]$matches[1] }
+                if ($null -eq $script:TokenCache) { $script:TokenCache = @{} }
+                $tc = $script:TokenCache[$ConversationId]
+                if (-not $tc -or $tc.Path -ne $targetTokenFile -or $tItem.Length -lt $tc.Offset) {
+                    $tc = @{ Path = $targetTokenFile; Offset = [long]0; InSum = [int64]0; OutSum = [int64]0; Touched = (Get-Date) }
+                    $script:TokenCache[$ConversationId] = $tc
+                    if ($script:TokenCache.Count -gt 16) {
+                        $oldestT = $script:TokenCache.GetEnumerator() | Sort-Object { $_.Value.Touched } | Select-Object -First 1
+                        if ($oldestT) { $script:TokenCache.Remove($oldestT.Key) }
+                    }
                 }
-                $tReader.Dispose(); $tStream.Dispose()
+                $tc.Touched = Get-Date
+                if ($tItem.Length -gt $tc.Offset) {
+                    $tStream = [System.IO.File]::Open($targetTokenFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                    try {
+                        [void]$tStream.Seek($tc.Offset, [System.IO.SeekOrigin]::Begin)
+                        $lenToRead = [int]($tStream.Length - $tc.Offset)
+                        if ($lenToRead -gt 0) {
+                            $tBuf = New-Object byte[] $lenToRead
+                            $tRead = $tStream.Read($tBuf, 0, $lenToRead)
+                            $lastNl = if ($tRead -gt 0) { [Array]::LastIndexOf($tBuf, [byte]10, $tRead - 1) } else { -1 }
+                            if ($lastNl -ge 0) {
+                                $chunkText = [System.Text.Encoding]::UTF8.GetString($tBuf, 0, $lastNl + 1)
+                                foreach ($tLine in ($chunkText -split "\r?\n")) {
+                                    if (-not $tLine) { continue }
+                                    if ($tLine -match '"input_tokens"\s*:\s*(\d+)') { $tc.InSum += [int64]$matches[1] }
+                                    if ($tLine -match '"cache_read_tokens"\s*:\s*(\d+)') { $tc.InSum += [int64]$matches[1] }
+                                    if ($tLine -match '"output_tokens"\s*:\s*(\d+)') { $tc.OutSum += [int64]$matches[1] }
+                                }
+                                $tc.Offset += ($lastNl + 1)
+                            }
+                        }
+                    } finally {
+                        $tStream.Dispose()
+                    }
+                }
+                $tInSum = $tc.InSum
+                $tOutSum = $tc.OutSum
             } catch {}
         }
 

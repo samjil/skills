@@ -273,24 +273,13 @@ $StopSignalFile = Join-Path $LogsDir "stop.signal"
 
 $ManualStopFlag = Join-Path $LogsDir "manual_stop.flag"
 
-
-
-# 여러 프로세스(워처와 작업자들)가 같은 파일(usage.csv, 기록 저장소, 세션 파일, 로그)을 만지므로, 쓰는 구간을 이 PC 전체에서
-# 하나만 들어가게 이름 있는 뮤텍스로 묶는다. 런타임 폴더마다 이름이 달라서 다른 런타임(시험용 등)과는 서로 막지 않는다.
-function Invoke-WithRuntimeLock([scriptblock]$Block, [int]$TimeoutSeconds = 60) {
-    $sha = New-Object System.Security.Cryptography.SHA1Managed
-    $hash = [BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($RuntimeDir.ToLowerInvariant().TrimEnd('\', '/')))).Replace('-', '')
-    $mutex = New-Object System.Threading.Mutex($false, "Local\samjil-agy-$hash")
-    $got = $false
-    try {
-        try { $got = $mutex.WaitOne($TimeoutSeconds * 1000) } catch [System.Threading.AbandonedMutexException] { $got = $true }
-        # 오래 못 잡아도 멈추지 않고 진행한다(죽은 프로세스가 쥔 경우 등). 잠그지 못했으면 풀지도 않는다.
-        & $Block
-    } finally {
-        if ($got) { try { $mutex.ReleaseMutex() } catch {} }
-        $mutex.Dispose()
-    }
+# 공통 함수(세션 관리, 뮤텍스 락, 샤드/인덱스 관리 등)를 가져옵니다.
+$commonFile = Join-Path $PSScriptRoot "common.ps1"
+if (-not (Test-Path $commonFile)) {
+    $commonFile = Join-Path (Split-Path $PSScriptRoot -Parent) "common.ps1"
 }
+. $commonFile
+
 
 # 작업자 모드에서는 줄마다 "[작업 ID] "를 붙여 여러 작업의 로그가 섞여도 구분되게 한다.
 $script:LogPrefix = ""
@@ -606,15 +595,7 @@ $script:QaTotal    = 0
 
 
 
-# ConvertTo-ReadableJson / Get-QaShardFiles / Get-QaShardPath는 log-qa.ps1과 공유합니다
-
-# (common.ps1 참고 - 두 곳에 복사해두면 한쪽만 고치고 놓치는 사고가 나기 쉽습니다).
-
-$commonFile = Join-Path $PSScriptRoot "common.ps1"
-if (-not (Test-Path $commonFile)) {
-    $commonFile = Join-Path (Split-Path $PSScriptRoot -Parent) "common.ps1"
-}
-. $commonFile
+# ConvertTo-ReadableJson / Get-QaShardFiles / Get-QaShardPath는 common.ps1에서 로드됨
 # 호출 하나가 "일하는 중인지 멈췄는지" 판정하는 헬퍼(agy-progress.ps1). 테스트: tests\delegate-agy
 $progressFile = Join-Path $PSScriptRoot "agy-progress.ps1"
 if (-not (Test-Path $progressFile)) {
@@ -872,6 +853,56 @@ function Write-UsageRow($taskId, $model, $attempts, $triedModels, $inputTokens, 
 }
 function Update-UsageSummary { Invoke-WithRuntimeLock { Update-UsageSummaryUnlocked } }
 function Update-QAReport { Invoke-WithRuntimeLock { Update-QAReportUnlocked } }
+
+function Add-SingleTaskToQaStore([string]$taskId, [string]$model, $attempts, [string]$triedStr, $inTok, $outTok, $thinkTok, $totTok, $elapsedSec, [string]$status, [string]$sessionName = "", [string]$sessionId = "") {
+    if ($null -ne $script:QaKnownIds -and $script:QaKnownIds.Contains($taskId)) { return }
+    Invoke-WithRuntimeLock {
+        if ($null -ne $script:QaKnownIds -and $script:QaKnownIds.Contains($taskId)) { return }
+        $qFile = Get-ChildItem -Path $ProcessedDir -Filter "$taskId.*" -ErrorAction SilentlyContinue | Select-Object -First 1
+        $qText = if ($qFile) {
+            Get-Content -Raw -Path $qFile.FullName -Encoding UTF8 -ErrorAction SilentlyContinue
+        } else { "(원본 지시파일을 찾을 수 없음 - 이미 정리되었을 수 있습니다)" }
+
+        $aPath = Join-Path $OutboxDir "$taskId.response.md"
+        $aText = if (Test-Path -LiteralPath $aPath) {
+            Get-Content -Raw -Path $aPath -Encoding UTF8 -ErrorAction SilentlyContinue
+        } else { "(응답 파일 없음)" }
+
+        $processSteps = $null
+        if ($sessionId) {
+            $tPath = Get-AgyTranscriptPath (Get-AgyHomeDir) ([string]$sessionId)
+            if ($tPath -and (Test-Path -LiteralPath $tPath)) {
+                $processSteps = @((Read-AgyProcessSteps $tPath 0 $QaProcessMaxSteps).Steps)
+            }
+        }
+
+        $rec = [ordered]@{
+            timestamp       = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+            computer_name   = [string]$ComputerName
+            task_id         = $taskId
+            model           = [string]$model
+            attempts        = $(if ($null -ne $attempts) { [string]$attempts } else { "" })
+            tried_models    = [string]$triedStr
+            input_tokens    = $(if ($null -ne $inTok) { [string]$inTok } else { "" })
+            output_tokens   = $(if ($null -ne $outTok) { [string]$outTok } else { "" })
+            thinking_tokens = $(if ($null -ne $thinkTok) { [string]$thinkTok } else { "" })
+            total_tokens    = $(if ($null -ne $totTok) { [string]$totTok } else { "" })
+            elapsed_sec     = $(if ($null -ne $elapsedSec) { [string]$elapsedSec } else { "" })
+            status          = [string]$status
+            session         = [string]$sessionName
+            session_id      = [string]$sessionId
+            question        = (Truncate-Text ([string]$qText) 20000)
+            answer          = (Truncate-Text ([string]$aText) 20000)
+            process         = $processSteps
+        }
+        $written = Add-QaRecordUnlocked $rec $QaIndexFile $QaKeepMonths
+        if ($written -and $null -ne $script:QaKnownIds) {
+            [void]$script:QaKnownIds.Add($taskId)
+            $script:QaTotal++
+        }
+    }
+}
+
 
 
 
@@ -1358,7 +1389,7 @@ function Resolve-DeadClaim($Claim, [string]$ClaimPath) {
         if (-not (Test-Path -LiteralPath $outFile)) { Set-Content -Path $outFile -Value $msg -Encoding UTF8 }
         Write-UsageRow $taskId $null $null $null $null $null $null $null $null "ERROR" ([string]$Claim.session) ""
         Move-Item -LiteralPath $inboxFile -Destination (Join-Path $ProcessedDir (Split-Path $inboxFile -Leaf)) -Force -ErrorAction SilentlyContinue
-        Update-QAReport
+        Add-SingleTaskToQaStore $taskId $null $null "" $null $null $null $null $null "ERROR" ([string]$Claim.session) ""
     }
     Remove-Item -LiteralPath $ClaimPath -Force -ErrorAction SilentlyContinue
 }
@@ -1543,7 +1574,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
         Log "실패: $($modelCheck.Error)"
         Write-UsageRow $baseName $null $null $requestedModel $null $null $null $null $null "ERROR" $sessionName $conversationId
         Move-Item -Path $file.FullName -Destination $doneFile -Force
-        Update-QAReport
+        Add-SingleTaskToQaStore $baseName $null $null $requestedModel $null $null $null $null $null "ERROR" $sessionName $conversationId
         return
     }
     $requestedModel = $modelCheck.Model
@@ -1551,25 +1582,15 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
 
     $missingCwds = @(Get-MissingCwds $targetCwds)
     if ($missingCwds.Count -gt 0) {
-
         Set-Content -Path $outFile -Value "지정한 @cwd 경로를 찾을 수 없습니다: $($missingCwds -join ', ')" -Encoding UTF8
-
         Log "실패: @cwd 경로 없음 ($($missingCwds -join ', '))"
-
         # agy를 호출하지 않고 여기서 바로 실패 처리하는 경우도, 나중에 "이 작업이
-
         # 있었는지" 조회할 수 있도록 다른 실패와 똑같이 usage.csv/qa-jsonl에 남깁니다
-
         # (여기서 기록하지 않으면 outbox에는 파일이 남는데 기록에서는 통째로 빠집니다).
-
         Write-UsageRow $baseName $null $null $null $null $null $null $null $null "ERROR" $sessionName $conversationId
-
         Move-Item -Path $file.FullName -Destination $doneFile -Force
-
-        Update-QAReport
-
+        Add-SingleTaskToQaStore $baseName $null $null "" $null $null $null $null $null "ERROR" $sessionName $conversationId
         return
-
     }
 
 
@@ -1588,138 +1609,93 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
 
 
 
+    $recModel    = $null
+    $recAttempts = $null
+    $recTried    = ""
+    $recInTok    = $null
+    $recOutTok   = $null
+    $recThinkTok = $null
+    $recTotTok   = $null
+    $recElapsed  = $null
+    $recStatus   = "ERROR"
+    $effectiveSessionId = $conversationId
+
     try {
-
-        # 참고 (시행착오 기록):
-
-        # 참고 (시행착오 기록):
-        #   - -p는 직접 문자열을 넘길 수도 있고, @파일경로로 넘길 수도 있습니다.
-        #   - Windows CreateProcess 명령줄 길이 제한은 32,767자입니다.
-        #   - 프롬프트가 길거나(예: 8,000자 초과) 내용이 방대한 경우,
-        #     명령줄 대신 임시 프롬프트 파일(@$tempPromptFile)을 사용하여
-        #     명령줄 길이 초과(ERROR_FILENAME_EXCED_RANGE)와 따옴표 이스케이프 깨짐을 방지합니다.
-        #   - --cwd 플래그는 존재하지 않는다. 대상 폴더는 --add-dir로 추가한다.
-        $tempPromptFile = $null
-        $safePrompt = ""
-        if ($promptText.Length -gt 8000) {
-            $promptsDir = Join-Path $LogsDir "prompts"
-            if (-not (Test-Path $promptsDir)) {
-                New-Item -ItemType Directory -Force -Path $promptsDir | Out-Null
-            }
-            $tempPromptFile = Join-Path $promptsDir "prompt_$baseName.txt"
-            [System.IO.File]::WriteAllText($tempPromptFile, $promptText, [System.Text.Encoding]::UTF8)
-        } else {
-            $safePrompt = $promptText -replace '"', '\"'
+        # 프롬프트 길이와 무관하게 항상 임시 프롬프트 파일(@$tempPromptFile)을 사용하여
+        # 명령줄 따옴표/이스케이프 깨짐을 방지하고 병렬 실행 시 고유한 대화 식별 Marker를 보장합니다.
+        $promptsDir = Join-Path $LogsDir "prompts"
+        if (-not (Test-Path -LiteralPath $promptsDir)) {
+            New-Item -ItemType Directory -Force -Path $promptsDir | Out-Null
         }
+        $tempPromptFile = Join-Path $promptsDir "prompt_$baseName.txt"
+        [System.IO.File]::WriteAllText($tempPromptFile, $promptText, (New-Object System.Text.UTF8Encoding($false)))
+        $safePrompt = $promptText -replace '"', '\"'
 
         $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwds -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel -taskId $baseName -promptFile $tempPromptFile -requestedModel $requestedModel
 
         if ($agyResult.RawJson) {
-
             Set-Content -Path (Join-Path $OutboxDir "$baseName.raw.json") -Value $agyResult.RawJson -Encoding UTF8
-
         }
 
-
-
         $triedStr = $agyResult.TriedModels -join ' -> '
-
         $effectiveSessionId = if ($agyResult.ConversationId) { $agyResult.ConversationId } else { $conversationId }
-
-
+        $recAttempts = $agyResult.Attempts
+        $recTried    = $triedStr
 
         if ($agyResult.Success) {
-
             Set-Content -Path $outFile -Value $agyResult.Response -Encoding UTF8
 
-
-
             $elapsedForLog = if ($agyResult.AgyDuration) { [math]::Round([double]$agyResult.AgyDuration, 1) } else { $agyResult.ElapsedSec }
-
             $timeSrc = if ($agyResult.AgyDuration) { "agy 자체 보고" } else { "워처 측정(폴백 시도 포함 총 시간)" }
-
             $thinkPart = if ($agyResult.ThinkTok) { "/사고:$($agyResult.ThinkTok)" } else { "" }
-
             $tokStr  = if ($agyResult.TotTok) { "$($agyResult.TotTok) (입력:$($agyResult.InTok)/출력:$($agyResult.OutTok)$thinkPart)" } else { "확인불가" }
-
             $attemptNote = if ($agyResult.Attempts -gt 1) { " (시도: $triedStr)" } else { "" }
-
             $sessionNote = if ($sessionName) { " [세션: $sessionName (ID: $effectiveSessionId)]" } else { "" }
 
-
-
             $modelDisplay = if ($agyResult.ModelUsed) { $agyResult.ModelUsed } else { "(확인불가)" }
-
             Log "완료 -> $outFile"
-
             Log "  사용 모델: $modelDisplay$attemptNote$sessionNote | 토큰: $tokStr | 소요시간: ${elapsedForLog}초 ($timeSrc)"
 
+            $recModel    = $agyResult.ModelUsed
+            $recInTok    = $agyResult.InTok
+            $recOutTok   = $agyResult.OutTok
+            $recThinkTok = $agyResult.ThinkTok
+            $recTotTok   = $agyResult.TotTok
+            $recElapsed  = $elapsedForLog
+            $recStatus   = "OK"
 
-
-            Write-UsageRow $baseName $agyResult.ModelUsed $agyResult.Attempts $triedStr $agyResult.InTok $agyResult.OutTok $agyResult.ThinkTok $agyResult.TotTok $elapsedForLog "OK" $sessionName $effectiveSessionId
-
-
-
-            # 세션이 이어졌든 새로 시작했든, 성공한 응답의 conversation_id로 레지스트리를
-
-            # 갱신합니다(만료돼서 agy가 새 id로 시작했어도 이렇게 하면 자동으로 복구됨).
+            Write-UsageRow $baseName $recModel $recAttempts $recTried $recInTok $recOutTok $recThinkTok $recTotTok $recElapsed "OK" $sessionName $effectiveSessionId
 
             if ($sessionName -and $agyResult.ConversationId) {
-
                 Invoke-WithRuntimeLock { Write-Session -Name $sessionName -ConversationId $agyResult.ConversationId -Cwd $targetCwds -Model $agyResult.ModelUsed }
-
             }
-
         } else {
-
             $failMsg = "agy 실행 실패 (시도한 모델: $triedStr) - $($agyResult.ErrorMessage)"
             if ($requestedModel -and -not $conversationId) { $failMsg += " [@model 로 지정한 모델이라 다른 모델로 자동 전환하지 않았습니다]" }
 
             Set-Content -Path $outFile -Value $failMsg -Encoding UTF8
-
             Log $failMsg
-
-            Write-UsageRow $baseName $null $agyResult.Attempts $triedStr $null $null $null $null $agyResult.ElapsedSec "ERROR" $sessionName $effectiveSessionId
-
+            $recElapsed = $agyResult.ElapsedSec
+            Write-UsageRow $baseName $null $recAttempts $recTried $null $null $null $null $recElapsed "ERROR" $sessionName $effectiveSessionId
         }
 
-
-
         Update-UsageSummary
-
     } catch {
-
         $errMsg = "agy 실행 중 오류: $($_.Exception.Message)"
-
         Set-Content -Path $outFile -Value $errMsg -Encoding UTF8
-
         Log $errMsg
-
         Write-UsageRow $baseName $null $null $null $null $null $null $null $null "ERROR" $sessionName $conversationId
-
         Update-UsageSummary
-
     } finally {
-
         if ($tempPromptFile -and (Test-Path -LiteralPath $tempPromptFile)) {
-
             Remove-Item -LiteralPath $tempPromptFile -Force -ErrorAction SilentlyContinue
-
         }
-
     }
-
-
 
     Move-Item -Path $file.FullName -Destination $doneFile -Force
 
-
-
-    # jsonl 기록은 원본 지시파일이 processed로 옮겨진 뒤에 갱신해야
-
-    # 방금 처리한 작업의 질문 내용도 바로 담깁니다.
-
-    Update-QAReport
+    # 방금 처리한 작업 1건만 샤드에 즉시 추가
+    Add-SingleTaskToQaStore $baseName $recModel $recAttempts $recTried $recInTok $recOutTok $recThinkTok $recTotTok $recElapsed $recStatus $sessionName $effectiveSessionId
 }
 
 # 작업자 모드: 지시파일 하나만 처리하고 끝낸다(워처 본체는 시작하지 않는다)
