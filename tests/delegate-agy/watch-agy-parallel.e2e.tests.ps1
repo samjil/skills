@@ -116,7 +116,7 @@ try {
     Assert-Equal "  답변 파일에 각자의 답이 들어 있다" "done a1|done a2" ((Get-Content -Raw -Encoding UTF8 (Join-Path $rt "outbox\a1.response.md")).Trim([char]0xFEFF, " ", "`r", "`n") + "|" + (Get-Content -Raw -Encoding UTF8 (Join-Path $rt "outbox\a2.response.md")).Trim([char]0xFEFF, " ", "`r", "`n"))
 
     Write-Host "같은 세션이고 폴더도 같으면 차례로 한다"
-    Send-Task "b1" "SLEEP:5" "sess-b" $dirA; Send-Task "b2" "SLEEP:2" "sess-b" $dirA
+    Send-Task "b1" "SLEEP:5" "sess-b" $dirA; Start-Sleep -Milliseconds 1200; Send-Task "b2" "SLEEP:2" "sess-b" $dirA   # 파일 수정 시각이 달라야 "먼저 보낸 것"이 분명하다
     Assert-Equal "  둘 다 끝난다" $true (Wait-Done @("b1", "b2"))
     Assert-Equal "  겹치지 않는다" $false (Test-Overlap "b1" "b2")
     Assert-Equal "  먼저 보낸 b1 이 먼저 끝나고 b2 가 그 뒤에 시작한다" $true ((Get-Time "b2" "start") -ge (Get-Time "b1" "end"))
@@ -141,6 +141,7 @@ try {
     $ruleText = "[언어 규칙 — 가장 먼저 지킨다] 너의 내부 생각(thinking)과 모든 도구 호출 설명, 답변을 처음부터 끝까지 한국어로 쓴다. (코드·경로·명령어·식별자만 원문 그대로)`n"
     Send-Task "r1" "SLEEP:1" "" $dirA $ruleText
     Assert-Equal "  처리된다" $true (Wait-Done @("r1"))
+    Wait-ClaimGone @("r1")   # 응답 파일이 먼저 생기고 지시파일은 그 직후에 processed 로 옮겨진다
     $promptR1 = if (Test-Path (Join-Path $timesDir "r1.prompt")) { [System.IO.File]::ReadAllText((Join-Path $timesDir "r1.prompt")) } else { "" }
     Assert-Equal "  agy 가 받은 질문에 언어 규칙 문단이 없다" $false (($promptR1 -like "*언어 규칙*") -or ($promptR1 -like "*(thinking)*"))
     Assert-Equal "  본문(TAG 줄)은 그대로 전달된다" $true ($promptR1 -like "*TAG:r1*")
