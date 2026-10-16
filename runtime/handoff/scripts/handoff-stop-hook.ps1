@@ -46,6 +46,33 @@ function Test-WatcherAliveForHook {
     if ($hb.Count -eq 0) { return $false }
     return (((Get-Date) - $hb[0].LastWriteTime).TotalSeconds -le 300)
 }
+# 대화 기록(transcript_path, JSONL)의 끝에서 가장 최근 assistant 메시지의 모델 ID 를 읽는다. 못 읽으면 "".
+function Get-TranscriptModel([string]$TranscriptPath) {
+    if (-not $TranscriptPath -or -not (Test-Path -LiteralPath $TranscriptPath -PathType Leaf)) { return "" }
+    $fs = [System.IO.File]::Open($TranscriptPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $take = [long][math]::Min($fs.Length, 262144)
+        [void]$fs.Seek($fs.Length - $take, [System.IO.SeekOrigin]::Begin)
+        $buf = New-Object byte[] ([int]$take)
+        $got = 0
+        while ($got -lt $take) {
+            $n = $fs.Read($buf, $got, [int]$take - $got)
+            if ($n -le 0) { break }
+            $got += $n
+        }
+        $text = $utf8.GetString($buf, 0, $got)
+    } finally { $fs.Dispose() }
+    $lines = $text -split "`n"
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        $l = $lines[$i]
+        if ($l.IndexOf('"model"') -lt 0) { continue }
+        try { $o = $l | ConvertFrom-Json } catch { continue }       # 잘린 첫 줄 등
+        $m = ""
+        if ($o -and $o.message -and $o.message.model) { $m = [string]$o.message.model }
+        if ($m -and $m -notlike "<*" -and $m -like "claude*") { return $m }
+    }
+    return ""
+}
 function Test-WithinMinutes($Row, [double]$Minutes) {
     $t = [datetime]::MinValue
     if (-not [datetime]::TryParse([string]$Row.Time, [ref]$t)) { return $false }
@@ -71,6 +98,17 @@ try {
     $unreadHours = Get-EnvNumber "SAMJIL_HANDOFF_UNREAD_HOURS" 6
     $maxBlocks = [int](Get-EnvNumber "SAMJIL_HANDOFF_MAX_BLOCKS" 2)
     $poll = [int](Get-EnvNumber "SAMJIL_HANDOFF_POLL_SECONDS" 3)
+
+    # Claude 가 쓴 c2a 에 모델이 비어 있으면(쓸 때 빼먹은 경우) 이 세션의 모델을 머리말에 적어 둔다 — 뷰어가 모델명으로 보여 주는 근거.
+    # 최근 15분 안에 보낸 것만 대상으로 해 다른 세션의 옛 메시지를 잘못 찍지 않는다.
+    $stampModel = Get-TranscriptModel ([string]$in.transcript_path)
+    if ($stampModel) {
+        foreach ($r in @(Read-HandoffIndex $ch)) {
+            if ($r.Dir -ne "c2a" -or -not (Test-WithinMinutes $r 15)) { continue }
+            $f = Get-HandoffMessageFile $ch $r.Num
+            if ($f) { [void](Set-HandoffMessageModel $f.FullName $stampModel) }
+        }
+    }
 
     # agy 가 남긴 읽지 않은 회신(최근 것만, 같은 회신을 maxBlocks 번보다 더 막지 않는다)
     function Get-UnreadReplies {

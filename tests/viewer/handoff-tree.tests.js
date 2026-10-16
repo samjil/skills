@@ -29,8 +29,10 @@ function extractConstant(name) {
 const QA_UNGROUPED = extractConstant("QA_UNGROUPED");
 const QA_UNLINKED = extractConstant("QA_UNLINKED");
 
+const testChannels = {};
 const names = [
   "handoffMsgFileOf",
+  "handoffLinkOf",
   "handoffNodeOf",
   "buildHandoffTree",
   "handoffFilterTree",
@@ -38,11 +40,12 @@ const names = [
 ];
 
 const api = new Function(
+  "handoffChannels",
   "var QA_UNGROUPED = " + JSON.stringify(QA_UNGROUPED) + ";\r\n" +
   "var QA_UNLINKED = " + JSON.stringify(QA_UNLINKED) + ";\r\n" +
   names.map(extractFunction).join("\r\n") +
-  "\r\nreturn { handoffMsgFileOf, handoffNodeOf, buildHandoffTree, handoffFilterTree, handoffMessagesOf, QA_UNGROUPED, QA_UNLINKED };"
-)();
+  "\r\nreturn { handoffMsgFileOf, handoffLinkOf, handoffNodeOf, buildHandoffTree, handoffFilterTree, handoffMessagesOf, QA_UNGROUPED, QA_UNLINKED };"
+)(testChannels);
 
 let passed = 0, failed = 0;
 function eq(name, expected, actual) {
@@ -328,6 +331,20 @@ const singleChannelData = {
 };
 const singleMsgs = api.handoffMessagesOf(singleChannelData, null, "", "");
 eq("단일 채널 선택 시 원래 배열 순서 유지 (0002, 0001)", ["0002", "0001"], singleMsgs.map(it => it.msg.num));
+
+console.log("\nhandoffLinkOf: 채널 이름이 붙은 연결을 우선하고, 이름이 겹치는 파일은 파일명 연결을 쓰지 않는다");
+const dupTree = { handoffLinks: {
+  "ch-a/0001-c2a-open.md": "sess-a",
+  "0001-c2a-open.md": "sess-z",
+  "0002-c2a-only-in-a.md": "sess-b"
+} };
+testChannels["ch-a"] = { files: ["0001-c2a-open.md", "0002-c2a-only-in-a.md"] };
+testChannels["ch-b"] = { files: ["0001-c2a-open.md"] };
+eq("채널 이름이 붙은 연결이 있으면 그 세션", "sess-a", api.handoffLinkOf(dupTree, "ch-a", "0001-c2a-open.md"));
+eq("다른 채널(ch-b)의 같은 이름 메시지는 파일명 연결로 붙지 않음", null, api.handoffLinkOf(dupTree, "ch-b", "0001-c2a-open.md"));
+eq("이름이 겹치지 않는 파일은 파일명 연결 사용", "sess-b", api.handoffLinkOf(dupTree, "ch-a", "0002-c2a-only-in-a.md"));
+eq("연결 없음", null, api.handoffLinkOf(dupTree, "ch-a", "0009-c2a-none.md"));
+delete testChannels["ch-a"]; delete testChannels["ch-b"];
 
 console.log("\n통과 " + passed + " / 실패 " + failed);
 if (failed > 0) {
