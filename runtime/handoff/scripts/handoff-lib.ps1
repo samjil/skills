@@ -408,7 +408,7 @@ function Read-HandoffAutoState([string]$ChannelDir) {
         $o = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
         if ($o.dispatches) {
             $s.dispatches = @(@($o.dispatches) | Where-Object { $_ } | ForEach-Object {
-                @{ num = [string]$_.num; task_id = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done }
+                @{ num = [string]$_.num; task_id = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done; tier = [string]$_.tier }
             })
         }
         $s.halted = [bool]$o.halted
@@ -424,7 +424,7 @@ function Write-HandoffAutoState([string]$ChannelDir, $State) {
     $p = Join-Path $ChannelDir "AUTO.json"
     $tmp = $p + ".tmp"
     $disp = @(@($State.dispatches) | Where-Object { $_ } | ForEach-Object {
-        [ordered]@{ num = [string]$_.num; task_id = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done }
+        [ordered]@{ num = [string]$_.num; task_id = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done; tier = [string]$_.tier }
     })
     # 오래된 기록은 버린다(최근 40건만)
     if ($disp.Count -gt 40) { $disp = @($disp[($disp.Count - 40)..($disp.Count - 1)]) }
