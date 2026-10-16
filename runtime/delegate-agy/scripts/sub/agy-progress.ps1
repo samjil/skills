@@ -192,6 +192,81 @@ function Format-AgyLastStep($Summary) {
     return ("마지막 단계 #{0} {1} {2}{3} ({4})" -f $Summary.Index, $Summary.Type, $Summary.Status, $toolText, $hintText).Trim()
 }
 
+# 환경변수에서 "초" 설정을 읽는다. 없거나 숫자가 아니거나 최솟값보다 작으면 기본값. (워처의 마감·멈춤 기준을 환경변수로 바꿀 수 있게 하는 곳이다.)
+function Get-AgySecondsSetting([string]$EnvName, [int]$Default, [int]$Min) {
+    $v = [Environment]::GetEnvironmentVariable($EnvName)
+    if ($v -match '^\d{1,9}$' -and [int64]$v -ge $Min) { return [int]$v }
+    return $Default
+}
+
+# 프로세스와 그 모든 자손이 지금까지 쓴 CPU 시간(초)의 합. 모델 응답을 기다리는 동안 agy 는 거의 놀지만, 도구(빌드·시험 등)가 도는 동안에는
+# 자손 프로세스가 CPU 를 쓴다. 두 시점의 차이로 "지금 뭔가 하고 있는가"를 본다.
+function Get-AgyTreeCpuSeconds([int]$RootPid) {
+    $kids = @{}
+    foreach ($p in @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId -ErrorAction SilentlyContinue)) {
+        $pp = [int]$p.ParentProcessId
+        if (-not $kids.ContainsKey($pp)) { $kids[$pp] = New-Object System.Collections.ArrayList }
+        [void]$kids[$pp].Add([int]$p.ProcessId)
+    }
+    $seen = @{}
+    $queue = New-Object System.Collections.Queue
+    $queue.Enqueue($RootPid)
+    $total = 0.0
+    while ($queue.Count -gt 0) {
+        $id = [int]$queue.Dequeue()
+        if ($seen.ContainsKey($id)) { continue }
+        $seen[$id] = $true
+        try { $total += (Get-Process -Id $id -ErrorAction Stop).TotalProcessorTime.TotalSeconds } catch {}
+        if ($kids.ContainsKey($id)) { foreach ($c in $kids[$id]) { $queue.Enqueue($c) } }
+    }
+    return $total
+}
+
+# 그 대화의 백그라운드 도구 로그 파일(brain\<id>\.system_generated\tasks\*.log)이 마지막으로 바뀐 시각. 없으면 $null.
+# 도구가 출력을 내는 동안에는 이 파일이 자란다.
+function Get-AgyTaskLogActivity($AgyHome, $Id) {
+    $tp = Get-AgyTranscriptPath $AgyHome $Id
+    if (-not $tp) { return $null }
+    $dir = Join-Path (Split-Path (Split-Path $tp -Parent) -Parent) "tasks"
+    $latest = $null
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter "*.log" -File -ErrorAction SilentlyContinue)) {
+        if (($null -eq $latest) -or ($f.LastWriteTime -gt $latest)) { $latest = $f.LastWriteTime }
+    }
+    return $latest
+}
+
+# 절대 마감(AgyTimeoutSeconds)을 넘긴 호출이 "진짜 일하는 중인가, 멈춘 것인가". 반환: @{ Alive; Reason(일하는 근거); Note(멈췄다고 볼 때의 설명) }
+# 아래 중 하나라도 최근 WindowSeconds 안에 있으면 일하는 중이다:
+#   1) 대화 기록·DB 에 새 단계가 기록됨  2) 백그라운드 도구의 로그 파일이 바뀜  3) agy 와 자손 프로세스가 CPU 를 일정량(기본: 창의 1%, 최소 1초) 이상 씀
+# 전부 없으면 멈춘 것이다. CPU 표본(CpuSamples: @{ At; Cpu } 목록)의 앞쪽 기록이 아직 창만큼 쌓이지 않았으면 판단하지 않고 "일하는 중"으로 둔다(근거 없이 끊지 않는다).
+# 한계: 30분 넘게 출력도 CPU 도 쓰지 않고 가만히 기다리는 명령(예: 아주 긴 sleep)은 멈춘 것과 구별할 수 없어 멈춘 것으로 본다.
+function Test-AgyAliveAtCap($AgyHome, $ConvId, [datetime]$Now, [int]$WindowSeconds, $CpuSamples, [double]$MinCpuSeconds = 0) {
+    # CPU 를 얼마나 써야 "일하는 중"인가: 기본은 창 길이의 1%(최소 1초). 5분 창이면 3초 - 빌드·시험이면 훨씬 많이 쓰고, 멈춘 agy 와 유휴 MCP 서버는 거의 안 쓴다.
+    # (창 없이 숨겨 띄운 프로세스는 Windows 가 CPU 를 아껴 써서 코어 하나를 다 쓰는 반복문도 실제로는 25% 쯤만 쓴다 - 시험에서 확인.)
+    if ($MinCpuSeconds -le 0) { $MinCpuSeconds = [Math]::Max(1.0, 0.01 * $WindowSeconds) }
+    if ($ConvId) {
+        $act = Get-AgyConversationActivity $AgyHome $ConvId
+        if ($act -and (($Now - $act).TotalSeconds -lt $WindowSeconds)) {
+            return @{ Alive = $true; Reason = ("{0}초 전에 새 단계가 기록됨" -f [int]($Now - $act).TotalSeconds); Note = "" }
+        }
+        $tl = Get-AgyTaskLogActivity $AgyHome $ConvId
+        if ($tl -and (($Now - $tl).TotalSeconds -lt $WindowSeconds)) {
+            return @{ Alive = $true; Reason = ("{0}초 전에 백그라운드 도구가 출력을 냄" -f [int]($Now - $tl).TotalSeconds); Note = "" }
+        }
+    }
+    $samples = @($CpuSamples)
+    if ($samples.Count -lt 2) { return @{ Alive = $true; Reason = "활동 이력이 아직 모자라 확인을 더 모음"; Note = "" } }
+    $last = $samples[$samples.Count - 1]
+    $base = $null
+    foreach ($s in $samples) { if (($last.At - $s.At).TotalSeconds -ge $WindowSeconds) { $base = $s } }
+    if ($null -eq $base) { return @{ Alive = $true; Reason = "활동 이력이 아직 모자라 확인을 더 모음"; Note = "" } }
+    $delta = [double]$last.Cpu - [double]$base.Cpu
+    if ($delta -ge $MinCpuSeconds) {
+        return @{ Alive = $true; Reason = ("최근 {0}초 동안 CPU 를 {1:N1}초 사용" -f $WindowSeconds, $delta); Note = "" }
+    }
+    return @{ Alive = $false; Reason = ""; Note = ("최근 {0}초 동안 새 단계·도구 로그·CPU 활동이 모두 없어" -f $WindowSeconds) }
+}
+
 # 멈췄는가: 마지막 활동(없으면, 또는 호출 시작보다 옛날이면 호출 시작 시각)으로부터
 # StallSeconds 이상 지났으면 $true. 이어가기 호출은 대화 파일이 이미 옛날 것일 수 있어서
 # 호출 시작 시각을 하한으로 둡니다.
