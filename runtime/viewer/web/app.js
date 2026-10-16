@@ -1828,11 +1828,39 @@
     } catch (e) {}
   }
 
-  // 사이드바 행의 시간 글: 마지막으로 끝난 agy 작업의 완료 시각. 끝난 것이 없으면 진행 중인지, 위임이 아예 없는지 보인다.
-  function qaDoneTimeText(node) {
+  // 사이드바 행(프로젝트·세션)에는 시각을 두 개 보인다.
+  //   세션: Claude Desktop 세션의 마지막 활동. 프로젝트 행은 그 안의 세션들 중 가장 최근 활동.
+  //   위임(위임 실행 기록) / 인수인계(에이전트 인수인계): agy 쪽 기록의 시각.
+  function treeSessionTime(node) {
+    if (!node) return "";
+    if (node.lastActivity) return String(node.lastActivity);
+    var best = "";
+    var list = Array.isArray(node.sessions) ? node.sessions : [];
+    for (var i = 0; i < list.length; i++) {
+      var t = String(list[i].lastActivity || "");
+      if (t > best) { best = t; }
+    }
+    return best;
+  }
+
+  // 위임 쪽 값: 마지막으로 끝난 agy 작업의 완료 시각. 끝난 것이 없으면 진행 중인지, 위임이 아예 없는지 보인다.
+  function qaDelegationValue(node) {
     if (node && node.latestDone) return formatRelativeTime(node.latestDone);
     if (node && node.pending > 0) return "진행 중";
-    return "위임 없음";
+    return "없음";
+  }
+
+  // "라벨 값" 한 줄. absTime 이 있으면 마우스를 올릴 때 정확한 날짜·시각이 보인다. wide 는 라벨 폭을 넓혀 두 줄의 값이 세로로 맞게 한다(인수인계 화면).
+  function treeTimeLineHtml(cls, label, valueText, absTime, extraHtml, wide) {
+    var title = absTime ? ' title="' + escapeHtml(label + " " + absTime) + '"' : "";
+    return '<span class="' + cls + ' tree-time"' + title + '>' +
+      '<span class="tree-time-label' + (wide ? " wide" : "") + '">' + escapeHtml(label) + '</span>' +
+      '<span class="tree-time-value">' + escapeHtml(valueText) + '</span>' + (extraHtml || "") + '</span>';
+  }
+
+  function treeSessionLineHtml(cls, node, extraHtml, wide) {
+    var t = treeSessionTime(node);
+    return treeTimeLineHtml(cls, "세션", t ? formatRelativeTime(t) : "-", t, extraHtml, wide);
   }
 
   // 위임 실행 기록 화면의 날짜 정렬은 agy 작업(위임 기록) 시각 기준이라 라벨도 그렇게 보인다
@@ -1949,10 +1977,10 @@
       pItem.setAttribute("role", "treeitem");
       pItem.setAttribute("aria-expanded", isOpen ? "true" : "false");
 
-      var relTime = qaDoneTimeText(p);   // 위임 실행 기록 화면은 agy 작업의 완료 시각을 보인다
       var sessCount = p.sessions ? p.sessions.length : 0;
-      var sessHtml = ' · 세션 ' + sessCount;
-      var subHtml = relTime + sessHtml;
+      // 시각 두 줄: 세션(Desktop 세션의 마지막 활동, 세션 개수 포함) / 위임(agy 작업의 완료 시각)
+      var subHtml = treeSessionLineHtml("project-sub session-sub", p, '<span class="tree-time-count">' + sessCount + '개</span>', false) +
+        treeTimeLineHtml("project-sub session-sub", "위임", qaDelegationValue(p), p.latestDone, "", false);
 
       var badgeHtml = '<span class="project-badge">' + (p.total + p.pending) + '</span>';
       if (p.pending > 0) {
@@ -1964,7 +1992,7 @@
         '<span class="project-icon">' + icon("folder") + '</span>',
         '<div class="project-info">',
         '  <span class="project-name" title="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</span>',
-        '  <span class="project-sub session-sub">' + subHtml + '</span>',
+        '  ' + subHtml,
         '</div>',
         badgeHtml
       ].join("");
@@ -2010,7 +2038,8 @@
           sItem.dataset.session = s.id;
           sItem.setAttribute("role", "treeitem");
 
-          var sSubHtml = qaDoneTimeText(s);
+          var sSubHtml = treeSessionLineHtml("session-sub", s, "", false) +
+            treeTimeLineHtml("session-sub", "위임", qaDelegationValue(s), s.latestDone, "", false);
 
           var sBadgeHtml = '<span class="session-badge">' + (s.total + s.pending) + '</span>';
           if (s.pending > 0) {
@@ -2023,7 +2052,7 @@
             '<span class="session-icon">' + icon("thread") + '</span>',
             '<div class="session-info">',
             '  <span class="session-name" title="' + escapeHtml(s.title) + '">' + escapeHtml(s.title) + archivedHtml + '</span>',
-            '  <span class="session-sub">' + sSubHtml + '</span>',
+            '  ' + sSubHtml,
             '</div>',
             sBadgeHtml
           ].join("");
@@ -2213,11 +2242,11 @@
       pItem.setAttribute("role", "treeitem");
       pItem.setAttribute("aria-expanded", isOpen ? "true" : "false");
 
-      var relTime = formatRelativeTime(treeNodeLatest(p));
       var sessCount = p.sessions ? p.sessions.length : 0;
-      var sessHtml = ' · 세션 ' + sessCount;
-      var waitHtml = p.waiting > 0 ? ' · <span class="who-agy">대기 중 ' + p.waiting + '</span>' : '';
-      var subHtml = relTime + sessHtml + waitHtml;
+      var waitHtml = p.waiting > 0 ? '<span class="tree-time-count who-agy">대기 중 ' + p.waiting + '</span>' : '';
+      // 시각 두 줄: 세션(Desktop 세션의 마지막 활동, 세션 개수 포함) / 인수인계(마지막 메시지 시각)
+      var subHtml = treeSessionLineHtml("project-sub session-sub", p, '<span class="tree-time-count">' + sessCount + '개</span>', true) +
+        treeTimeLineHtml("project-sub session-sub", "인수인계", p.latestTime ? formatRelativeTime(p.latestTime) : "없음", p.latestTime, waitHtml, true);
 
       var badgeHtml = '<span class="project-badge">' + p.total + '</span>';
       if (p.waiting > 0) {
@@ -2229,7 +2258,7 @@
         '<span class="project-icon">' + icon("folder") + '</span>',
         '<div class="project-info">',
         '  <span class="project-name" title="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</span>',
-        '  <span class="project-sub session-sub">' + subHtml + '</span>',
+        '  ' + subHtml,
         '</div>',
         badgeHtml
       ].join("");
@@ -2275,9 +2304,9 @@
           sItem.dataset.session = s.id;
           sItem.setAttribute("role", "treeitem");
 
-          var sTime = formatRelativeTime(s.latestTime || s.lastActivity);
-          var sWaitHtml = s.waiting > 0 ? ' · <span class="who-agy">대기 중 ' + s.waiting + '</span>' : '';
-          var sSubHtml = sTime + sWaitHtml;
+          var sWaitHtml = s.waiting > 0 ? '<span class="tree-time-count who-agy">대기 중 ' + s.waiting + '</span>' : '';
+          var sSubHtml = treeSessionLineHtml("session-sub", s, "", true) +
+            treeTimeLineHtml("session-sub", "인수인계", s.latestTime ? formatRelativeTime(s.latestTime) : "없음", s.latestTime, sWaitHtml, true);
 
           var sBadgeHtml = '<span class="session-badge">' + s.total + '</span>';
           if (s.waiting > 0) {
@@ -2290,7 +2319,7 @@
             '<span class="session-icon">' + icon("thread") + '</span>',
             '<div class="session-info">',
             '  <span class="session-name" title="' + escapeHtml(s.title) + '">' + escapeHtml(s.title) + archivedHtml + '</span>',
-            '  <span class="session-sub">' + sSubHtml + '</span>',
+            '  ' + sSubHtml,
             '</div>',
             sBadgeHtml
           ].join("");
