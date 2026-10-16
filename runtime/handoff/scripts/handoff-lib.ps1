@@ -487,7 +487,10 @@ function Get-HandoffMessageMeta([string]$Path, [hashtable]$Cache = $null) {
 function Get-HandoffAutoSummary([string]$ChannelDir) {
     $s = Read-HandoffAutoState $ChannelDir
     $inFlight = @(@($s.dispatches) | Where-Object { $_ -and -not $_.done } | ForEach-Object { [pscustomobject]@{ num = [string]$_.num; taskId = [string]$_.task_id; at = [string]$_.at } })
+    # 메시지 번호 -> 위임 작업 ID. 화면이 보냄·읽음 메시지의 진행 과정을 그 위임에서 찾아 보여 주고, 끝난 메시지도 과정을 열 수 있게 한다(최근 30건).
+    $dispatches = @(@($s.dispatches) | Where-Object { $_ } | Select-Object -Last 30 | ForEach-Object { [pscustomobject]@{ num = [string]$_.num; taskId = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done } })
     return [pscustomobject]@{
+        dispatches    = $dispatches
         enabled       = (-not (Test-HandoffAutoDisabled $ChannelDir))
         halted        = [bool]$s.halted
         haltedReason  = [string]$s.halted_reason
