@@ -1904,3 +1904,17 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
 .auto-bar[data-kind="halted"] .auto-state { color: var(--err); }
 .auto-bar[data-kind="busy"] .auto-state { color: var(--agy); }
 .auto-bar[data-kind="off"] .auto-state { color: var(--ink-3); }
+
+/* 사이드바 행의 시각 두 줄: "세션 1시간 전" / "위임 15시간 전"(또는 "인수인계 ...").
+   라벨은 흐리게, 값은 한 단계 밝게 둬서 두 시각이 서로 다른 것임을 알아보게 한다. 개수·대기 같은 덧붙임은 값 뒤에 더 흐리게. */
+.tree-time-label {
+  display: inline-block;
+  min-width: 2.2em;
+  margin-right: 6px;
+  color: var(--ink-3);
+  opacity: 0.8;
+}
+.tree-time-label.wide { min-width: 4.4em; }
+.tree-time-value { color: var(--ink-2); }
+.tree-time-count { margin-left: 8px; color: var(--ink-3); }
+.tree-time-count.who-agy { color: var(--claude); }
