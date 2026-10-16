@@ -1,12 +1,12 @@
 #!/bin/sh
-# pre-push: 푸시하기 전에 시험(tests/run-all.ps1)을 돌리고, 하나라도 실패하면 푸시를 막는다.
+# pre-push: 푸시 전에 시험(tests/run-all.ps1)을 돌려 보고, 실패하면 푸시를 막는 훅. 기본은 시험을 돌리지 않는다(시험이 몇 분씩 걸려 푸시가 실패하는 일이 있었다).
+# 푸시 전에 시험이 필요할 때만 명시한다:
+#   PREPUSH_TESTS=1 git push   빠른 실행(run-all.ps1 -Fast)으로 시험한 뒤 푸시
+#   PREPUSH_FULL=1 git push    전체 시험(병렬로 약 3분)
+#   PREPUSH_ARGS="-Only a,b"   run-all.ps1 에 넘길 인자를 더한다(이름에 이 글자가 든 시험만 등)
+# GitHub Desktop 처럼 환경변수를 줄 수 없는 도구로 푸시할 때는 시험 없이 푸시된다. 필요하면 tests/run-all.ps1 을 미리 돌린다.
 #
 # 켜는 법(저장소를 새로 받았다면 한 번만):  powershell -NoProfile -ExecutionPolicy Bypass -File tools/setup-dev.ps1   (= git config core.hooksPath .githooks + 환경 점검)
-#
-# 걸리는 시간: 기본은 빠른 실행(run-all.ps1 -Fast, 약 40초) — 오래 걸리는 시험(e2e·멈춤 판정·뷰어 자동 시작 등)은 뺀다.
-#   PREPUSH_FULL=1            전체 시험을 돌린다(병렬로 약 3분)
-#   PREPUSH_ARGS="-Only a,b"  run-all.ps1 에 넘길 인자(이름에 이 글자가 든 시험만 등)
-#   SKIP_PREPUSH_TESTS=1      시험을 건너뛴다(급할 때). git push --no-verify 도 같은 효과
 # 주의: 시험은 "푸시할 커밋"이 아니라 지금 작업 폴더의 파일로 돈다. 커밋하지 않은 변경이 있으면 그것도 포함된다.
 # 이 파일은 줄바꿈이 LF 여야 한다(.gitattributes 에서 고정). CRLF 이면 sh 가 "bad interpreter" 로 실패한다.
 
@@ -18,8 +18,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 done
 if [ "$needs_run" = "0" ]; then exit 0; fi
 
-if [ "$SKIP_PREPUSH_TESTS" = "1" ]; then
-    echo "[pre-push] SKIP_PREPUSH_TESTS=1 이라 시험을 건너뜁니다."
+# 시험을 명시하지 않았으면 그대로 푸시한다(SKIP_PREPUSH_TESTS=1 이 있으면 명시했어도 건너뛴다)
+if [ "$SKIP_PREPUSH_TESTS" = "1" ] || { [ "$PREPUSH_TESTS" != "1" ] && [ "$PREPUSH_FULL" != "1" ]; }; then
     exit 0
 fi
 
