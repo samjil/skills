@@ -81,6 +81,7 @@ Assert-Equal "합치다 남은 충돌 표시가 없다  $(@($markerFiles) -join 
 $allowReturnsScalar = @{
     "Get-Utf8QueryParams" = "해시테이블을 돌려준다(해시테이블은 풀리지 않고 .Count 는 키 개수다)"
     "Get-ProcTable" = "해시테이블(프로세스 번호 -> 정보)을 돌려준다. 풀리지 않고 [번호] 로 읽는다(tools/watch-console-windows.ps1)"
+    "Read-HandoffFrontMatter" = "해시테이블(머리말 키 -> 값)을 돌려준다. 풀리지 않고 [키] 로 읽는다(runtime/handoff/scripts/handoff-lib.ps1)"
 }
 
 Write-Host ""

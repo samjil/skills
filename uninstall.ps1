@@ -78,6 +78,19 @@ foreach ($s in $targetSkills) {
 }
 
 # -----------------------------------------------------------------------------
+# 2-1. 핸드오프 자동 이어가기 Stop 훅 제거 (~/.claude/settings.json 의 hooks.Stop 에서 우리 항목만)
+# -----------------------------------------------------------------------------
+$regHookScript = Join-Path $env:USERPROFILE ".samjil\handoff\scripts\register-handoff-hook.ps1"
+if (Test-Path $regHookScript) {
+    try {
+        $hookRes = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $regHookScript -Remove 2>&1 | Out-String).Trim()
+        if ($hookRes -eq "REMOVED") { Write-Host "[+] 핸드오프 Stop 훅 제거 (~/.claude/settings.json, 백업: settings.json.bak-*)" -ForegroundColor Green }
+    } catch {
+        Write-Warning "핸드오프 Stop 훅 제거 중 오류: $_"
+    }
+}
+
+# -----------------------------------------------------------------------------
 # 3. Antigravity 설정 정리 (~/.gemini/config/skills.json)
 # -----------------------------------------------------------------------------
 $skillsJsonPath = Join-Path $env:USERPROFILE ".gemini\config\skills.json"

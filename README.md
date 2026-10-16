@@ -80,6 +80,20 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
 
 ---
 
+## 🔁 핸드오프 자동 이어가기
+
+예전에는 한쪽이 메시지를 남기면 사용자가 상대에게 "메시지 확인해줘"라고 말해 줘야 했습니다. 이제는 **회신을 자동으로 이어 받습니다.**
+
+| 방향 | 동작 |
+|---|---|
+| Claude → agy | 워처(`watch-agy.ps1`)의 핸드오프 펌프가 5초마다 채널을 보고, Claude 가 보낸 새 메시지(상태 `보냄`, 최근 2시간 이내)를 agy 에게 위임합니다(`@session: handoff-<채널>`, `@cwd`는 채널 폴더 + `BRIEF.md`의 저장소 경로). agy 의 최종 답변을 `a2c` 회신 메시지로 기록하고 원래 메시지를 `처리됨`으로 바꿉니다(실패하면 `보류` + 실패 알림 회신). |
+| agy → Claude | Claude Code **Stop 훅**이 턴이 끝날 때 채널을 봅니다. agy 회신이 와 있으면 턴을 끝내지 않고 이어서 처리하게 하고, 방금 보낸 메시지의 회신을 기다리는 중이면 회신이 올 때까지(기본 30분) 기다렸다가 같은 세션에서 이어 갑니다. |
+
+- **Claude 쪽을 켜려면(옵트인)**: `.\install.ps1 -HandoffAutoHook` — `~/.claude/settings.json` 의 `hooks.Stop` 에 훅을 넣습니다(바꾸기 전에 `settings.json.bak-*` 로 백업, 다른 설정·훅은 그대로, JSON 이 깨져 있으면 건드리지 않음). `irm | iex` 로 받을 때는 `$env:SAMJIL_HANDOFF_AUTO_HOOK = "1"` 을 먼저 지정합니다. 빼려면 `uninstall.ps1`(또는 `~\.samjil\handoff\scripts\register-handoff-hook.ps1 -Remove`). agy 쪽은 워처가 켜져 있으면 별도 설정 없이 동작합니다.
+- **한도·안전장치**: 한 대화 줄기의 자동 왕복은 **최근 60분에 6회**까지(`AGY_HANDOFF_MAX_ROUNDS`)이고, 넘으면 멈춰서 뷰어에 "사용자 확인 필요"로 뜹니다(**한도 초기화** 버튼). 한 채널에서는 한 번에 하나만 위임하고, 2시간보다 오래된 `보냄` 메시지는 건드리지 않습니다. 채널 폴더(또는 채널 루트)에 `AUTO.off` 파일을 두거나 뷰어의 **끄기** 버튼을 누르면 꺼집니다. 워처가 꺼져 있으면 훅은 회신을 기다리지 않고 그렇게 알립니다.
+- **뷰어**: 인수인계 화면의 방향 표시가 "Claude → agy" 대신 메시지 머리말의 `모델:` 로 `Claude Opus 4.5 → Gemini 3.8 Flash (High)` 처럼 보입니다(머리말에 모델이 없는 옛 메시지는 Claude/agy, 아직 답이 없는 메시지의 받는 쪽은 그 쪽이 가장 최근에 쓴 모델로 표시하며 "추정" 안내가 붙습니다). 채널 하나를 볼 때는 상단에 자동 이어가기 상태(켜짐·agy 처리 중·멈춤·꺼짐)와 켜기/끄기/한도 초기화가 보입니다.
+- 훅은 Claude Code 설정(`~/.claude/settings.json`)을 읽는 세션에서 동작합니다. 위임 기록·인수인계 메시지에서 규칙의 세부는 `samjil-handoff/SKILL.md` 의 «자동 이어가기»에 있습니다.
+
 ## 🛠️ 부속 도구 실행
 
 설치 후 `~/.samjil/` 디렉터리에서 바로 실행할 수 있습니다:
@@ -188,6 +202,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\repo\script-hygiene.te
 - `claude-tree-api.tests.ps1`: `/api/claude/tree` — 임시 뷰어에서 응답 모양(배열·객체), 스캔 시작 규칙(신선하면 안 띄움), 깨진 색인, Desktop 폴더 없음 (약 1분)
 - `qa-tree.tests.js`(node): 위임 기록 트리 — 항목→(프로젝트, 세션) 판정, 트리 만들기·검색·선택 필터, 사이드바 정렬(`sortTreeNodes`), agy 세션 칩(`qaAgySessionsOf`)
 - `handoff-tree.tests.js`(node): 인수인계 트리 — 메시지 파일 찾기, 연결·"연결 안 됨" 채널 노드, 세션별 메시지 모으기
+- `handoff-model.tests.js`(node): 인수인계 방향 표시 — 모델 ID → 사람이 읽는 이름(`claude-opus-4-5-20251101` → `Claude Opus 4.5`, `gemini-3.8-flash-high` → `Gemini 3.8 Flash (High)`, 모르는 모양은 그대로), 보낸 쪽·받는 쪽 이름 결정(답한 메시지의 모델, 없으면 최근 모델 + 추정 표시, 옛 메시지), HTML 이스케이프, 자동 이어가기 상태 문구
+- `handoff-lib.tests.ps1`: 채널·원장·메시지 공용 함수(`handoff-lib.ps1`) — 채널 찾기(작업 폴더 → 채널), 저장소 경로 읽기, 머리말 읽기(모델·답장대상·자동), 원장 한 줄 읽기, 상태 칸만 고치기(CRLF·BOM 유지), 새 메시지 쓰기(번호 따기·충돌 피하기·빈 줄 없이 붙이기), `AUTO.json`/`AUTO.off`, 왕복 창 계산, 뷰어용 요약
+- `handoff-pump.tests.ps1`: 핸드오프 펌프 — 새 `c2a` → 위임 지시파일(세션·`@cwd`·본문), 끝나면 `a2c` 회신 기록, 실패 시 보류 + 알림, 옛 메시지·`AUTO.off`·한 번에 하나, agy 가 직접 쓴 회신과 중복 안 함, usage 행 지연, 3시간 포기, 왕복 한도·초기화·창 만료, 워처 연결(정적)
+- `handoff-stop-hook.tests.ps1`: Claude Stop 훅과 `settings.json` 등록기 — 읽지 않은 회신이면 `block`, 같은 회신은 2번까지, 오래된 회신·`AUTO.off`, 회신 기다리기(오면 이어감·안 오면 알림), 워처 꺼짐·한도 멈춤, 한글 채널; 등록기의 추가·갱신·제거·백업·깨진 JSON 보존 (약 40초)
+- `handoff-viewer-api.tests.ps1`: 뷰어의 `/api/handoff/project`(메시지 머리말의 모델·답장대상·자동, `auto` 요약)와 `/api/handoff/auto`(켜기·끄기·초기화, 전용 헤더 없는 POST 403, 잘못된 이름·동작) (약 20초)
 - `cwd-list.tests.js`(node): 화면의 `@cwd` 처리 — 폴더 목록 읽기(문자열·배열·빈 배열), 맨 위 `@cwd` 줄들, 폴더가 여럿일 때 경로 줄이기(폴더 이름부터), 과정 창 옵션
 - `ensure-viewer.tests.ps1`: `ensure-viewer-running.ps1`(창·탭 없이 뷰어 켜기) — 명령줄 구성, 포트별 뷰어 구분, 꺼져 있을 때 DEAD/NONE, 같은 포트의 다른 프로그램은 뷰어로 보지 않기, 임시 포트에 `-NoAgent` 뷰어를 숨김 실행해 `STARTED`·새로 보이는 터미널/콘솔 창 0개(`EnumWindows`로 셈)·cmd 창 없음, 두 번째는 `ALIVE`이고 또 켜지 않음, `-Stop`이 그 포트의 뷰어만 끄고 진짜 뷰어(8787)는 건드리지 않음, **뷰어와 워처가 둘 다 꺼진 임시 런타임에서 한 번에 켜면 워처까지 켜지고 새 창이 0개이며 `-NoExit` 워처가 없음**(뷰어가 `start-agy.ps1`을 `-Hidden` 없이 부르던 때는 이 시험이 실패함을 확인), `start-agy.ps1 -Hidden`, `start-viewer-hidden.vbs` (약 40초)
 - `ensure-check-only.tests.ps1`: `ensure-agy-running.ps1 -CheckOnly`의 `ALIVE`/`DEAD`/`MANUAL_STOP` 판정

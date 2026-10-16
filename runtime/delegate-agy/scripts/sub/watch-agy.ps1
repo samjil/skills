@@ -612,6 +612,28 @@ if (-not (Test-Path $progressFile)) {
 }
 . $progressFile
 
+# 핸드오프 "자동 이어가기" 펌프(워처 본체만 씀): 채널에 Claude 가 새 메시지를 보내면 agy 에게 위임하고, 답이 오면 회신 메시지로 기록한다.
+# 못 찾거나 불러오지 못해도 워처의 본래 일(inbox 위임)에는 영향이 없다. 함수 정의는 handoff-pump.ps1 머리말 참고. 테스트: tests\handoff
+$script:HandoffPumpReady = $false
+$script:LastHandoffPumpAt = [datetime]::MinValue
+if (-not $WorkerTask) {
+    try {
+        $handoffLib = $null
+        foreach ($c in @((Join-Path $PSScriptRoot "..\..\..\handoff\scripts\handoff-lib.ps1"),
+                         (Join-Path $env:USERPROFILE ".samjil\handoff\scripts\handoff-lib.ps1"))) {
+            if (Test-Path -LiteralPath $c) { $handoffLib = $c; break }
+        }
+        $handoffPump = Join-Path $PSScriptRoot "handoff-pump.ps1"
+        if ($handoffLib -and (Test-Path -LiteralPath $handoffPump)) {
+            . $handoffLib
+            . $handoffPump
+            $script:HandoffPumpReady = $true
+        }
+    } catch {
+        $script:HandoffPumpReady = $false
+    }
+}
+
 
 
 # 워처가 켜질 때 한 번만: 기존 기록을 읽어 "이미 저장된 작업ID"를 메모리에 올립니다.
@@ -1913,6 +1935,14 @@ try {
         } catch {}
 
 
+
+        # 핸드오프 자동 이어가기: 5초마다 채널을 점검한다(정지 중에는 새 일을 시작하지 않는다). 어떤 오류도 워처를 멈추지 않는다.
+        if ($script:HandoffPumpReady -and -not $script:Stopping -and ((Get-Date) - $script:LastHandoffPumpAt).TotalSeconds -ge 5) {
+            $script:LastHandoffPumpAt = Get-Date
+            try {
+                Invoke-HandoffPump @{ InboxDir = $InboxDir; OutboxDir = $OutboxDir; UsageCsv = $UsageCsv; SessionsDir = $SessionsDir }
+            } catch {}
+        }
 
         Start-Sleep -Seconds $PollSeconds
 

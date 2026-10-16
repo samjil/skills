@@ -269,9 +269,18 @@
               </label>
             </div>
             <div class="session-meta-chips" id="handoff-session-meta-chips">
-              <span class="party-legend"><i class="party-claude"></i>Claude가 보냄</span>
-              <span class="party-legend"><i class="party-agy"></i>agy가 보냄</span>
+              <span class="party-legend"><i class="party-claude"></i><span id="handoff-legend-claude">Claude 보냄</span></span>
+              <span class="party-legend"><i class="party-agy"></i><span id="handoff-legend-agy">agy 보냄</span></span>
             </div>
+          </div>
+
+          <div id="handoff-auto-bar" class="auto-bar" style="display: none;" role="status" aria-live="polite">
+            <span id="handoff-auto-state" class="auto-state"></span>
+            <span id="handoff-auto-detail" class="auto-detail"></span>
+            <span class="auto-actions">
+              <button type="button" class="text-btn" id="handoff-auto-reset" style="display: none;">한도 초기화</button>
+              <button type="button" class="text-btn" id="handoff-auto-toggle">끄기</button>
+            </span>
           </div>
 
           <div class="handoff-content-wrap">
@@ -297,6 +306,6 @@
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-  <script src="app.js?v=44"></script>
+  <script src="app.js?v=45"></script>
 </body>
 </html>
