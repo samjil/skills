@@ -37,6 +37,8 @@
   --ok-soft: rgba(127, 191, 127, 0.14);
   --err: #e5707a;
   --err-soft: rgba(229, 112, 122, 0.13);
+  --warn: #e0b25c;        /* 조용함: 아직 멈춘 건 아니지만 눈여겨볼 때 */
+  --warn-soft: rgba(224, 178, 92, 0.14);
 
   --focus: #a9e2de;
 
@@ -1089,6 +1091,8 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .badge.status-unknown { font-weight: 400; font-style: italic; }
 .badge.status-pending-processing { background: var(--agy-soft); color: var(--agy); }
 .badge.status-pending-queued { background: var(--raised); color: var(--ink-2); font-weight: 500; }
+.badge.status-pending-quiet { background: var(--warn-soft); color: var(--warn); }
+.badge.status-pending-stalled { background: var(--err-soft); color: var(--err); }
 
 .empty, .empty-hint {
   color: var(--ink-3);
@@ -1191,7 +1195,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .pending-progress { margin-top: 8px; padding-left: 24px; font-size: var(--fs-sm); color: var(--ink-2); }
 .pending-progress .pg-line { display: flex; flex-wrap: wrap; gap: 6px; font-variant-numeric: tabular-nums; }
 .pending-progress .pg-sep { color: var(--ink-3); }
-.pending-progress .pg-idle.quiet { color: #e0b25c; }
+.pending-progress .pg-idle.quiet { color: var(--warn); }
 .pending-progress .pg-action { margin-top: 2px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pending-progress .pg-tool { color: var(--ink); font-weight: 600; }
 .pending-progress .pg-detail { font-family: var(--font-mono); font-size: 0.92em; color: var(--ink); }
@@ -1937,3 +1941,49 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
 }
 .tree-time-legend .tt-dot.tt-session { background: var(--claude); }
 .tree-time-legend .tt-dot.tt-agy { background: var(--agy); }
+
+/* 진행 상태 표시(진행 중 / 조용함 / 멈춘 것으로 보임 / 대기 / 끝남 / 실패): 위임 카드 본문, 핸드오프 카드의 진행 줄, 과정 창 맨 위에서 같은 모양을 쓴다.
+   색이 뜻을 가른다 - 진행 중은 agy 색(점이 숨 쉼), 조용함은 노랑, 멈춘 것으로 보임·실패는 빨강(점이 멈춤), 끝남은 초록, 대기는 회색. 글자도 함께 적어 색만으로 가르지 않는다. */
+.live-health {
+  --live-color: var(--agy);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.live-health[data-kind="quiet"] { --live-color: var(--warn); }
+.live-health[data-kind="stalled"], .live-health[data-kind="failed"] { --live-color: var(--err); }
+.live-health[data-kind="done"] { --live-color: var(--ok); }
+.live-health[data-kind="queued"] { --live-color: var(--ink-3); }
+.live-dot {
+  align-self: center;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live-color);
+}
+.live-health[data-kind="running"] .live-dot { animation: live-breathe 1.6s ease-in-out infinite; }
+@keyframes live-breathe { 50% { opacity: 0.3; } }
+.live-label { font-weight: 600; color: var(--live-color); }
+.live-detail { min-width: 0; color: var(--ink-3); overflow-wrap: anywhere; }
+.pending-body > .live-health { margin-bottom: 8px; }
+.card.pending-card[data-health="stalled"] { border-color: rgba(229, 112, 122, 0.5); }
+.card.pending-card[data-health="quiet"] { border-color: rgba(224, 178, 92, 0.5); }
+.card.pending-card.interrupted { border-style: dashed; }
+.proc-dlg-health { margin-top: 10px; }
+
+/* 핸드오프 카드 머리 바로 아래의 진행 줄(보냄·읽음 상태의 Claude 메시지). 카드를 펼치지 않아도 보인다 */
+.handoff-live {
+  padding: 6px 14px 10px 78px;   /* 번호 칸(52px) + 간격 뒤, 제목 글자와 왼쪽을 맞춘다 */
+  border-top: 1px dashed var(--line);
+}
+.handoff-live-top { display: flex; align-items: center; gap: 12px; }
+.handoff-live-top .live-health { flex: 1 1 auto; }
+.handoff-live .pending-progress { margin-top: 6px; padding-left: 0; }
+@media (max-width: 720px) {
+  .handoff-live { padding-left: 14px; }
+}
