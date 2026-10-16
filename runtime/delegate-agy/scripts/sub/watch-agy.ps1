@@ -536,22 +536,6 @@ function Update-UsageSummaryUnlocked {
 
 
 
-function Truncate-Text($s, [int]$maxLen) {
-
-    if ($null -eq $s) { return "" }
-
-    if ($s.Length -gt $maxLen) {
-
-        return $s.Substring(0, $maxLen) + "`n... (내용이 길어 일부 생략됨 - 전체 내용은 outbox/processed 폴더의 원본 파일 참고)"
-
-    }
-
-    return $s
-
-}
-
-
-
 # ============================================================================
 
 # Q&A 기록 저장소 (JSON Lines)
@@ -733,7 +717,7 @@ function New-QaRecordFromRow($r, [string]$QuestionPath = "") {
         }
     }
 
-    return [ordered]@{
+    return New-QaRecord ([ordered]@{
         timestamp       = [string]$r.timestamp
         computer_name   = [string]$r.computer_name
         task_id         = $taskId
@@ -748,10 +732,10 @@ function New-QaRecordFromRow($r, [string]$QuestionPath = "") {
         status          = [string]$r.status
         session         = [string]$r.session
         session_id      = [string]$r.session_id
-        question        = (Truncate-Text ([string]$qText) 20000)
-        answer          = (Truncate-Text ([string]$aText) 20000)
+        question        = $qText
+        answer          = $aText
         process         = $processSteps
-    }
+    })
 }
 
 # usage.csv에 있는데 아직 jsonl에 없는 작업을 찾아서 이어붙입니다.
@@ -886,13 +870,15 @@ function Update-QAReport { Invoke-WithRuntimeLock { Update-QAReportUnlocked } }
 #  기다리는 바람에 워처가 13분 넘게 그 자리에서 멈춘 적이 있습니다.)
 
 $AgyTimeoutSeconds = 1800
-if ($env:AGY_TIMEOUT_SECONDS -match '^\d+$' -and [int]$env:AGY_TIMEOUT_SECONDS -ge 60) { $AgyTimeoutSeconds = [int]$env:AGY_TIMEOUT_SECONDS }   # 환경변수 AGY_TIMEOUT_SECONDS(60 이상)로 바꿀 수 있다
+$AgyTimeoutSeconds = Get-AgySecondsSetting 'AGY_TIMEOUT_SECONDS' 1800 60   # 환경변수 AGY_TIMEOUT_SECONDS(60 이상)로 바꿀 수 있다
+# 절대 마감을 넘겨도 agy 가 진짜 일하는 중이면(새 단계·도구 출력·CPU) 바로 끊지 않고 이 시간까지 더 기다린다. 이 시간이 지나면 일하는 중이어도 끊는다.
+$AgyHardTimeoutSeconds = [Math]::Max((Get-AgySecondsSetting 'AGY_HARD_TIMEOUT_SECONDS' 7200 60), $AgyTimeoutSeconds)   # 환경변수 AGY_HARD_TIMEOUT_SECONDS 로 바꿀 수 있다(마감보다 작으면 마감과 같게)
 
 # 위 절대 마감과 별개로, agy 대화 기록에 새 단계가 이 시간 동안 하나도 없으면 "멈춘 것"으로 보고
 # 중단합니다. 단계가 계속 기록되는 동안은(= 일하는 중) 절대 마감까지 기다립니다.
 # 이 값의 근거와 한계는 agy-progress.ps1 머리말을 보세요.
 $AgyStallSeconds = 300
-if ($env:AGY_STALL_SECONDS -match '^\d+$' -and [int]$env:AGY_STALL_SECONDS -ge 30) { $AgyStallSeconds = [int]$env:AGY_STALL_SECONDS }   # 환경변수 AGY_STALL_SECONDS(30 이상)로 바꿀 수 있다
+$AgyStallSeconds = Get-AgySecondsSetting 'AGY_STALL_SECONDS' 300 30   # 환경변수 AGY_STALL_SECONDS(30 이상)로 바꿀 수 있다
 # 마감/멈춤을 점검하는 주기(초)
 $AgyPollSeconds = 30
 # 오래 걸리는 호출의 진행 상황(경과 시간, 마지막 활동)을 로그에 남기는 주기(초)
@@ -970,18 +956,37 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
     $knownConv       = Get-AgyConversationIdFromArgs $agyArgs
     $convId          = $null
     $stallCheck      = $true     # 대화를 못 찾거나 모호하면 $false: 절대 마감만 적용
-    $stopReason      = $null     # 'cap'(절대 마감) | 'stall'(멈춤)
+    $stopReason      = $null     # 'cap'(마감을 넘겼고 활동이 없음) | 'hard'(최대 대기 시간) | 'stall'(멈춤)
     $lastActivity    = $null
     $stopNow         = $null
     $nextProgressLog = $AgyProgressLogSeconds
     $nextBgLog       = 0         # 백그라운드 도구를 기다린다는 로그를 5분에 한 번만 남기려고
+    $nextCapLog      = 0         # 절대 마감 이후 "작업 중이라 계속 기다림" 로그 주기
+    $cpuSamples      = New-Object System.Collections.ArrayList   # 마감이 가까워지면 모으는 CPU 사용 표본(마감 이후 활동 확인용)
+    $capNote         = ""
     $finished        = $false
     while ($true) {
         $finished = $proc.WaitForExit([int]($AgyPollSeconds * 1000))
         if ($finished) { break }
         $now     = Get-Date
         $elapsed = ($now - $startedAt).TotalSeconds
-        if ($elapsed -ge $AgyTimeoutSeconds) { $stopReason = 'cap'; $stopNow = $now; break }
+        if ($elapsed -ge $AgyHardTimeoutSeconds) { $stopReason = 'hard'; $stopNow = $now; break }
+        # 마감 직전부터 CPU 표본을 모은다(마감 이후 "진짜 일하는 중인가"를 두 시점의 차이로 보려고)
+        if ($elapsed -ge ($AgyTimeoutSeconds - 2 * $AgyStallSeconds)) {
+            [void]$cpuSamples.Add(@{ At = $now; Cpu = (Get-AgyTreeCpuSeconds $proc.Id) })
+            while ($cpuSamples.Count -gt 0 -and (($now - $cpuSamples[0].At).TotalSeconds -gt (3 * $AgyStallSeconds))) { $cpuSamples.RemoveAt(0) }
+        }
+        # 절대 마감에 닿아도 바로 끊지 않는다. 그 시점에 agy 가 진짜 일하는 중인지(새 단계·도구 출력·CPU) 확인해, 일하면 최대 대기 시간(AgyHardTimeoutSeconds)까지
+        # 계속 기다리고 아무 활동도 없으면 멈춘 것으로 보고 끊는다.
+        if ($elapsed -ge $AgyTimeoutSeconds) {
+            $alive = Test-AgyAliveAtCap $agyHome $convId $now $AgyStallSeconds $cpuSamples
+            if (-not $alive.Alive) { $capNote = [string]$alive.Note; $stopReason = 'cap'; $stopNow = $now; break }
+            if ($elapsed -ge $nextCapLog) {
+                Log ("  절대 마감 {0}초를 넘겼지만 작업 중으로 보여({1}) 끊지 않고 기다립니다. 최대 {2}초까지." -f $AgyTimeoutSeconds, $alive.Reason, $AgyHardTimeoutSeconds)
+                $nextCapLog = $elapsed + $AgyProgressLogSeconds
+            }
+            continue    # 마감 이후의 판단은 위 확인이 맡는다(아래 멈춤 점검은 건너뛴다)
+        }
         if ($stallCheck -and -not $convId) {
             $found = Resolve-AgyConversation $agyHome $knownConv $startedAt $AgyConversationWindowSeconds $marker
             if ($found.State -eq 'found') {
@@ -1047,7 +1052,7 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
         try { $proc.Dispose() } catch {}
         $lastStepText = ""
         if ($convId) { try { $lastStepText = Format-AgyLastStep (Get-AgyLastStepSummary $agyHome $convId) } catch {} }
-        return @{ TimedOut = $true; Raw = $null; Reason = $stopReason; IdleSeconds = $idleSeconds; LastActivity = $lastText; ConversationId = $convId; LastStep = $lastStepText }
+        return @{ TimedOut = $true; Raw = $null; Reason = $stopReason; IdleSeconds = $idleSeconds; LastActivity = $lastText; ConversationId = $convId; LastStep = $lastStepText; CapNote = $capNote }
     }
     # 끝났다: 남은 출력을 마저 받는다(비동기로 읽던 스트림이 닫힐 때까지).
     try { $proc.WaitForExit() } catch {}
@@ -1164,8 +1169,9 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
                 Log "  멈춤: 대화 기록에 새 단계가 $idleMin 분 동안 없어 강제로 중단했습니다 (마지막 활동 $($call.LastActivity), 대화 $($call.ConversationId)). 이 작업은 실패로 기록합니다."
                 if ($call.LastStep) { Log "    $($call.LastStep)"; $result.ErrorMessage += " [$($call.LastStep)]" }
             } else {
-                $result.ErrorMessage = "agy 호출이 $AgyTimeoutSeconds 초를 넘겨 중단했습니다 (타임아웃)"
-                Log "  타임아웃: agy 호출이 $AgyTimeoutSeconds 초를 넘겨 강제로 중단했습니다. 이 작업은 실패로 기록합니다."
+                $capMsg = if ($call.Reason -eq 'hard') { "agy 호출이 최대 대기 시간 $AgyHardTimeoutSeconds 초를 넘겨 중단했습니다 (작업 중이었지만 더 기다리지 않음)" } else { "agy 호출이 $AgyTimeoutSeconds 초를 넘겼고 $($call.CapNote) 멈춘 것으로 보고 중단했습니다 (타임아웃)" }
+                $result.ErrorMessage = $capMsg
+                Log "  타임아웃: $capMsg 이 작업은 실패로 기록합니다."
             }
 
             break

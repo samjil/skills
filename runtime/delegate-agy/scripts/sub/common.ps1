@@ -54,6 +54,39 @@ function Get-QaShardPath {
     return $path
 }
 
+# 글이 maxLen 을 넘으면 자르고 안내 문구를 붙인다. null 은 빈 문자열.
+function Truncate-Text($s, [int]$maxLen) {
+    if ($null -eq $s) { return "" }
+    if ($s.Length -gt $maxLen) {
+        return $s.Substring(0, $maxLen) + "`n... (내용이 길어 일부 생략됨 - 전체 내용은 outbox/processed 폴더의 원본 파일 참고)"
+    }
+    return $s
+}
+
+# 기록 저장소(qa-*.jsonl)에 넣을 레코드 하나를 만든다. 쓰기 경로가 여럿(워처의 작업 마무리·워처 시작 때의 전체 동기화, log-qa.ps1)이라
+# 레코드 모양이 따로 놀지 않도록 한 곳에서 만든다.
+#  - 칸 순서는 아래 목록을 따르고, Values 에 있는 칸만 넣는다(예: source 는 log-qa 의 기록에만, 토큰 칸은 워처의 기록에만 있다)
+#  - 모르는 칸 이름이 들어오면 오류다(오타로 칸이 조용히 빠지는 것을 막는다)
+#  - 글 칸은 모두 [string] 으로 바꾼다: Get-Content -Raw 가 돌려주는 문자열에는 PSPath·PSDrive 같은 숨은 속성이 붙어 있어, 그대로 직렬화하면
+#    파일시스템 정보까지 통째로 직렬화되어 몇십 MB 짜리 레코드가 된다(실제로 겪은 사고)
+#  - question·answer 는 20000자로 자른다. process(도구 목록)는 있는 그대로 둔다("모름"=$null 과 "없음"=빈 배열을 구별하므로)
+function New-QaRecord([System.Collections.IDictionary]$Values) {
+    $fields = @('timestamp', 'computer_name', 'task_id', 'source', 'model', 'attempts', 'tried_models', 'input_tokens', 'output_tokens',
+        'thinking_tokens', 'total_tokens', 'elapsed_sec', 'status', 'session', 'session_id', 'question', 'answer', 'process')
+    foreach ($k in $Values.Keys) {
+        if ($fields -notcontains [string]$k) { throw "기록에 없는 칸 이름입니다: $k" }
+    }
+    $rec = [ordered]@{}
+    foreach ($k in $fields) {
+        if (-not $Values.Contains($k)) { continue }
+        $v = $Values[$k]
+        if ($k -eq 'process') { $rec[$k] = $v }
+        elseif ($k -eq 'question' -or $k -eq 'answer') { $rec[$k] = (Truncate-Text ([string]$v) 20000) }
+        else { $rec[$k] = [string]$v }
+    }
+    return $rec
+}
+
 # 기록 저장소(qa-*.jsonl)에 한 줄을 덧붙입니다. watch-agy.ps1(Sync-QaStore, 작업자의 단일 추가)과
 # log-qa.ps1 이 함께 씁니다.
 #  - 파일 끝이 줄바꿈이 아니면(앞선 쓰기가 도중에 끊긴 것) 줄바꿈부터 씁니다. 안 그러면 새 기록이 끊긴 줄 뒤에
