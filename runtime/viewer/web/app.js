@@ -123,7 +123,7 @@
   var filteredQa = [];          // 필터 적용된 완료 QA
   var filteredPending = [];     // 필터 적용된 pending
   var shownQaCount = 0;         // 현재 렌더링된 카드 수
-  var knownShardKey = "";       // QA 데이터 변경 감지 키
+  var qaSeq = 0;                // 위임 기록 API 에서 마지막으로 받은 갱신 번호
   var lastPendingKey = "";      // pending 변경 감지 키
   var refreshTimer = null;
   var watcherStarting = false;   // 켜기 요청 후 켜질 때까지 true
@@ -150,17 +150,6 @@
     });
   }
 
-  function parseJsonl(text) {
-    if (text && text.charCodeAt(0) === 0xFEFF) { text = text.slice(1); }
-    var out = [];
-    var lines = text.split(/\r?\n/);
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].trim();
-      if (!line) { continue; }
-      try { out.push(JSON.parse(line)); } catch (e) { /* skip */ }
-    }
-    return out;
-  }
 
   function escapeHtml(str) {
     if (!str) return "";
@@ -229,10 +218,6 @@
     return String(r.status).trim() === "OK";
   }
 
-  function shardKeyOf(index) {
-    if (!index || !index.shards) { return ""; }
-    return index.shards.map(function (s) { return s.file + ":" + s.bytes; }).join(",");
-  }
 
   function pendingKeyOf(list) {
     if (!list || !list.length) { return ""; }
@@ -560,53 +545,43 @@
       });
   }
 
-  // 위임 완료 레코드 전체 로드
-  var shardDataCache = {};
+  // 위임 완료 레코드 로드: 뷰어 API(/api/qa/records)에서 마지막으로 받은 갱신 번호(qaSeq) 이후의 기록만 받아 합친다.
+  // 처음(또는 강제 새로고침)에는 since=0 으로 전부 받는다. 받은 건수가 서버의 전체 건수와 어긋나면(오래된 기록이 지워짐 등) 처음부터 다시 받는다.
+  // task_id 가 같은 기록은 새것으로 바꿔 합친 새 배열을 돌려준다(원본은 바꾸지 않는다).
+  function mergeQaRecords(base, incoming) {
+    var byId = {};
+    var order = [];
+    base.forEach(function (r) {
+      if (!Object.prototype.hasOwnProperty.call(byId, r.task_id)) { order.push(r.task_id); }
+      byId[r.task_id] = r;
+    });
+    incoming.forEach(function (r) {
+      if (!Object.prototype.hasOwnProperty.call(byId, r.task_id)) { order.push(r.task_id); }
+      byId[r.task_id] = r;
+    });
+    return order.map(function (id) { return byId[id]; });
+  }
 
   function loadAllQa(force) {
-    if (force) {
-      knownShardKey = "";
-      shardDataCache = {};
-    }
-    return fetchJson("/data/index.json").then(function (index) {
-      var key = shardKeyOf(index);
-      var changed = (key !== knownShardKey);
-      knownShardKey = key;
+    var since = (force || allItems.length === 0) ? 0 : qaSeq;
+    return fetchJson("/api/qa/records?since=" + since).then(function (res) {
+      var recs = (res && Array.isArray(res.records)) ? res.records : [];
+      var total = (res && typeof res.total === "number") ? res.total : recs.length;
+      var items = (since === 0) ? recs : mergeQaRecords(allItems, recs);
 
-      if (!changed && !force && allItems.length > 0) {
-        return { changed: false, index: index };
+      if (since > 0 && items.length !== total) {
+        qaSeq = 0;
+        return loadAllQa(true);
       }
+      var changed = Boolean(force) || recs.length > 0 || items.length !== allItems.length;
+      if (!changed) { return { changed: false }; }
 
-      var shards = (index && index.shards) ? index.shards : [];
-      var activeFiles = {};
-      var loaders = shards.map(function (s) {
-        activeFiles[s.file] = true;
-        var cached = shardDataCache[s.file];
-        if (!force && cached && cached.bytes === s.bytes) {
-          return Promise.resolve(cached.items);
-        }
-        return fetchText("/data/" + encodeURIComponent(s.file))
-          .then(parseJsonl)
-          .then(function (parsed) {
-            shardDataCache[s.file] = { bytes: s.bytes, items: parsed };
-            return parsed;
-          })
-          .catch(function () { return cached ? cached.items : []; });
+      items.sort(function (a, b) {
+        return String((b && b.timestamp) || "").localeCompare(String((a && a.timestamp) || ""));
       });
-
-      Object.keys(shardDataCache).forEach(function (f) {
-        if (!activeFiles[f]) { delete shardDataCache[f]; }
-      });
-
-      return Promise.all(loaders).then(function (chunks) {
-        var items = [];
-        chunks.forEach(function (c) { items = items.concat(c); });
-        items.sort(function (a, b) {
-          return String((b && b.timestamp) || "").localeCompare(String((a && a.timestamp) || ""));
-        });
-        allItems = items;
-        return { changed: true, index: index };
-      });
+      allItems = items;
+      qaSeq = (res && typeof res.seq === "number") ? res.seq : qaSeq;
+      return { changed: true };
     });
   }
 

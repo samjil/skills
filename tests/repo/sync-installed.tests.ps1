@@ -44,6 +44,7 @@ function Run-Sync([string[]]$extra = @()) {
 # 소스 트리(작게): 워처 스크립트, 뷰어 본체·화면 파일, 스킬 문서
 W (Join-Path $src "runtime\delegate-agy\scripts\start-agy.ps1") "start v1"
 W (Join-Path $src "runtime\delegate-agy\scripts\sub\watch-agy.ps1") "watch v1"
+W (Join-Path $src "runtime\delegate-agy\scripts\sub\agy-db.ps1") "db v1"
 W (Join-Path $src "runtime\viewer\serve-viewer.ps1") "serve v1"
 W (Join-Path $src "runtime\viewer\web\app.js") "app v1"
 W (Join-Path $src "runtime\handoff\templates\t.md") "tpl v1"
@@ -101,6 +102,11 @@ $r = Run-Sync
 Assert-Equal "  handoff-lib.ps1 이 바뀌면 워처 재시작 안내가 있다" $true ($r.Out -like "*워처 스크립트가 바뀌었*")
 Assert-Equal "  handoff-lib.ps1 이 바뀌면 뷰어 재시작 안내도 있다(뷰어도 켜질 때 라이브러리를 읽는다)" $true ($r.Out -like "*뷰어 본체 스크립트가 바뀌었습니다*")
 
+Write-Host "agy-db.ps1 이 바뀌면 워처와 뷰어 재시작을 둘 다 알린다(둘 다 켜질 때 DB 모듈을 읽어 올린다)"
+W (Join-Path $src "runtime\delegate-agy\scripts\sub\agy-db.ps1") "db v2"
+$r = Run-Sync
+Assert-Equal "  워처 재시작 안내가 있다" $true ($r.Out -like "*워처 스크립트가 바뀌었*")
+Assert-Equal "  뷰어 재시작 안내도 있다" $true ($r.Out -like "*뷰어 본체 스크립트가 바뀌었습니다*")
 Write-Host "소스에서 지운 파일은 설치본에 남기고 알리기만 한다"
 Remove-Item -LiteralPath (Join-Path $src "runtime\handoff\templates\t.md") -Force
 $r = Run-Sync

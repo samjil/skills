@@ -84,25 +84,17 @@ $body
     return (($lines.ToArray()) -join "`n")
 }
 
-# usage.csv 에서 이 작업의 행(가장 먼저 쓴 것). 없으면 $null.
-function Get-HandoffUsageRow([string]$UsageCsv, [string]$TaskId) {
-    if (-not $UsageCsv -or -not (Test-Path -LiteralPath $UsageCsv -PathType Leaf)) { return $null }
-    try {
-        $rows = @(Import-Csv -LiteralPath $UsageCsv -Encoding UTF8 | Where-Object { $_.task_id -eq $TaskId })
-        if ($rows.Count -gt 0) { return $rows[0] }
-    } catch {}
-    return $null
+# 위임 기록 DB(tasks 표)에서 이 작업의 사용량 행(가장 먼저 쓴 것). 없으면 $null.
+function Get-HandoffUsageRow([string]$DbPath, [string]$TaskId) {
+    if (-not $DbPath) { return $null }
+    try { return (Get-QaTaskRow $DbPath $TaskId) } catch { return $null }
 }
 
-function Get-HandoffSessionModel([string]$SessionsDir, [string]$SessionName) {
-    if (-not $SessionsDir -or -not $SessionName) { return "" }
+function Get-HandoffSessionModel([string]$DbPath, [string]$SessionName) {
+    if (-not $DbPath -or -not $SessionName) { return "" }
     try {
-        $safe = ($SessionName -replace '[\\/:*?"<>|]', '_').Trim()
-        $p = Join-Path $SessionsDir ("{0}.json" -f $safe)
-        if (Test-Path -LiteralPath $p -PathType Leaf) {
-            $o = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
-            if ($o.model -and [string]$o.model -ne "(session)") { return [string]$o.model }
-        }
+        $s = Get-AgySession $DbPath $SessionName
+        if ($s -and $s.model -and [string]$s.model -ne "(session)") { return [string]$s.model }
     } catch {}
     return ""
 }
@@ -150,7 +142,7 @@ function Complete-HandoffDispatch([string]$ChannelDir, $Disp, $Ctx) {
 
     $hasResp = (Test-Path -LiteralPath $respPath -PathType Leaf)
     $hasErr = (Test-Path -LiteralPath $errPath -PathType Leaf)
-    $usage = Get-HandoffUsageRow $Ctx.UsageCsv $taskId
+    $usage = Get-HandoffUsageRow $Ctx.DbPath $taskId
     $age = if ($started -ne [datetime]::MinValue) { ((Get-Date) - $started).TotalHours } else { 0 }
 
     if (-not $hasResp -and -not $hasErr) {
@@ -194,7 +186,7 @@ function Complete-HandoffDispatch([string]$ChannelDir, $Disp, $Ctx) {
 
     $model = ""
     if ($usage -and [string]$usage.model -and [string]$usage.model -ne "(session)") { $model = [string]$usage.model }
-    if (-not $model) { $model = Get-HandoffSessionModel $Ctx.SessionsDir (Get-HandoffSessionName (ConvertTo-HandoffSafeName (Split-Path -Leaf $ChannelDir)) $null ([string]$Disp.tier)) }
+    if (-not $model) { $model = Get-HandoffSessionModel $Ctx.DbPath (Get-HandoffSessionName (ConvertTo-HandoffSafeName (Split-Path -Leaf $ChannelDir)) $null ([string]$Disp.tier)) }
     $newNum = Add-HandoffMessage $ChannelDir "a2c" ("Re: " + $replyTitleBase) (ConvertTo-HandoffReplyBody $respText) $num $model $true "보냄"
     if (-not $newNum) {
         Write-HandoffLog "핸드오프 [$(Split-Path -Leaf $ChannelDir)] #$num 회신 메시지를 쓰지 못했습니다(다음 점검 때 다시 시도)"
