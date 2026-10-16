@@ -502,7 +502,7 @@ eq("빈 배열 정렬", [], api.sortTreeNodes([], "recent-desc"));
 eq("null 입력 정렬", [], api.sortTreeNodes(null, "recent-desc"));
 eq("배열 내 null 항목 안전 처리", [], api.sortTreeNodes([null], "recent-desc"));
 
-console.log("\nsortTreeNodes: dateSource=records (위임 실행 기록 화면: agy 작업 시각만 기준)");
+console.log("\nsortTreeNodes: dateSource=records (에이전트 위임 화면: agy 작업 시각만 기준)");
 const recNodes = [
   { id: "p-active", name: "활동만 있는 프로젝트", latestTime: "", sessions: [{ id: "s1", title: "진행중 세션", latestTime: "", lastActivity: "2026-10-14 20:00:00" }] },
   { id: "p-old", name: "예전 위임", latestTime: "2026-10-10 09:00:00", sessions: [{ id: "s2", title: "예전", latestTime: "2026-10-10 09:00:00", lastActivity: "2026-10-10 09:30:00" }] },

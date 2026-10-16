@@ -35,6 +35,8 @@ const names = [
   "handoffLinkOf",
   "handoffSessionNodeOf",
   "handoffChainNodeOf",
+  "handoffBriefSessionIds",
+  "handoffBriefNodeOf",
   "handoffNodeOf",
   "buildHandoffTree",
   "handoffFilterTree",
@@ -46,7 +48,7 @@ const api = new Function(
   "var QA_UNGROUPED = " + JSON.stringify(QA_UNGROUPED) + ";\r\n" +
   "var QA_UNLINKED = " + JSON.stringify(QA_UNLINKED) + ";\r\n" +
   names.map(extractFunction).join("\r\n") +
-  "\r\nreturn { handoffMsgFileOf, handoffLinkOf, handoffNodeOf, buildHandoffTree, handoffFilterTree, handoffMessagesOf, QA_UNGROUPED, QA_UNLINKED };"
+  "\r\nreturn { handoffMsgFileOf, handoffLinkOf, handoffNodeOf, handoffBriefSessionIds, buildHandoffTree, handoffFilterTree, handoffMessagesOf, QA_UNGROUPED, QA_UNLINKED };"
 )(testChannels);
 
 let passed = 0, failed = 0;
@@ -397,6 +399,23 @@ const mixData = (n) => ({ name: n, files: ["0001-c2a-open.md", "0002-a2c-r.md"],
 eq("chA 의 0002 는 chA 의 0001 세션(sess-a)", "sess-a", api.handoffNodeOf("chA", { num: "0002" }, mixData("chA"), mixTree).sessionId);
 eq("chB 의 0002 는 chB 의 0001 세션(sess-b)", "sess-b", api.handoffNodeOf("chB", { num: "0002" }, mixData("chB"), mixTree).sessionId);
 delete testChannels["chA"]; delete testChannels["chB"];
+
+console.log("\n[handoffNodeOf] 세션 전용 채널(BRIEF 에 세션 ID)의 메시지는 연결이 없어도 그 세션에 붙는다");
+eq("BRIEF 의 세션 ID 한 개", ["sess-1"], api.handoffBriefSessionIds("- **세션 ID**: `sess-1`"));
+eq("  여러 개(이어서 다시 연 세션)", ["a", "b"], api.handoffBriefSessionIds("- **세션 ID**: `a`, `b` (이어 연 세션)\n- 본문의 `이건-아님`"));
+eq("  자리표시자·중복은 뺀다", ["x"], api.handoffBriefSessionIds("세션 ID: `<세션 ID>`, `x`, `x`"));
+eq("  줄이 없거나 BRIEF 가 비면 빈 배열", [[], [], []], [api.handoffBriefSessionIds(""), api.handoffBriefSessionIds(null), api.handoffBriefSessionIds("저장소 경로: `C:\\x`")]);
+const boundTree = { projects: [{ id: "cg-1", name: "proj", sessions: [{ id: "sess-old", title: "옛 세션" }, { id: "sess-new", title: "새 세션" }] }], ungrouped: [], handoffLinks: {} };
+const boundData = (brief) => ({ name: "bound", brief: brief, files: ["0011-c2a-x.md", "0012-a2c-x.md"], messages: [mk("0011", "c2a"), mk("0012", "a2c", "0011")] });
+eq("연결·이웃 연결이 없어도 BRIEF 의 세션에 붙는다(0011)", "sess-new", api.handoffNodeOf("bound", { num: "0011" }, boundData("- **세션 ID**: `sess-new`"), boundTree).sessionId);
+eq("  회신(0012)도 같은 세션", "sess-new", api.handoffNodeOf("bound", { num: "0012" }, boundData("- **세션 ID**: `sess-new`"), boundTree).sessionId);
+eq("  ID 가 여럿이면 뒤쪽(최근) 세션이 우선", "sess-new", api.handoffNodeOf("bound", { num: "0011" }, boundData("세션 ID: `sess-old`, `sess-new`"), boundTree).sessionId);
+eq("  뒤쪽 세션이 트리에 없으면 앞쪽 세션", "sess-old", api.handoffNodeOf("bound", { num: "0011" }, boundData("세션 ID: `sess-old`, `sess-gone`"), boundTree).sessionId);
+eq("  적힌 세션이 모두 트리에 없으면 연결 안 됨", "c:bound", api.handoffNodeOf("bound", { num: "0011" }, boundData("세션 ID: `sess-gone`"), boundTree).sessionId);
+eq("  BRIEF 에 세션 ID 가 없으면 연결 안 됨(기존 동작)", "c:bound", api.handoffNodeOf("bound", { num: "0011" }, boundData("저장소 경로: `C:\\x`"), boundTree).sessionId);
+const boundLinked = Object.assign({}, boundTree, { handoffLinks: { "bound/0011-c2a-x.md": "sess-old" } });
+eq("파일 이름 근거의 직접 연결이 BRIEF 보다 먼저(0011 → sess-old)", "sess-old", api.handoffNodeOf("bound", { num: "0011" }, boundData("세션 ID: `sess-new`"), boundLinked).sessionId);
+eq("  이웃의 연결도 BRIEF 보다 먼저(0012 는 0011 을 따라 sess-old)", "sess-old", api.handoffNodeOf("bound", { num: "0012" }, boundData("세션 ID: `sess-new`"), boundLinked).sessionId);
 
 console.log("\n통과 " + passed + " / 실패 " + failed);
 if (failed > 0) {

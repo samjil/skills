@@ -40,7 +40,7 @@
           <span class="brand-mark" aria-hidden="true"><img class="brand-logo" src="logo.png?v=2" alt="Agy Agent 로고" width="28" height="28"></span>
           <div class="brand-info">
             <span class="brand-title">Agy Agent</span>
-            <span class="brand-sub">위임과 인수인계 기록</span>
+            <span class="brand-sub">위임과 협의 기록</span>
           </div>
         </a>
         <button id="sidebar-collapse-btn" class="icon-btn sidebar-toggle-btn" title="사이드바 접기/펼치기" aria-label="사이드바 접기">
@@ -54,13 +54,13 @@
           <svg class="icon nav-icon"><use href="#i-home"/></svg>
           <span class="nav-label">대시보드</span>
         </button>
-        <button class="nav-item" data-nav="qa" id="nav-btn-qa" role="tab" aria-selected="false" title="위임 실행 기록">
+        <button class="nav-item" data-nav="qa" id="nav-btn-qa" role="tab" aria-selected="false" title="에이전트 위임">
           <svg class="icon nav-icon"><use href="#i-delegate"/></svg>
-          <span class="nav-label">위임 실행 기록</span>
+          <span class="nav-label">에이전트 위임</span>
         </button>
-        <button class="nav-item" data-nav="handoff" id="nav-btn-handoff" role="tab" aria-selected="false" title="에이전트 인수인계">
+        <button class="nav-item" data-nav="handoff" id="nav-btn-handoff" role="tab" aria-selected="false" title="에이전트 협의">
           <svg class="icon nav-icon"><use href="#i-handoff"/></svg>
-          <span class="nav-label">에이전트 인수인계</span>
+          <span class="nav-label">에이전트 협의</span>
         </button>
       </nav>
 
@@ -76,7 +76,7 @@
           </div>
         </div>
 
-        <!-- 2) 위임 실행 기록: 세션 목록 -->
+        <!-- 2) 에이전트 위임: 세션 목록 -->
         <div class="sub-panel" id="sidebar-sub-qa" style="display: none;">
           <div class="sub-panel-header">
             <span class="sub-panel-title">프로젝트</span>
@@ -103,7 +103,7 @@
           <div class="project-list-wrap" id="qa-session-list" role="list"></div>
         </div>
 
-        <!-- 3) 에이전트 인수인계: 프로젝트 목록 -->
+        <!-- 3) 에이전트 협의: 프로젝트 목록 -->
         <div class="sub-panel" id="sidebar-sub-handoff" style="display: none;">
           <div class="sub-panel-header">
             <span class="sub-panel-title">프로젝트</span>
@@ -130,7 +130,7 @@
             </select>
           </div>
           <div class="sub-sort-row"><label for="handoff-tree-sort">정렬</label><select id="handoff-tree-sort" aria-label="프로젝트 정렬"></select></div>
-          <div class="tree-time-legend" aria-label="시각 표시: 앞은 세션, 뒤는 인수인계"><span><i class="tt-dot tt-session"></i>세션 시각</span><span><i class="tt-dot tt-agy"></i>인수인계 시각</span></div>
+          <div class="tree-time-legend" aria-label="시각 표시: 앞은 세션, 뒤는 협의"><span><i class="tt-dot tt-session"></i>세션 시각</span><span><i class="tt-dot tt-agy"></i>협의 시각</span></div>
 
           <div class="project-list-wrap" id="handoff-project-list" role="list">
             <p class="empty-hint">프로젝트 불러오는 중</p>
@@ -208,7 +208,7 @@
                 <h2>최근 활동</h2>
                 <div class="dash-links">
                   <button class="text-btn" id="btn-view-all-qa">위임 기록 전체</button>
-                  <button class="text-btn" id="btn-view-all-handoff">인수인계 전체</button>
+                  <button class="text-btn" id="btn-view-all-handoff">협의 전체</button>
                 </div>
               </header>
               <ol class="row-list" id="dash-timeline"></ol>
@@ -225,7 +225,7 @@
         </section>
 
         <!-- =============================================================== -->
-        <!-- 2. 위임 실행 기록                                                -->
+        <!-- 2. 에이전트 위임                                                -->
         <!-- =============================================================== -->
         <section id="view-qa" class="view-panel" style="display: none;">
           <div class="detail-session-header" id="qa-detail-header">
@@ -256,7 +256,7 @@
         </section>
 
         <!-- =============================================================== -->
-        <!-- 3. 에이전트 인수인계                                             -->
+        <!-- 3. 에이전트 협의                                             -->
         <!-- =============================================================== -->
         <section id="view-handoff" class="view-panel" style="display: none;">
           <div class="detail-session-header" id="handoff-detail-header">
