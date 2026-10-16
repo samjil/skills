@@ -236,6 +236,24 @@ function Read-HandoffFrontMatter([string]$Path) {
     return $h
 }
 
+# 메시지 머리말에 모델이 없으면 넣는다(이미 있으면 그대로 둔다). 머리말이 없는 파일은 건드리지 않는다. 넣었으면 $true.
+function Set-HandoffMessageModel([string]$Path, [string]$Model) {
+    if (-not $Model -or -not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+    $text = (New-Object System.Text.UTF8Encoding($false)).GetString($bytes, $(if ($hasBom) { 3 } else { 0 }), $bytes.Length - $(if ($hasBom) { 3 } else { 0 }))
+    $m = [regex]::Match($text, '\A(---[ \t]*\r?\n)((?:.*?\r?\n)*?)(---[ \t]*(?:\r?\n|\z))')
+    if (-not $m.Success) { return $false }
+    if ([regex]::IsMatch($m.Groups[2].Value, '(?m)^\s*모델\s*[:：]')) { return $false }
+    $eol = if ($m.Groups[1].Value.EndsWith("`r`n")) { "`r`n" } else { "`n" }
+    $new = $m.Groups[1].Value + $m.Groups[2].Value + "모델: $Model" + $eol + $m.Groups[3].Value
+    $text = $new + $text.Substring($m.Length)
+    $out = (New-Object System.Text.UTF8Encoding($false)).GetBytes($text)
+    if ($hasBom) { $out = [byte[]](@(0xEF, 0xBB, 0xBF) + $out) }
+    [System.IO.File]::WriteAllBytes($Path, $out)
+    return $true
+}
+
 function Get-HandoffMessageFile([string]$ChannelDir, [string]$Num) {
     $msgDir = Join-Path $ChannelDir "msg"
     if (-not (Test-Path -LiteralPath $msgDir -PathType Container)) { return $null }
@@ -268,6 +286,7 @@ function Get-HandoffNextNumber([string]$ChannelDir) {
 #   $Dir: c2a | a2c. $Body 는 "## 요약" 부터 시작하는 본문(머리말은 여기서 붙인다).
 function Add-HandoffMessage([string]$ChannelDir, [string]$Dir, [string]$Title, [string]$Body, [string]$ReplyTo = "", [string]$Model = "", [bool]$Auto = $false, [string]$Status = "보냄") {
     if (@("c2a", "a2c") -notcontains $Dir) { return $null }
+    if ($Model -eq "(session)") { $Model = "" }          # 세션 이어가기 자리표시자는 모델명이 아니다
     $msgDir = Join-Path $ChannelDir "msg"
     New-Item -ItemType Directory -Force -Path $msgDir | Out-Null
     $idx = Join-Path $ChannelDir "INDEX.md"
@@ -411,7 +430,9 @@ function Get-HandoffMessageMeta([string]$Path, [hashtable]$Cache = $null) {
     $stamp = $item.LastWriteTimeUtc.Ticks
     if ($Cache -and $Cache.ContainsKey($Path) -and $Cache[$Path].stamp -eq $stamp) { return $Cache[$Path].meta }
     $h = Read-HandoffFrontMatter $Path
-    $meta = @{ model = [string]$h["모델"]; replyTo = [string]$h["답장대상"]; auto = ([string]$h["자동"] -eq "예") }
+    $mdl = [string]$h["모델"]
+    if ($mdl -eq "(session)") { $mdl = "" }
+    $meta = @{ model = $mdl; replyTo = [string]$h["답장대상"]; auto = ([string]$h["자동"] -eq "예") }
     if ($Cache) { $Cache[$Path] = @{ stamp = $stamp; meta = $meta } }
     return $meta
 }

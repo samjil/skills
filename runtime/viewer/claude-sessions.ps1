@@ -390,7 +390,10 @@ function Update-ClaudeLinkIndex([string]$IndexFile, [string]$DesktopDir, [string
             $rawIndex = [System.IO.File]::ReadAllText($IndexFile, [System.Text.Encoding]::UTF8)
             $parsed = ConvertFrom-Json -InputObject $rawIndex
             if ($null -ne $parsed -and $parsed.version -eq 1 -and $null -ne $parsed.files -and $null -ne $parsed.tasks -and $null -ne $parsed.msgs) {
+                # 메시지 키 형식이 바뀌기 전(msgKeyVer 없음)의 색인은 메시지 연결과 읽은 위치를 버리고 다시 훑는다.
+                $keepMsgs = ($parsed.msgKeyVer -eq 2)
                 foreach ($prop in $parsed.files.PSObject.Properties) {
+                    if (-not $keepMsgs) { continue }
                     $filesMap[$prop.Name] = @{
                         offset = [long]$prop.Value.offset
                         size   = [long]$prop.Value.size
@@ -403,6 +406,7 @@ function Update-ClaudeLinkIndex([string]$IndexFile, [string]$DesktopDir, [string
                     }
                 }
                 foreach ($prop in $parsed.msgs.PSObject.Properties) {
+                    if (-not $keepMsgs) { continue }
                     $msgsMap[$prop.Name] = @{
                         session = [string]$prop.Value.session
                         ts      = [string]$prop.Value.ts
@@ -437,7 +441,9 @@ function Update-ClaudeLinkIndex([string]$IndexFile, [string]$DesktopDir, [string
     foreach ($k in $staleMsgKeys) { $msgsMap.Remove($k) }
 
     $taskRegex = [regex]::new('claude_\d{9,11}_\d+(?:_[a-z])?')
-    $msgRegex  = [regex]::new('\d{4}-(?:c2a|a2c)-[A-Za-z0-9가-힣_-]+\.md')
+    # 채널 이름이 붙은 경로(<채널>/msg/<파일>)는 "채널/파일" 키로, 파일 이름만 나온 경우는 파일 이름 키로 모은다.
+    # 서로 다른 채널의 0001-c2a-채널-개통... 처럼 이름이 같은 메시지가 섞여 붙는 것을 막기 위함이다.
+    $msgRegex  = [regex]::new('(?:([A-Za-z0-9가-힣_.-]+)(?:\\{1,4}|/)msg(?:\\{1,4}|/))?(\d{4}-(?:c2a|a2c)-[A-Za-z0-9가-힣_-]+\.md)')
     $tsRegex   = [regex]::new('"timestamp"\s*:\s*"([^"]+)"')
 
     $scannedFilesCount = 0
@@ -526,7 +532,8 @@ function Update-ClaudeLinkIndex([string]$IndexFile, [string]$DesktopDir, [string
                             if ($lineStr.Contains('-c2a-') -or $lineStr.Contains('-a2c-')) {
                                 $mMatches = $msgRegex.Matches($lineStr)
                                 foreach ($mm in $mMatches) {
-                                    $mid = $mm.Value
+                                    $mid = $mm.Groups[2].Value
+                                    if ($mm.Groups[1].Success) { $mid = $mm.Groups[1].Value + '/' + $mid }
                                     if (-not $foundMsgs.ContainsKey($mid)) {
                                         $foundMsgs[$mid] = $tsVal
                                     }
@@ -595,6 +602,7 @@ function Update-ClaudeLinkIndex([string]$IndexFile, [string]$DesktopDir, [string
 
     $outObj = @{
         version = 1
+        msgKeyVer = 2
         updated = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
         files   = $filesMap
         tasks   = $tasksMap
