@@ -33,6 +33,7 @@ $AgyStallSeconds = 8
 $AgyPollSeconds = 2
 $AgyProgressLogSeconds = 600
 $AgyConversationWindowSeconds = 5
+$AgyHardTimeoutSeconds = 40   # 마감(24초)을 넘겨도 일하는 중이면 여기(40초)까지 기다린다
 
 # 가짜 agy: 모드에 따라 대화 파일을 만들고 갱신한다.
 $work = Join-Path ([IO.Path]::GetTempPath()) ("invoke-agy-once-test-" + [Guid]::NewGuid().ToString("N"))
@@ -45,7 +46,7 @@ $id = [Guid]::NewGuid().ToString()
 $db = Join-Path $env:AGY_HOME "conversations\$id.db"
 $tr = Join-Path $env:AGY_HOME "brain\$id\.system_generated\logs\transcript_full.jsonl"
 function Touch { Set-Content -LiteralPath $db -Value (Get-Date).Ticks; Set-Content -LiteralPath $tr -Value (Get-Date).Ticks }
-if ($mode -ne "no-conversation") {
+if (@("no-conversation", "busy-no-conversation") -notcontains $mode) {
     New-Item -ItemType Directory -Force -Path (Split-Path $tr) | Out-Null
     Touch
 }
@@ -57,6 +58,7 @@ switch ($mode) {
     "work-then-silent" { for ($i = 0; $i -lt 2; $i++) { Start-Sleep 2; Touch }; Start-Sleep 60 }
     "work-forever"     { for ($i = 0; $i -lt 30; $i++) { Start-Sleep 2; Touch } }
     "no-conversation"  { Start-Sleep 60 }
+    "busy-no-conversation" { $sw = [Diagnostics.Stopwatch]::StartNew(); while ($sw.Elapsed.TotalSeconds -lt 70) { for ($k = 0; $k -lt 200000; $k++) { $x = $k * 3 } } }
 }
 '@
 # 실제 agy 와 같은 프로세스 이름(agy.exe)이어야 워처의 종료 경로(자손 agy 찾기)를 그대로 탄다.
@@ -87,11 +89,12 @@ Assert-True  "  마감(24초)보다 훨씬 일찍 중단 ($([int]$b.Seconds)초)
 Assert-True  "  대화 ID를 기록" ([bool]$b.Result.ConversationId)
 Assert-True  "  멈춤 시간이 기준 이상 ($([int]$b.Result.IdleSeconds)초)" ($b.Result.IdleSeconds -ge 8)
 
-Write-Host "C) 계속 일하지만 절대 마감(24초)을 넘김 -> 마감으로 중단"
+Write-Host "C) 계속 일하며 절대 마감(24초)을 넘김 -> 일하는 중이라 끊지 않고, 최대 대기 시간(40초)에서 끊는다"
 $c = Run-Fake "work-forever"
 Assert-Equal "  타임아웃" $true $c.Result.TimedOut
-Assert-Equal "  사유는 cap" "cap" $c.Result.Reason
-Assert-True  "  마감 근처에서 중단 ($([int]$c.Seconds)초)" ($c.Seconds -ge 23 -and $c.Seconds -lt 32)
+Assert-Equal "  사유는 hard(최대 대기 시간)" "hard" $c.Result.Reason
+Assert-True  "  마감(24초)을 넘겨서도 기다렸다 ($([int]$c.Seconds)초)" ($c.Seconds -gt 30 -and $c.Seconds -lt 50)
+Assert-True  "  '작업 중으로 보여 끊지 않고 기다립니다' 로그를 남김" (($script:LogLines -join "`n") -match "작업 중으로 보여")
 
 Write-Host "D) 새 대화가 아예 안 보임 -> 멈춤 점검 없이 절대 마감만 적용"
 $d = Run-Fake "no-conversation"
@@ -123,6 +126,13 @@ $h = Run-Fake "background-hung"
 Assert-Equal "  타임아웃" $true $h.Result.TimedOut
 Assert-Equal "  사유는 cap" "cap" $h.Result.Reason
 Assert-True  "  마감 근처에서 중단 ($([int]$h.Seconds)초)" ($h.Seconds -ge 23 -and $h.Seconds -lt 34)
+
+Write-Host "I) 대화는 안 보이지만 CPU 를 계속 쓰는 중 -> 마감을 넘겨도 끊지 않고 최대 대기 시간(40초)에서 끊는다"
+$i1 = Run-Fake "busy-no-conversation"
+Assert-Equal "  타임아웃" $true $i1.Result.TimedOut
+Assert-Equal "  사유는 hard" "hard" $i1.Result.Reason
+Assert-True  "  마감(24초)을 넘겨서도 기다렸다 ($([int]$i1.Seconds)초)" ($i1.Seconds -gt 30 -and $i1.Seconds -lt 50)
+Assert-True  "  근거(CPU)를 로그에 남김" (($script:LogLines -join "`n") -match "CPU")
 
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""

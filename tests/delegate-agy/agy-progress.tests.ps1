@@ -188,6 +188,66 @@ Write-Transcript $bgId @($bgRun4, '{"step_ind')
 Assert-Equal "쓰는 중이라 끊긴 마지막 줄이 있어도 도는 중으로 읽는다" "bg-conv/task-4" (@(Get-AgyPendingBackgroundTasks $home3 $bgId) -join ",")
 Remove-Item -LiteralPath $home3 -Recurse -Force -ErrorAction SilentlyContinue
 
+
+Write-Host "Get-AgySecondsSetting (마감·멈춤 기준을 환경변수에서 읽기)"
+$envName = "AGY_TEST_SECONDS_SETTING"
+$envBefore = [Environment]::GetEnvironmentVariable($envName)
+try {
+    [Environment]::SetEnvironmentVariable($envName, $null)
+    Assert-Equal "환경변수가 없으면 기본값" 1800 (Get-AgySecondsSetting $envName 1800 60)
+    [Environment]::SetEnvironmentVariable($envName, "900")
+    Assert-Equal "숫자면 그 값" 900 (Get-AgySecondsSetting $envName 1800 60)
+    [Environment]::SetEnvironmentVariable($envName, "60")
+    Assert-Equal "최솟값과 같으면 그 값" 60 (Get-AgySecondsSetting $envName 1800 60)
+    [Environment]::SetEnvironmentVariable($envName, "59")
+    Assert-Equal "최솟값보다 작으면 기본값" 1800 (Get-AgySecondsSetting $envName 1800 60)
+    [Environment]::SetEnvironmentVariable($envName, "abc")
+    Assert-Equal "숫자가 아니면 기본값" 1800 (Get-AgySecondsSetting $envName 1800 60)
+    [Environment]::SetEnvironmentVariable($envName, "-5")
+    Assert-Equal "음수면 기본값" 1800 (Get-AgySecondsSetting $envName 1800 60)
+    [Environment]::SetEnvironmentVariable($envName, "12 ")
+    Assert-Equal "공백이 섞이면 기본값" 1800 (Get-AgySecondsSetting $envName 1800 60)
+    [Environment]::SetEnvironmentVariable($envName, "99999999999999")
+    Assert-Equal "너무 큰 수는 기본값" 1800 (Get-AgySecondsSetting $envName 1800 60)
+} finally { [Environment]::SetEnvironmentVariable($envName, $envBefore) }
+
+Write-Host "Test-AgyAliveAtCap (절대 마감 이후: 진짜 일하는 중인가, 멈춘 것인가)"
+$capNow = [datetime]"2026-10-16 12:00:00"
+$capId = "cap-conv"
+function New-CpuSamples([double[]]$cpus, [int]$stepSeconds) {
+    $list = New-Object System.Collections.ArrayList
+    for ($i = 0; $i -lt $cpus.Count; $i++) { [void]$list.Add(@{ At = $capNow.AddSeconds(-($cpus.Count - 1 - $i) * $stepSeconds); Cpu = $cpus[$i] }) }
+    return $list
+}
+$quiet = New-CpuSamples @(10.0, 10.1, 10.2, 10.2, 10.3) 4     # 16초 동안 0.3초만 씀
+$busy  = New-CpuSamples @(10.0, 12.0, 14.0, 16.0, 18.0) 4     # 16초 동안 8초 씀
+# 대화가 없다(= 새 단계·도구 로그를 볼 수 없는) 호출
+Assert-Equal "CPU 표본이 둘 미만이면 판단하지 않고 일하는 중으로 둔다" $true (Test-AgyAliveAtCap $home_ "" $capNow 8 (New-Object System.Collections.ArrayList)).Alive
+Assert-Equal "표본이 아직 창(8초)만큼 쌓이지 않았으면 일하는 중으로 둔다" $true (Test-AgyAliveAtCap $home_ "" $capNow 8 (New-CpuSamples @(10.0, 10.1) 2)).Alive
+Assert-Equal "CPU 를 거의 안 쓰고 다른 활동도 없으면 멈춘 것" $false (Test-AgyAliveAtCap $home_ "" $capNow 8 $quiet).Alive
+Assert-Equal "  멈췄다고 볼 때 설명이 있다" $true ((Test-AgyAliveAtCap $home_ "" $capNow 8 $quiet).Note -like "*활동이 모두 없어*")
+$busyR = Test-AgyAliveAtCap $home_ "" $capNow 8 $busy
+Assert-Equal "CPU 를 계속 쓰면 일하는 중" $true $busyR.Alive
+Assert-Equal "  근거 글에 CPU 사용량이 든다" $true ($busyR.Reason -like "*CPU*")
+# 대화가 있는 호출
+$aliveId = "cap-alive"; $deadId = "cap-dead"; $taskId = "cap-task"
+New-FakeConversation $aliveId $capNow.AddMinutes(-40) $capNow.AddSeconds(-3) $capNow.AddSeconds(-3)
+New-FakeConversation $deadId $capNow.AddMinutes(-40) $capNow.AddMinutes(-20) $capNow.AddMinutes(-20)
+New-FakeConversation $taskId $capNow.AddMinutes(-40) $capNow.AddMinutes(-20) $capNow.AddMinutes(-20)
+$taskDir = Join-Path $home_ "brain\$taskId\.system_generated\tasks"
+New-Item -ItemType Directory -Force -Path $taskDir | Out-Null
+Set-Content -LiteralPath (Join-Path $taskDir "task-4.log") -Value "build output"
+(Get-Item (Join-Path $taskDir "task-4.log")).LastWriteTime = $capNow.AddSeconds(-2)
+Assert-Equal "3초 전에 새 단계가 기록됐으면 CPU 가 조용해도 일하는 중" $true (Test-AgyAliveAtCap $home_ $aliveId $capNow 8 $quiet).Alive
+Assert-Equal "  근거는 새 단계" $true ((Test-AgyAliveAtCap $home_ $aliveId $capNow 8 $quiet).Reason -like "*새 단계*")
+Assert-Equal "20분 전이 마지막 활동이고 CPU 도 조용하면 멈춘 것" $false (Test-AgyAliveAtCap $home_ $deadId $capNow 8 $quiet).Alive
+Assert-Equal "새 단계는 없어도 백그라운드 도구가 방금 출력을 냈으면 일하는 중" $true (Test-AgyAliveAtCap $home_ $taskId $capNow 8 $quiet).Alive
+Assert-Equal "  근거는 도구 출력" $true ((Test-AgyAliveAtCap $home_ $taskId $capNow 8 $quiet).Reason -like "*도구가 출력*")
+Assert-Equal "20분 전이 마지막 활동이어도 CPU 를 계속 쓰면 일하는 중" $true (Test-AgyAliveAtCap $home_ $deadId $capNow 8 $busy).Alive
+Assert-Equal "Get-AgyTaskLogActivity: 도구 로그가 없으면 `$null" $true ($null -eq (Get-AgyTaskLogActivity $home_ $deadId))
+Assert-Equal "Get-AgyTaskLogActivity: 있으면 마지막 수정 시각" $true ((Get-AgyTaskLogActivity $home_ $taskId) -eq $capNow.AddSeconds(-2))
+Assert-Equal "Get-AgyTreeCpuSeconds: 지금 프로세스는 CPU 를 쓴 적이 있다" $true ((Get-AgyTreeCpuSeconds $PID) -gt 0)
+Assert-Equal "Get-AgyTreeCpuSeconds: 없는 프로세스는 0" 0 (Get-AgyTreeCpuSeconds 2147000000)
 Remove-Item -LiteralPath $home_ -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""
 Write-Host ("통과 {0} / 실패 {1}" -f $script:Passed, $script:Failed)
