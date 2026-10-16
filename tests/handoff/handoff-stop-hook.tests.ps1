@@ -115,6 +115,18 @@ try {
     Assert-Equal "다른 세션에서는 그 채널을 건드리지 않는다(출력 없음)" "0|" ("{0}|{1}" -f $r.Exit, $r.Out.Trim())
     Set-HandoffStatus $sessCh $sn "처리됨" | Out-Null
 
+    Write-Host "세션을 이어서 다시 열어 ID 가 바뀐 경우 -> BRIEF 에 적힌 두 번째 ID 로 찾는다"
+    $resumedId = "99999999-8888-7777-6666-555555555555"
+    $sn2 = Add-HandoffMessage $sessCh "a2c" "이어 연 세션의 회신" "## 요약`n- 왔습니다" "0000" "gemini-3.8-flash-high"
+    $r = Invoke-Hook $sessRepo @{} (& $sessStdin $resumedId)
+    Assert-Equal "읽지 않은 회신이 있어도 BRIEF 에 없는 새 ID 는 채널을 못 찾고 조용히 끝난다" "0|" ("{0}|{1}" -f $r.Exit, $r.Out.Trim())
+    Set-Content -LiteralPath (Join-Path $sessCh "BRIEF.md") -Value ("- **저장소 경로**: ``" + $sessRepo + "```n- **세션 ID**: ``" + $sessId + "``, ``" + $resumedId + "``") -Encoding UTF8
+    $r = Invoke-Hook $sessRepo @{} (& $sessStdin $resumedId)
+    Assert-Equal "두 번째 ID 로 연 세션도 회신을 이어 간다(block)" "block" ($r.Out | ConvertFrom-Json).decision
+    $r = Invoke-Hook $sessRepo @{} (& $sessStdin $sessId)
+    Assert-Equal "  첫 번째 ID 도 그대로 이어 간다" "block" ($r.Out | ConvertFrom-Json).decision
+    Set-HandoffStatus $sessCh $sn2 "처리됨" | Out-Null
+
     Write-Host "오래된 회신 · 끄기 표시"
     $n2 = Add-HandoffMessage $app "a2c" "오래된 회신" "## 요약`n- old"
     Set-RowTime $app $n2 (Get-Date).AddHours(-8)
