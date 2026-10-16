@@ -54,10 +54,46 @@ function Get-HandoffChannelDirs {
     return @($out)
 }
 
-# 작업 폴더(Claude 세션의 cwd)에서 채널을 찾는다. 채널 폴더 이름은 작업 저장소 폴더 이름과 같게 둔다는 규약이라
-# cwd 의 폴더 이름과 그 위 세 단계까지(워크트리·하위 폴더에서 열어도 찾도록) 본다.
-function Resolve-HandoffChannelForCwd([string]$Cwd) {
+# 채널의 세션 ID: BRIEF.md 의 "세션 ID: `ID`" 줄. 세션 전용 채널(폴더 이름이 저장소와 달라도 되는 채널)이 이 줄로 자기 세션을 알린다.
+# 줄이 없거나 자리표시자(<...>)면 빈 문자열.
+function Get-HandoffBriefSessionId([string]$ChannelDir) {
+    $brief = Join-Path $ChannelDir "BRIEF.md"
+    if (-not (Test-Path -LiteralPath $brief -PathType Leaf)) { return "" }
+    try {
+        $text = [System.IO.File]::ReadAllText($brief, [System.Text.Encoding]::UTF8)
+        $m = [regex]::Match($text, '세션\s*ID\*{0,2}\s*[:：]\s*\*{0,2}\s*`([^`]+)`')
+        if ($m.Success) {
+            $id = $m.Groups[1].Value.Trim()
+            if ($id -and -not $id.StartsWith("<")) { return $id }
+        }
+    } catch {}
+    return ""
+}
+
+# $Path 가 $Base 와 같거나 그 아래인지(대소문자·구분자·끝의 \ 무시).
+function Test-HandoffPathUnder([string]$Path, [string]$Base) {
+    if (-not $Path -or -not $Base) { return $false }
+    $norm = { param($s) ($s -replace '/', '\').TrimEnd([char]92).ToLowerInvariant() }
+    $a = & $norm $Path; $b = & $norm $Base
+    if (-not $a -or -not $b) { return $false }
+    return ($a -eq $b) -or $a.StartsWith($b + "\")
+}
+
+# 작업 폴더(Claude 세션의 cwd)에서 채널을 찾는다.
+# 1) 세션 ID 를 받았으면 먼저: BRIEF.md 의 "세션 ID" 가 같고 "저장소 경로" 가 cwd 와 같거나 그 위인 채널. 둘 다 맞아야 한다 —
+#    세션 전용 채널은 폴더 이름이 저장소 이름과 달라도(예: skills--handoff-test) 그 세션에서만 찾아진다.
+# 2) 없으면 이름으로: 채널 폴더 이름은 작업 저장소 폴더 이름과 같게 둔다는 규약이라
+#    cwd 의 폴더 이름과 그 위 세 단계까지(워크트리·하위 폴더에서 열어도 찾도록) 본다.
+function Resolve-HandoffChannelForCwd([string]$Cwd, [string]$SessionId = "") {
     if (-not $Cwd) { return $null }
+    if ($SessionId) {
+        foreach ($d in @(Get-HandoffChannelDirs)) {
+            $sid = Get-HandoffBriefSessionId $d
+            if (-not $sid -or $sid -ne $SessionId) { continue }
+            $repo = Get-HandoffRepoPath $d
+            if ($repo -and (Test-HandoffPathUnder $Cwd $repo)) { return $d }
+        }
+    }
     $p = $Cwd.TrimEnd([char]92, [char]47)
     for ($i = 0; $i -lt 4 -and $p; $i++) {
         $leaf = Split-Path -Leaf $p

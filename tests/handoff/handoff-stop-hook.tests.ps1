@@ -99,6 +99,22 @@ try {
     Set-HandoffStatus $app $n1 "처리됨" | Out-Null
     Update-HandoffAutoState $app { param($s) $s.hook_blocks = @{} }
 
+    Write-Host "세션 전용 채널(폴더 이름이 저장소와 다름) -> 세션 ID + 저장소 경로로 찾는다"
+    $sessRepo = Join-Path $work "repos\sess-repo"
+    New-Item -ItemType Directory -Force -Path $sessRepo | Out-Null
+    $sessCh = New-Channel "sess-repo--hook-test"
+    $sessId = "11111111-2222-3333-4444-555555555555"
+    Set-Content -LiteralPath (Join-Path $sessCh "BRIEF.md") -Value ("- **저장소 경로**: ``" + $sessRepo + "```n- **세션 ID**: ``" + $sessId + "``") -Encoding UTF8
+    $sn = Add-HandoffMessage $sessCh "a2c" "세션 채널 회신" "## 요약`n- 왔습니다" "0000" "gemini-3.8-flash-high"
+    $sessStdin = { param($sid) (@{ cwd = $sessRepo; session_id = $sid; hook_event_name = "Stop"; stop_hook_active = $false } | ConvertTo-Json -Compress) }
+    $r = Invoke-Hook $sessRepo @{} (& $sessStdin $sessId)
+    $json = $r.Out | ConvertFrom-Json
+    Assert-Equal "세션 ID 가 맞으면 폴더 이름이 달라도 회신을 이어 간다(block)" "block" $json.decision
+    Assert-Equal "  사유에 세션 채널의 회신 번호·제목이 있다" $true (($json.reason -match "#$sn") -and ($json.reason -match "세션 채널 회신"))
+    $r = Invoke-Hook $sessRepo @{} (& $sessStdin "다른-세션")
+    Assert-Equal "다른 세션에서는 그 채널을 건드리지 않는다(출력 없음)" "0|" ("{0}|{1}" -f $r.Exit, $r.Out.Trim())
+    Set-HandoffStatus $sessCh $sn "처리됨" | Out-Null
+
     Write-Host "오래된 회신 · 끄기 표시"
     $n2 = Add-HandoffMessage $app "a2c" "오래된 회신" "## 요약`n- old"
     Set-RowTime $app $n2 (Get-Date).AddHours(-8)
