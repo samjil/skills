@@ -1183,10 +1183,14 @@
       return s1 > s2 ? s1 : s2;
     }
 
-    // records 모드의 기록 시각: 완료 시각(latestDone)이 있으면 그것, 없으면(옛 데이터) latestTime
+    // records 모드의 기록 시각: 완료 시각(latestDone)이 있으면 그것, 없으면(옛 데이터) latestTime.
+    // 단 진행·대기 중인 작업이 있으면(pending > 0) 그 작업의 시작 시각(latestTime 에 들어 있다)이 더 늦을 때 그것을 쓴다 —
+    // 지금 도는 작업이 있는 프로젝트·세션이 마지막 완료가 오래전이라고 아래로 밀리지 않게 한다. 사이드바 행에 보이는 위임 시각은 그대로 완료 시각이다.
     function recordTimeOf(x) {
       if (!x) return "";
-      return (x.latestDone != null ? x.latestDone : x.latestTime) || "";
+      var done = (x.latestDone != null ? x.latestDone : x.latestTime) || "";
+      if (x.pending > 0 && x.latestTime && String(x.latestTime) > String(done)) { return String(x.latestTime); }
+      return done;
     }
 
     function sessionDateKey(s) {
@@ -1920,11 +1924,32 @@
     return best;
   }
 
-  // 위임 쪽 값: 마지막으로 끝난 agy 작업의 완료 시각. 끝난 것이 없으면 진행 중인지, 위임이 아예 없는지 보인다.
-  function qaDelegationValue(node) {
+  // 지금 도는(또는 대기 중인) 작업이 있고 그 시작이 마지막 완료보다 늦은가. 정렬(sortTreeNodes 의 recordTimeOf)과 같은 기준이다.
+  function qaIsRunning(node) {
+    return Boolean(node) && node.pending > 0 && Boolean(node.latestTime) && String(node.latestTime) > String(node.latestDone || "");
+  }
+
+  // 위임 쪽 값: 지금 진행 중인 작업이 있으면 "진행 N분"(시작한 뒤 흐른 시간), 아니면 마지막으로 끝난 agy 작업의 완료 시각.
+  // 끝난 것이 없으면 진행 중인지, 위임이 아예 없는지 보인다. nowMs 는 시험에서 현재 시각을 고정하려는 값이다.
+  function qaDelegationValue(node, nowMs) {
+    if (qaIsRunning(node)) {
+      var started = new Date(String(node.latestTime).replace(/-/g, "/"));
+      if (isNaN(started.getTime())) return "진행 중";
+      var sec = Math.floor(((nowMs == null ? Date.now() : nowMs) - started.getTime()) / 1000);
+      if (sec < 60) return "진행 중";
+      if (sec < 3600) return "진행 " + Math.floor(sec / 60) + "분";
+      if (sec < 86400) return "진행 " + Math.floor(sec / 3600) + "시간";
+      return "진행 " + Math.floor(sec / 86400) + "일";
+    }
     if (node && node.latestDone) return formatRelativeTime(node.latestDone);
     if (node && node.pending > 0) return "진행 중";
     return "없음";
+  }
+
+  // 위임 쪽 값의 정확한 시각(마우스를 올릴 때 보이는 설명). 진행 중이면 시작 시각을 그렇게 밝힌다.
+  function qaDelegationAbs(node) {
+    if (qaIsRunning(node)) return node.latestTime + " 부터 진행 중";
+    return (node && node.latestDone) || "";
   }
 
   // 시각 두 개를 한 줄에 보인다: "세션 시각 / agy 쪽 시각". 색으로 구분한다 - 세션은 Claude 색, 위임·인수인계는 agy 색.
@@ -2057,7 +2082,7 @@
 
       var sessCount = p.sessions ? p.sessions.length : 0;
       // 시각 두 줄: 세션(Desktop 세션의 마지막 활동, 세션 개수 포함) / 위임(agy 작업의 완료 시각)
-      var subHtml = treeTimePairHtml("project-sub session-sub", p, "위임", qaDelegationValue(p), p.latestDone, '<span class="tree-time-count">' + sessCount + '개</span>');
+      var subHtml = treeTimePairHtml("project-sub session-sub", p, "위임", qaDelegationValue(p), qaDelegationAbs(p), '<span class="tree-time-count">' + sessCount + '개</span>');
 
       var badgeHtml = '<span class="project-badge">' + (p.total + p.pending) + '</span>';
       if (p.pending > 0) {
@@ -2115,7 +2140,7 @@
           sItem.dataset.session = s.id;
           sItem.setAttribute("role", "treeitem");
 
-          var sSubHtml = treeTimePairHtml("session-sub", s, "위임", qaDelegationValue(s), s.latestDone, "");
+          var sSubHtml = treeTimePairHtml("session-sub", s, "위임", qaDelegationValue(s), qaDelegationAbs(s), "");
 
           var sBadgeHtml = '<span class="session-badge">' + (s.total + s.pending) + '</span>';
           if (s.pending > 0) {
@@ -4004,6 +4029,11 @@
   }
 
   // 색 없는 메타 항목. 색은 상태 배지에만 쓴다.
+  // 기록이 antigravity MCP 직접 호출로 남은 것인가(source 필드). 필드가 없는 옛 기록은 bridge 로 본다.
+  function viaMcp(r) {
+    return Boolean(r) && String(r.source || "").trim().toLowerCase() === "mcp";
+  }
+
   function metaItem(text, cls, title) {
     var s = document.createElement("span");
     s.className = "meta-item" + (cls ? " " + cls : "");
@@ -4945,7 +4975,8 @@
       meta.appendChild(metaItem(elText, "elapsed", tip));
     }
     if (r.attempts && Number(r.attempts) > 1) { meta.appendChild(metaItem("시도 " + r.attempts + "회")); }
-    meta.appendChild(metaItem((r.source || "bridge") === "mcp" ? "MCP" : "bridge", "", "위임 경로"));
+    // 위임 경로: 대부분은 inbox 파일 위임(bridge)이라 따로 표시하지 않고, Claude 가 antigravity MCP 로 직접 부른 기록만 "MCP" 로 표시한다.
+    if (viaMcp(r)) { meta.appendChild(metaItem("MCP", "src-mcp", "위임 경로: Claude 가 antigravity MCP 로 직접 호출한 기록")); }
     if (r.task_id) { meta.appendChild(metaItem(r.task_id, "mono", "작업 ID")); }
     card.appendChild(meta);
 
@@ -5292,7 +5323,7 @@
       }
     }
 
-    meta.appendChild(metaItem("bridge", "", "위임 경로"));
+    // 대기·진행 중인 작업은 모두 inbox 파일 위임(bridge)이라 경로를 따로 표시하지 않는다(MCP 호출은 끝난 뒤에 기록으로만 남는다).
     if (p.task_id) { meta.appendChild(metaItem(p.task_id, "mono", "작업 ID")); }
     card.appendChild(meta);
 

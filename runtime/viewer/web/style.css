@@ -1071,6 +1071,15 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .meta-item.copyable { cursor: pointer; text-decoration: underline dotted var(--line-strong); text-underline-offset: 3px; }
 .meta-item.copyable:hover { color: var(--ink); }
+/* 위임 경로 표시: inbox 파일 위임(bridge)은 표시하지 않고, Claude 가 antigravity MCP 로 직접 부른 기록만 이 칩을 단다 */
+.meta-item.src-mcp {
+  padding: 0 6px;
+  border: 1px solid var(--claude);
+  border-radius: var(--r-sm);
+  color: var(--claude);
+  font-weight: 600;
+  line-height: 1.5;
+}
 
 /* 상태 표시: 색을 쓰는 유일한 메타 */
 .badge {
