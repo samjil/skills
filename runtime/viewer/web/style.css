@@ -1897,6 +1897,11 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
   font-size: var(--fs-sm);
   color: var(--ink-2);
 }
+.auto-bars .auto-bar { margin-bottom: 6px; }
+.auto-bars { margin-bottom: 12px; }
+.auto-bars > :last-child { margin-bottom: 0; }
+.auto-channel { font-family: var(--mono, ui-monospace, monospace); font-size: var(--fs-xs, 12px); color: var(--ink-3); }
+.auto-more { padding: 2px 4px; font-size: var(--fs-sm); color: var(--ink-3); }
 .auto-state { font-weight: 600; color: var(--ink); }
 .auto-detail { flex: 1 1 240px; min-width: 0; color: var(--ink-3); }
 .auto-actions { display: inline-flex; gap: 12px; margin-left: auto; }

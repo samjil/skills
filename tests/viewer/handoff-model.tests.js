@@ -19,11 +19,11 @@ function extractFunction(name) {
   throw new Error(name + " 의 끝을 찾지 못했습니다.");
 }
 
-const names = ["escapeHtml", "dirParty", "formatModelName", "handoffLatestModels", "handoffLabelParts", "dirLabelHtml", "handoffAutoText"];
+const names = ["escapeHtml", "dirParty", "formatModelName", "handoffLatestModels", "handoffLabelParts", "dirLabelHtml", "handoffAutoText", "handoffAutoRows"];
 const make = new Function(
   "handoffChannels",
   names.map(extractFunction).join("\n") +
-  "\nreturn { formatModelName, handoffLatestModels, handoffLabelParts, dirLabelHtml, handoffAutoText };"
+  "\nreturn { formatModelName, handoffLatestModels, handoffLabelParts, dirLabelHtml, handoffAutoText, handoffAutoRows };"
 );
 
 let passed = 0, failed = 0;
@@ -101,6 +101,29 @@ eq("평상시 켜짐: 왕복 2/6 (최근 60분)", ["on", true], [t.kind, t.detai
 t = api.handoffAutoText(Object.assign({}, base, { inFlight: [{ num: "0042", at: "형식이 이상함" }] }), now);
 eq("경과 시간을 못 읽으면 경과 없이 번호만", "#0042 · 왕복 2/6", t.detail);
 eq("멈춤이 꺼짐보다 먼저가 아니다: 꺼짐이면 멈춤 표시 없이 꺼짐", "off", api.handoffAutoText(Object.assign({}, base, { enabled: false, halted: true }), now).kind);
+
+console.log("\nhandoffAutoRows: 보는 메시지가 속한 채널마다 한 줄");
+const mkAuto = (o) => Object.assign({ enabled: true, halted: false, haltedReason: "", rounds: 1, maxRounds: 6, windowMinutes: 60, inFlight: [] }, o || {});
+const chans = {
+  "ch-a": { auto: mkAuto() },
+  "ch-b": { auto: mkAuto({ halted: true, haltedReason: "한도" }) },
+  "ch-c": { auto: mkAuto({ enabled: false }) },
+  "ch-d": { auto: mkAuto({ inFlight: [{ num: "0007", at: "2026-10-16 10:25:00" }] }) },
+  "ch-none": {}
+};
+const it = (c) => ({ channel: c });
+let rr = api.handoffAutoRows([it("ch-a"), it("ch-a")], chans, now, 5);
+eq("채널이 하나면 한 줄, 채널 이름 표시 없음", [1, false, "ch-a"], [rr.rows.length, rr.multi, rr.rows[0].channel]);
+rr = api.handoffAutoRows([it("ch-a"), it("ch-b")], chans, now, 5);
+eq("두 채널이면 두 줄, 채널 이름 표시, 멈춤이 먼저", [2, true, ["ch-b", "ch-a"]], [rr.rows.length, rr.multi, rr.rows.map(r => r.channel)]);
+rr = api.handoffAutoRows([it("ch-a"), it("ch-c"), it("ch-d"), it("ch-b")], chans, now, 5);
+eq("멈춤 > 처리 중 > 꺼짐 > 켜짐 순", ["ch-b", "ch-d", "ch-c", "ch-a"], rr.rows.map(r => r.channel));
+rr = api.handoffAutoRows([it("ch-a"), it("ch-none"), it("ch-missing")], chans, now, 5);
+eq("auto 정보가 없는 채널은 줄이 없다", ["ch-a"], rr.rows.map(r => r.channel));
+rr = api.handoffAutoRows([it("ch-a"), it("ch-b"), it("ch-c")], chans, now, 2);
+eq("limit 을 넘으면 나머지는 개수로만", [2, 1], [rr.rows.length, rr.hidden]);
+eq("메시지가 없으면 줄이 없다", 0, api.handoffAutoRows([], chans, now, 5).rows.length);
+eq("꺼진 채널의 토글은 '켜기' 동작(enabled=false)", false, api.handoffAutoRows([it("ch-c")], chans, now, 5).rows[0].enabled);
 
 console.log("\n통과 " + passed + " / 실패 " + failed);
 if (failed > 0) {
