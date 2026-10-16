@@ -25,7 +25,7 @@ $assign = $astWatch.Find({ param($n) $n -is [System.Management.Automation.Langua
         $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
         $n.Left.VariablePath.UserPath -eq "UsageCsvHeader" }, $true)
 Invoke-Expression $assign.Extent.Text
-foreach ($name in @("Truncate-Text", "Write-UsageRowUnlocked", "Initialize-QaStore", "New-QaRecordFromRow", "Sync-QaStore",
+foreach ($name in @("Write-UsageRowUnlocked", "Initialize-QaStore", "New-QaRecordFromRow", "Sync-QaStore",
         "Update-QaIndex", "Update-QAReportUnlocked", "Get-QaIndexTotal", "Complete-TaskQaRecord")) {
     $fn = $astWatch.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
     if (-not $fn) { throw "$name 를 watch-agy.ps1 에서 찾지 못했습니다." }
@@ -174,7 +174,28 @@ try {
     Assert-Equal "  마무리는 세 곳(@model 오류, @cwd 오류, 정상/실패 끝)에서 Complete-TaskQaRecord 로 한다" 3 @($cmds | Where-Object { $_.GetCommandName() -eq "Complete-TaskQaRecord" }).Count
 }
 finally {
-    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "New-QaRecord: 기록 틀(워처와 log-qa.ps1 이 같이 쓴다)"
+$rw = New-QaRecord ([ordered]@{ answer = "a"; task_id = "t1"; question = "q"; status = "OK"; timestamp = "2026-10-16 10:00:00" })
+Assert-Equal "칸 순서는 틀을 따른다(넣은 순서와 무관)" "timestamp,task_id,status,question,answer" (@($rw.Keys) -join ",")
+Assert-Equal "log-qa 의 기록에만 있는 source 는 넣으면 들어간다" $true ((New-QaRecord ([ordered]@{ task_id = "t"; source = "mcp" })).Contains("source"))
+Assert-Equal "넣지 않은 칸(워처의 토큰 칸 등)은 빈 값으로 만들지 않는다" $false ($rw.Contains("input_tokens"))
+$threw = $false
+try { [void](New-QaRecord ([ordered]@{ task_id = "t"; qustion = "오타" })) } catch { $threw = $true }
+Assert-Equal "모르는 칸 이름(오타)은 오류다" $true $threw
+$etsFile = Join-Path $work "ets.txt"
+[System.IO.File]::WriteAllText($etsFile, "파일 내용", (New-Object System.Text.UTF8Encoding($false)))
+$etsText = Get-Content -Raw -LiteralPath $etsFile -Encoding UTF8
+$recEts = New-QaRecord ([ordered]@{ task_id = "t"; question = $etsText; answer = $etsText })
+Assert-Equal "Get-Content -Raw 의 숨은 속성이 붙은 글도 일반 문자열이 된다(직렬화가 작다)" $true ((ConvertTo-Json -InputObject $recEts -Compress).Length -lt 400)
+Assert-Equal "question 은 문자열 형식이다" "System.String" $recEts.question.GetType().FullName
+$long = "가" * 25000
+$recLong = New-QaRecord ([ordered]@{ task_id = "t"; question = $long; answer = $long })
+Assert-Equal "question 은 20000자에서 잘리고 안내가 붙는다" $true (($recLong.question.Length -gt 20000) -and ($recLong.question.Length -lt 20200) -and ($recLong.question -like "*일부 생략됨*"))
+Assert-Equal "process 는 그대로(배열 유지)" 2 @((New-QaRecord ([ordered]@{ task_id = "t"; process = @("a", "b") })).process).Count
+Assert-Equal "process 가 `$null 이면 `$null 그대로(= 모름)" $true ($null -eq (New-QaRecord ([ordered]@{ task_id = "t"; process = $null })).process)
+Assert-Equal "숫자도 문자열로(usage 행처럼)" "System.String" (New-QaRecord ([ordered]@{ task_id = "t"; attempts = 2 })).attempts.GetType().FullName
+
+Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host ""

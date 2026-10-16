@@ -81,7 +81,7 @@ if (-not (Test-Path $commonFile)) {
 $qText = [string](Get-Content -Raw -Path $QuestionFile -Encoding UTF8)
 $aText = [string](Get-Content -Raw -Path $AnswerFile -Encoding UTF8)
 
-$rec = [ordered]@{
+$rec = New-QaRecord ([ordered]@{
     timestamp     = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
     computer_name = $env:COMPUTERNAME
     task_id       = $TaskId
@@ -90,7 +90,7 @@ $rec = [ordered]@{
     status        = $Status
     question      = $qText
     answer        = $aText
-}
+})
 
 $shardPath = Invoke-WithRuntimeLock {
     $written = Add-QaRecordUnlocked $rec $QaIndexFile 12
