@@ -99,6 +99,7 @@ Assert-Equal "  훅 스크립트만 바뀌면 워처 재시작 안내가 없다"
 W (Join-Path $src "runtime\handoff\scripts\handoff-lib.ps1") "lib v2"
 $r = Run-Sync
 Assert-Equal "  handoff-lib.ps1 이 바뀌면 워처 재시작 안내가 있다" $true ($r.Out -like "*워처 스크립트가 바뀌었*")
+Assert-Equal "  handoff-lib.ps1 이 바뀌면 뷰어 재시작 안내도 있다(뷰어도 켜질 때 라이브러리를 읽는다)" $true ($r.Out -like "*뷰어 본체 스크립트가 바뀌었습니다*")
 
 Write-Host "소스에서 지운 파일은 설치본에 남기고 알리기만 한다"
 Remove-Item -LiteralPath (Join-Path $src "runtime\handoff\templates\t.md") -Force
