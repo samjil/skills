@@ -128,7 +128,7 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
     - **`@cwd: <폴더>`** — `cwd`는 **c**urrent **w**orking **d**irectory(현재 작업 폴더)의 약자입니다. 원래는 프로그램이 지금 "서 있는" 폴더(셸의 `pwd`)라는 뜻이지만, 여기서는 **agy가 읽고 쓸 프로젝트 폴더를 알려 주는 줄**입니다. 이름과 달리 agy의 작업 폴더를 바꾸지는 않습니다. agy는 워처의 런타임 폴더에서 실행되고, 이 폴더는 `--add-dir`로 접근 허용만 추가됩니다(agy에는 `--cwd` 옵션이 없음). 폴더가 필요 없는 작업이면 이 줄을 빼면 되고, 경로가 없는 폴더면 `지정한 @cwd 경로를 찾을 수 없습니다`로 실패합니다.
       헷갈리면 이렇게 기억하세요: **`@cwd` = agy의 `--add-dir`(접근을 허용할 폴더 추가)**. `cwd`라는 이름은 `subprocess`의 `cwd=`처럼 "작업 폴더를 옮긴다"는 관례를 따랐을 뿐이고, 같은 일을 표준적으로 부르는 이름은 `--add-dir`입니다(이름은 바꾸지 않고 `@cwd`를 유지하기로 했습니다).
     - **동시 실행**: 워처는 지시파일마다 작업자 프로세스(`sub/agy-task-worker.ps1`, 보이지 않는 창)를 따로 띄워 **동시에 최대 3개**(`watch-agy.ps1 -MaxParallel N` 또는 환경변수 `AGY_MAX_PARALLEL`, 1이면 예전처럼 하나씩)를 돌립니다. **같은 `@session` 이름이면서 작업 폴더(`@cwd`, 세션에 저장된 폴더 포함)가 겹치는**(같은 폴더이거나 상위·하위 폴더, 폴더가 없는 것도 겹침으로 봅니다) 작업끼리만 차례로 하고, 세션이 다르면 같은 폴더여도, 같은 세션이어도 폴더가 서로 다르면 함께 돕니다. 세션이 없는 작업은 서로 독립입니다. 돌고 있는 작업마다 `logs/running/<작업 ID>.json`(작업자 PID·세션·폴더·모델·대화 ID)이 있고, 뷰어는 이것으로 "처리 중"인 작업을 모두 보여 줍니다. 작업자가 끝내지 못하고 사라지면 그 작업은 실패로 남기고 다시 시도하지 않습니다. `usage.csv`·기록 저장소·세션 파일·`watcher.log`는 이름 있는 뮤텍스로 한 번에 하나씩만 쓰고, `watcher.log` 줄에는 `[작업 ID]`가 붙습니다. **주의**: 같은 `@session` 이름을 서로 다른 폴더에서 동시에 쓰면 agy 대화는 하나라서 서로 섞일 수 있고, 새 대화를 시작하는 작업이 동시에 여럿이면 멈춤 점검이 "새 대화가 둘 이상"이라 꺼지고 절대 마감(30분)만 적용될 수 있습니다.
-    - **agy 를 부르는 방식과 마감·멈춤 기준**: 작업자는 agy 를 **창이 아예 없는 프로세스**(`CreateNoWindow`)로 직접 띄우고, 표준입력을 바로 닫으며(입력을 기다리며 멈추는 일 방지) 출력은 UTF-8 로 읽습니다. 예전처럼 `Start-Job` 으로 PowerShell 을 한 겹 더 띄우지 않습니다. agy 의 표준오류는 `outbox\<작업 ID>.error.log` 에 **응답 파일을 쓴 뒤에** 저장합니다(성공했는데 agy 가 잡음을 남기면, 응답보다 비어 있지 않은 `error.log` 가 먼저 보여 점검 루프가 오류로 끝내는 일을 막기 위해서입니다). 절대 마감은 1800초, 새 단계가 안 쌓이는 멈춤 기준은 300초이며 환경변수 `AGY_TIMEOUT_SECONDS`(60 이상)·`AGY_STALL_SECONDS`(30 이상)로 바꿀 수 있습니다(워처를 다시 켜야 적용). **오래 걸리는 명령(빌드·시험·긴 대기)을 agy 가 백그라운드로 돌려 두고 기다리는 동안에는 새 단계가 없는 게 정상이라 멈춤으로 보지 않습니다.** agy 가 대화 기록에 남기는 짝(시작 `RUNNING` 단계 `task id: <대화>/task-N` ↔ 끝 `SYSTEM_MESSAGE` `sender=<대화>/task-N`)으로 "끝났다는 알림이 아직 없는 도구"를 가려내고, 그런 도구가 있으면 절대 마감(1800초)까지만 기다립니다(7분짜리 명령이 5분 시점에 끊기던 것을 실제 agy 로 재현해 고쳤습니다). 그런 도구도 없는데 새 단계가 없으면 멈춤으로 끊습니다. 멈춤으로 끊을 때는 대화 기록의 **마지막 단계**(번호·종류·도구)와 "도구가 도는 중일 수 있음/모델이 응답을 만드는 중일 수 있음" 짐작을 로그에 남깁니다. 짐작은 판정에 쓰지 않습니다.
+    - **agy 를 부르는 방식과 마감·멈춤 기준**: 작업자는 agy 를 **창이 아예 없는 프로세스**(`CreateNoWindow`)로 직접 띄우고, 표준입력을 바로 닫으며(입력을 기다리며 멈추는 일 방지) 출력은 UTF-8 로 읽습니다. 예전처럼 `Start-Job` 으로 PowerShell 을 한 겹 더 띄우지 않습니다. agy 의 표준오류는 `outbox\<작업 ID>.error.log` 에 **응답 파일을 쓴 뒤에** 저장합니다(성공했는데 agy 가 잡음을 남기면, 응답보다 비어 있지 않은 `error.log` 가 먼저 보여 점검 루프가 오류로 끝내는 일을 막기 위해서입니다). 절대 마감은 1800초, 새 단계가 안 쌓이는 멈춤 기준은 300초이며 환경변수 `AGY_TIMEOUT_SECONDS`(60 이상)·`AGY_STALL_SECONDS`(30 이상)로 바꿀 수 있습니다(워처를 다시 켜야 적용). **절대 마감을 넘겨도 바로 끊지 않고 "진짜 일하는 중인가"를 확인합니다**: 최근 멈춤 기준 시간 안에 ① 대화 기록에 새 단계가 있거나 ② 백그라운드 도구의 로그가 바뀌었거나 ③ agy 와 자손 프로세스가 CPU 를 쓰면(창의 1%, 최소 1초) 일하는 중으로 보고 최대 대기 시간(기본 7200초, `AGY_HARD_TIMEOUT_SECONDS`)까지 기다립니다. 셋 다 없으면 멈춘 것으로 보고 끊습니다(30분 넘게 출력도 CPU 도 없이 가만히 기다리는 명령은 멈춘 것과 구별할 수 없어 끊습니다). **오래 걸리는 명령(빌드·시험·긴 대기)을 agy 가 백그라운드로 돌려 두고 기다리는 동안에는 새 단계가 없는 게 정상이라 멈춤으로 보지 않습니다.** agy 가 대화 기록에 남기는 짝(시작 `RUNNING` 단계 `task id: <대화>/task-N` ↔ 끝 `SYSTEM_MESSAGE` `sender=<대화>/task-N`)으로 "끝났다는 알림이 아직 없는 도구"를 가려내고, 그런 도구가 있으면 절대 마감(1800초)까지만 기다립니다(7분짜리 명령이 5분 시점에 끊기던 것을 실제 agy 로 재현해 고쳤습니다). 그런 도구도 없는데 새 단계가 없으면 멈춤으로 끊습니다. 멈춤으로 끊을 때는 대화 기록의 **마지막 단계**(번호·종류·도구)와 "도구가 도는 중일 수 있음/모델이 응답을 만드는 중일 수 있음" 짐작을 로그에 남깁니다. 짐작은 판정에 쓰지 않습니다.
     - **같은 세션 이름을 다른 폴더에서 동시에 쓰면**: 폴더가 다르면 함께 돌지만 agy 의 대화는 세션 이름 하나에 하나뿐이라 두 작업의 맥락이 섞일 수 있습니다. 이런 경우 워처 로그에 `주의: 세션 '<이름>' 이 이미 다른 폴더에서 돌고 있는데 …` 를 남깁니다. 폴더가 다르면 세션 이름도 다르게 쓰세요.
     - **`@cwd: <폴더>`는 여러 줄 가능** — 폴더마다 한 줄씩 쓰면 워처가 폴더마다 `--add-dir`를 한 번씩 넘깁니다(저장소와 문서 폴더처럼 폴더가 여럿 필요한 작업용). 줄 순서는 유지하고 같은 경로(대소문자·끝의 `\` 무시)는 한 번만 씁니다. 없는 폴더가 하나라도 있으면 `agy`를 부르지 않고 실패하며 오류에 없는 폴더가 모두 적힙니다. `@session`으로 이어가는 호출에 `@cwd`가 하나라도 있으면 이번 목록만 쓰고(합치지 않음), 하나도 없으면 세션에 저장된 목록을 씁니다. 한 줄짜리와 `cwd`가 문자열인 예전 세션 파일은 그대로 동작합니다. 뷰어는 폴더 목록을 모두 보이고(과정 창의 작업 폴더 줄, 경로 줄이기는 폴더가 여럿이면 폴더 이름부터), 상대 경로 이미지는 첫 번째 폴더 기준으로 찾습니다.
     - **`@session: <이름>`** — 같은 이름으로 다시 보내면 agy의 이전 대화를 이어갑니다. `@cwd`는 세션에 저장되므로 이어갈 때는 생략해도 됩니다.
@@ -154,7 +154,8 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
   powershell -NoProfile -ExecutionPolicy Bypass -File sync-installed.ps1 -RestartViewer     # 뷰어 본체 스크립트가 바뀌었으면 뷰어도 다시 켬
   ```
   워처 스크립트를 파일만 바꾸고 워처를 안 켜면, 작업마다 스크립트를 새로 읽는 작업자와 메모리의 옛 코드로 도는 워처가 섞입니다. 그래서 워처 스크립트가 바뀌면 재시작을 알려 주고(`-RestartWatcher` 로 직접 켤 수 있음), 돌고 있는 작업이 있으면 다시 켜지 않습니다. 뷰어 화면 파일(`web\*`)은 새로 고침만 하면 됩니다.
-- **푸시 전 시험 훅 `.githooks/pre-push`**: `git push` 직전에 `tests\run-all.ps1` 을 돌리고, 하나라도 실패하면 푸시를 막습니다(전부 약 9분). 저장소를 새로 받았다면 한 번만 켭니다: `git config core.hooksPath .githooks`. `PREPUSH_FAST=1` 은 오래 걸리는 시험을 뺍니다. 급하면 `SKIP_PREPUSH_TESTS=1 git push` 또는 `git push --no-verify`. 시험은 푸시할 커밋이 아니라 지금 작업 폴더의 파일로 돕니다.
+- **푸시 전 시험 훅 `.githooks/pre-push`**: `git push` 직전에 `tests\run-all.ps1` 을 돌리고, 하나라도 실패하면 푸시를 막습니다(기본은 빠른 실행 `-Fast` 로 약 40초, `PREPUSH_FULL=1` 이면 전체를 병렬로 약 3분). 저장소를 새로 받았다면 한 번만 켭니다: `powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup-dev.ps1`(= `git config core.hooksPath .githooks` + 환경 점검). `powershell.exe` 가 없는 환경에서는 푸시를 막지 않고 건너뜁니다. 급하면 `SKIP_PREPUSH_TESTS=1 git push` 또는 `git push --no-verify`. 시험은 푸시할 커밋이 아니라 지금 작업 폴더의 파일로 돕니다.
+- **새 PC 에서 개발 시작 `tools\setup-dev.ps1`**: 푸시 전 시험 훅을 켜고(`core.hooksPath` 는 저장소 로컬 설정이라 clone 마다 한 번 필요), 훅 파일 모양(LF·`#!/bin/sh`)과 도구(git, PowerShell, node)를 점검하고, 설치본이 소스와 다른지 알려 줍니다. 여러 번 돌려도 같은 결과이며 `-Check` 는 바꾸지 않고 상태만 봅니다(훅이 꺼져 있으면 종료 코드 1). `tests\run-all.ps1` 도 훅이 꺼져 있으면 마지막에 알려 줍니다.
 - **콘솔 창 감시 `tools\watch-console-windows.ps1`**: 콘솔 창이 잠깐 떴다 사라지는 일의 원인을 찾는 진단용 감시기입니다(설치본에는 들어가지 않음). 새 콘솔 창이 생기면 그 콘솔을 만든 프로세스와 부모 사슬을 `~\.samjil\logs\console-window-watch.log` 에 남깁니다. 창 없이 `-Hours 24` 로 켜 두고, `-Summary` 로 "누가 만들었나" 별 요약을 봅니다.
 
 ## 🧪 테스트
@@ -162,8 +163,9 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
 **모든 시험을 한 번에** (스위트별 통과·실패와 걸린 시간을 요약하고, 하나라도 실패하거나 시간 초과면 종료 코드 1):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tests\run-all.ps1                 # 전부(약 9분: e2e 포함)
-powershell -NoProfile -ExecutionPolicy Bypass -File tests\run-all.ps1 -Fast           # 오래 걸리는 시험(e2e·멈춤 판정·뷰어 자동 시작 등) 제외
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\run-all.ps1                 # 전부(시험을 동시에 4개씩 돌려 약 3분)
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\run-all.ps1 -Fast           # 오래 걸리는 시험(e2e·멈춤 판정·뷰어 시작 관련) 제외, 약 40초
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\run-all.ps1 -Parallel 1     # 하나씩 차례로(문제를 좁힐 때. 환경변수 RUNALL_PARALLEL 로도 지정)
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\run-all.ps1 -Only qa-store,hygiene   # 이름에 이 글자가 든 것만
 ```
 
@@ -175,6 +177,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\run-all.ps1 -Only qa-s
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\delegate-agy\agy-progress.tests.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\delegate-agy\invoke-agy-once.tests.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\repo\script-hygiene.tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\repo\sync-installed.tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\repo\setup-dev.tests.ps1
 ```
 
 - `agy-progress.tests.ps1`: 대화 찾기, 마지막 활동 시각, 멈춤 판정 경계값 등 단위 테스트 (몇 초)
@@ -195,6 +199,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\repo\script-hygiene.te
 - `agy-process.tests.ps1`: `agy` 대화 기록에서 과정(도구 호출 목록)을 읽는 `Read-AgyProcessSteps` 테스트 — 도구별 대상, 생각·진행 설명(`think`/`say`)과 글자 수 상한, 시각 변환, 이어 읽기(쓰는 중인 마지막 줄·파일이 바뀐 경우), 상한, BOM, 깨진 줄, 경로 문자가 든 대화 ID 거절 (몇 초)
 - `qa-store.tests.ps1`: 기록 저장소(`qa-*.jsonl`) 쓰기 경로 — 작업자가 끝날 때 전체 기록을 읽지 않고 그 작업 한 건만 덧붙이는지(`Complete-TaskQaRecord`: 질문·답·토큰, `index.json` 갱신, 이미 들어간 작업은 중복 없음, 오류 경로, usage 행이 없을 때 전체 동기화로 물러남), 끊긴 줄 뒤에 새 기록이 같은 줄로 이어 붙지 않는지(`Add-QaLine`), 꼬리 중복 검사(`Test-QaTaskIdInShardTail`), 작업자 경로에서 `Update-QAReport`를 더 부르지 않는지 (몇 초)
 - `tests\repo\script-hygiene.tests.ps1`: 스크립트 점검(저장소 전체) — `.ps1` 의 BOM 규칙(런타임·시험은 있음, install/uninstall 은 없음), 줄바꿈이 섞이거나 CR 만 있는 줄, 깨진 글자, 문법 오류, 합치다 남은 충돌 표시, 함수 결과를 `@()` 없이 받아 `.Count`/`.Length`/`[ ]` 로 쓰는 위험한 모양(원소가 하나면 5.1 이 배열을 풀어 값이 빈다), 이 점검 규칙이 위험한 모양을 실제로 잡는지 (몇 초)
+- `tests\repo\sync-installed.tests.ps1`: `sync-installed.ps1`(소스 -> 설치본 동기화) — 복사·같으면 건너뜀·`-Check`·재시작 안내·운영 데이터 보존·소스에서 지운 파일 처리(임시 폴더, 몇 초)
+- `tests\repo\setup-dev.tests.ps1`: `tools\setup-dev.ps1`(새 PC 개발 시작) — 훅 파일이 없거나 CRLF 이면 거절, `-Check` 는 바꾸지 않음, 켜기, 여러 번 돌려도 같은 결과(임시 git 저장소, 몇 초)
 
 뷰어의 워처 자동 점검:
 

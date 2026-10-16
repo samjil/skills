@@ -238,7 +238,9 @@ try {
     for ($k = 0; $k -lt 5; $k++) {
         Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port1/api/claude/tree" -TimeoutSec 5 | Out-Null
     }
-    $runningScanners = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.Name -like "powershell*" -and $_.CommandLine -like "*scan-claude-links.ps1*" })
+    # 이 시험이 띄운 뷰어의 스캔만 센다(-IndexFile 이 이 시험의 임시 $dataDir 안). 컴퓨터 전체에서 세면 같은 순간 운영 뷰어나 다른 시험의 뷰어가 띄운
+    # 스캔이 잡혀 가끔 실패했다(병렬 실행에서 재현해 원인을 확인).
+    $runningScanners = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.Name -like "powershell*" -and $_.CommandLine -like "*scan-claude-links.ps1*" -and $_.CommandLine -like "*$dataDir*" })
     Assert-Equal "신선한 색인일 때 새 스캔 프로세스가 뜨지 않음" 0 $runningScanners.Count
 
     # 메모리 5초 런치 유예를 안전하게 넘기기 위해 잠시 대기 (최대 6초)
