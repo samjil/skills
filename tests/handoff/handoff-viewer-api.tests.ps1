@@ -32,7 +32,8 @@ function Invoke-Http([string]$Method, [string]$Url, [hashtable]$Headers = @{}) {
     $req.Method = $Method
     $req.Timeout = 10000
     foreach ($k in $Headers.Keys) { $req.Headers.Add($k, [string]$Headers[$k]) }
-    if ($Method -eq "POST") { $req.ContentLength = 0 }
+    # .NET Framework(Windows PowerShell 5.1)는 본문이 있을 수 있는 메서드에 Content-Length 가 없으면 http.sys 가 411 로 먼저 거절한다
+    if ($Method -eq "POST" -or $Method -eq "PUT") { $req.ContentLength = 0 }
     try {
         $resp = $req.GetResponse()
     } catch [System.Net.WebException] {
