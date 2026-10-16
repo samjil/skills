@@ -403,6 +403,66 @@ try {
     Assert-Equal "수 MB 줄에서 8888 작업 정상 추출" "cli-session-1" $readBig.Tasks["claude_1791969860_8888"]
     Assert-Equal "수 MB 줄에서 한글 파일명 정상 추출" "cli-session-1" $readBig.Msgs["0006-c2a-초대용량-메시지.md"]
 
+    # ---------------------------------------------------------
+    # 5. claude_ 로 시작하지 않는 작업 ID 도 세션에 붙는다
+    # ---------------------------------------------------------
+    Write-Host "`n[6. claude_ 로 시작하지 않는 작업 ID]"
+    $otherLines = @(
+        '{"timestamp":"2026-10-14T17:00:00.000Z","message":"병렬 시험 dbtest_1791969860_32219_easy 와 dbtest_1791969860_32219_analysis 를 보냈다"}',
+        '{"timestamp":"2026-10-14T17:01:00.000Z","message":"점검 claude_sqlitecheck_1791969860_solo, claude_sqlitecheck_1791969860_s1 완료"}',
+        '{"timestamp":"2026-10-14T17:02:00.000Z","message":"파일 inbox\\dbtest_1791969860_77_hard.md 를 넣었다"}',
+        '{"timestamp":"2026-10-14T17:03:00.000Z","message":"예전 모양도 그대로 claude_1791969860_6001_b 와 claude_1791969860_6002"}',
+        '{"timestamp":"2026-10-14T17:04:00.000Z","message":"ID 가 아닌 글자: foo_bar_12345_x, user_name_1234567890123_x, snake_case_value, 1791969860_999, my_8digits_12345678_z"}'
+    )
+    [System.IO.File]::AppendAllText($s1Log, (($otherLines -join "`n") + "`n"), $utf8NoBom)
+    $null = Update-ClaudeLinkIndex -IndexFile $indexFile -DesktopDir $desktopDir -ProjectsDir $projectsDir
+    $readOther = Read-ClaudeLinkIndex -IndexFile $indexFile
+    foreach ($id in @("dbtest_1791969860_32219_easy", "dbtest_1791969860_32219_analysis", "claude_sqlitecheck_1791969860_solo", "claude_sqlitecheck_1791969860_s1", "dbtest_1791969860_77_hard", "claude_1791969860_6001_b", "claude_1791969860_6002")) {
+        Assert-Equal "작업 $id 가 cli-session-1 에 붙는다" "cli-session-1" $readOther.Tasks[$id]
+    }
+    $noise = @($readOther.Tasks.Keys | Where-Object { $_ -match 'foo_bar|user_name|snake_case|^1791969860_999|my_8digits' })
+    Assert-Equal "ID 모양이 아닌 글자(숫자 자리수가 안 맞거나 시각이 없음)는 색인에 들어오지 않는다" 0 $noise.Count
+    Assert-Equal "  이름의 앞에 다른 글자가 붙은 조각(claude_ 앞 foo_)으로 ID 를 잘못 키우지 않는다" $false $readOther.Tasks.ContainsKey("x_claude_1791969860_6002")
+
+    # 규칙이 넓어지기 전에 만든 색인(taskKeyVer 없음)은 한 번 다시 훑어서, 이미 읽은 기록 속의 새 모양 ID 도 찾는다
+    Write-Host "`n[6-1. 옛 색인(taskKeyVer 없음)은 다시 훑는다]"
+    $idxObj = [System.IO.File]::ReadAllText($indexFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    Assert-Equal "새 색인에는 taskKeyVer 2 가 적힌다" 2 $idxObj.taskKeyVer
+    # (1) taskKeyVer 가 있으면 읽은 위치부터 이어 훑으므로, 색인에서 지운 ID 가 되살아나지 않는다(이어 훑기 동작은 그대로)
+    $tasksCopy = [ordered]@{}; foreach ($p in $idxObj.tasks.PSObject.Properties) { if ($p.Name -ne "dbtest_1791969860_77_hard") { $tasksCopy[$p.Name] = $p.Value } }
+    $keepObj = [ordered]@{ version = 1; msgKeyVer = 2; taskKeyVer = 2; updated = $idxObj.updated; files = $idxObj.files; tasks = $tasksCopy; msgs = $idxObj.msgs }
+    [System.IO.File]::WriteAllText($indexFile, (ConvertTo-Json -InputObject $keepObj -Depth 6), $utf8NoBom)
+    $null = Update-ClaudeLinkIndex -IndexFile $indexFile -DesktopDir $desktopDir -ProjectsDir $projectsDir
+    Assert-Equal "  taskKeyVer 2 이면 이어 훑기만 한다: 지운 ID 가 되살아나지 않는다" $false (Read-ClaudeLinkIndex -IndexFile $indexFile).Tasks.ContainsKey("dbtest_1791969860_77_hard")
+    # (2) taskKeyVer 가 없으면(옛 색인) 읽은 위치를 버리고 처음부터 다시 훑어 ID 가 되살아난다. 다른 작업 연결은 그대로다.
+    $oldObj = [ordered]@{ version = 1; msgKeyVer = 2; updated = $idxObj.updated; files = $idxObj.files; tasks = $tasksCopy; msgs = $idxObj.msgs }
+    [System.IO.File]::WriteAllText($indexFile, (ConvertTo-Json -InputObject $oldObj -Depth 6), $utf8NoBom)
+    $null = Update-ClaudeLinkIndex -IndexFile $indexFile -DesktopDir $desktopDir -ProjectsDir $projectsDir
+    $readOld = Read-ClaudeLinkIndex -IndexFile $indexFile
+    Assert-Equal "  taskKeyVer 가 없는 옛 색인은 다시 훑어 새 모양 ID 를 찾는다" "cli-session-1" $readOld.Tasks["dbtest_1791969860_77_hard"]
+    Assert-Equal "  다시 훑어도 예전 모양 ID(7777)의 소유 세션은 그대로다" "cli-session-2" $readOld.Tasks["claude_1791969860_7777"]
+    Assert-Equal "  메시지 연결도 다시 훑어 그대로 복원된다" "cli-session-1" $readOld.Msgs["0006-c2a-초대용량-메시지.md"]
+    Assert-Equal "  다시 훑은 뒤 색인에 taskKeyVer 2 가 적힌다" 2 ([System.IO.File]::ReadAllText($indexFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json).taskKeyVer
+
+    # 속도: 수 MB 한 줄에서도 느려지지 않는다. 세 가지 줄을 각각 스캔해 걸린 시간을 잰다.
+    #   (a) ID 모양이 전혀 없는 밑줄 많은 줄  (b) 시각 자리수가 8자리라 거의 맞는 척하는 줄  (c) ID 가 수만 개 들어 있는 줄
+    Write-Host "`n[7. 수 MB 줄 스캔 속도]"
+    function Measure-ScanOf([string]$LineBody) {
+        $line = '{"timestamp":"2026-10-14T18:00:00.000Z","message":"' + $LineBody + '"}' + "`n"
+        [System.IO.File]::AppendAllText($s1Log, $line, $utf8NoBom)
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $null = Update-ClaudeLinkIndex -IndexFile $indexFile -DesktopDir $desktopDir -ProjectsDir $projectsDir
+        $sw.Stop()
+        return $sw.Elapsed.TotalSeconds
+    }
+    $tA = Measure-ScanOf ((("snake_case_word_" * 40) + " ") * 5000)                 # 약 3MB, 숫자 없음
+    $tB = Measure-ScanOf ((("ab_12345678_cd_" * 40) + " ") * 5000)                  # 약 3.5MB, 8자리 숫자(거의 맞음)
+    $tC = Measure-ScanOf ("dbtest_1791969860_" + ((1..60000 | ForEach-Object { "$_" + "_a dbtest_1791969860_" }) -join ""))  # ID 6만 개
+    Write-Host ("    (a) 숫자 없는 3MB 줄: {0:N2}초 / (b) 8자리 근사 3.5MB 줄: {1:N2}초 / (c) ID 6만 개 줄: {2:N2}초" -f $tA, $tB, $tC)
+    Assert-True "(a) ID 모양 없는 수 MB 줄을 스캔해도 10초를 넘지 않는다" ($tA -lt 10)
+    Assert-True "(b) 거의 맞는 척하는 수 MB 줄도 10초를 넘지 않는다(되돌아가 보기로 느려지지 않는다)" ($tB -lt 10)
+    Assert-True "(c) ID 가 수만 개 든 줄도 20초를 넘지 않는다" ($tC -lt 20)
+
 }
 finally {
     Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
