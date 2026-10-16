@@ -33,6 +33,8 @@ const testChannels = {};
 const names = [
   "handoffMsgFileOf",
   "handoffLinkOf",
+  "handoffSessionNodeOf",
+  "handoffChainNodeOf",
   "handoffNodeOf",
   "buildHandoffTree",
   "handoffFilterTree",
@@ -345,6 +347,56 @@ eq("다른 채널(ch-b)의 같은 이름 메시지는 파일명 연결로 붙지
 eq("이름이 겹치지 않는 파일은 파일명 연결 사용", "sess-b", api.handoffLinkOf(dupTree, "ch-a", "0002-c2a-only-in-a.md"));
 eq("연결 없음", null, api.handoffLinkOf(dupTree, "ch-a", "0009-c2a-none.md"));
 delete testChannels["ch-a"]; delete testChannels["ch-b"];
+
+console.log("\n[handoffNodeOf] 파일 이름이 기록에 없는 메시지는 답장대상으로 이어진 메시지의 세션을 따라간다");
+// skills--handoff-test 처럼 0001·0003 만 파일 이름이 기록에 남고 0005·0007·0009 는 번호만 출력돼 연결이 없는 채널.
+const chainTree = {
+  projects: [{ id: "cg-1", name: "proj", sessions: [
+    { id: "sess-1", title: "첫 세션" }, { id: "sess-2", title: "둘째 세션" }
+  ] }],
+  ungrouped: [],
+  handoffLinks: {
+    "chain/0001-c2a-open.md": "sess-1",
+    "chain/0003-c2a-more.md": "sess-1",
+    "chain/0012-c2a-other.md": "sess-2"
+  }
+};
+const mk = (num, dir, replyTo) => ({ num, dir, replyTo: replyTo || "" });
+const chainData = {
+  name: "chain",
+  files: ["0001-c2a-open.md", "0002-a2c-r.md", "0003-c2a-more.md", "0004-a2c-r.md", "0005-c2a-nolink.md", "0006-a2c-r.md", "0007-c2a-nolink.md", "0012-c2a-other.md", "0013-a2c-r.md"],
+  messages: [mk("0001", "c2a"), mk("0002", "a2c", "0001"), mk("0003", "c2a", "0002"), mk("0004", "a2c", "0003"),
+    mk("0005", "c2a", "0004"), mk("0006", "a2c", "0005"), mk("0007", "c2a", "0006"),
+    mk("0012", "c2a"), mk("0013", "a2c", "0012")]
+};
+const sidOf = (n) => api.handoffNodeOf("chain", { num: n }, chainData, chainTree).sessionId;
+eq("직접 연결(파일 이름 근거)이 있으면 그대로 그 세션", "sess-1", sidOf("0001"));
+eq("직접 연결이 먼저: 0012 는 자기 연결 sess-2", "sess-2", sidOf("0012"));
+eq("연결 없는 0005 는 자기가 답한 0004 쪽을 따라 sess-1", "sess-1", sidOf("0005"));
+eq("a2c 회신 0002 는 자기가 답한 0001 → sess-1", "sess-1", sidOf("0002"));
+eq("여러 단계(0007→0006→0005→0004→0003)를 이어도 가장 가까운 연결 sess-1", "sess-1", sidOf("0007"));
+eq("자기에게 답한 메시지 쪽도 따라감: 0013 은 0012 에 답함 → sess-2", "sess-2", sidOf("0013"));
+const unlinkedData = { name: "chain", files: ["0001-c2a-x.md", "0002-a2c-x.md"], messages: [mk("0001", "c2a"), mk("0002", "a2c", "0001")] };
+eq("체인 어디에도 연결이 없으면 연결 안 됨", "c:chain", api.handoffNodeOf("chain", { num: "0002" }, unlinkedData, chainTree).sessionId);
+eq("replyTo 가 없는 고립 메시지는 연결 안 됨", "c:chain", api.handoffNodeOf("chain", { num: "0005" }, { name: "chain", files: ["0005-c2a-nolink.md"], messages: [mk("0005", "c2a")] }, chainTree).sessionId);
+const tieTree = { projects: [{ id: "cg-1", name: "proj", sessions: [{ id: "sess-1", title: "A" }, { id: "sess-2", title: "B" }] }], ungrouped: [],
+  handoffLinks: { "tie/0001-c2a-a.md": "sess-2", "tie/0003-c2a-b.md": "sess-1" } };
+const tieData = { name: "tie", files: ["0001-c2a-a.md", "0002-a2c-m.md", "0003-c2a-b.md"],
+  messages: [mk("0001", "c2a"), mk("0002", "a2c", "0001"), mk("0003", "c2a", "0002")] };
+eq("가장 가까운 연결이 둘이면 번호가 작은 쪽(0001 → sess-2)", "sess-2", api.handoffNodeOf("tie", { num: "0002" }, tieData, tieTree).sessionId);
+const deadTree = { projects: [{ id: "cg-1", name: "proj", sessions: [{ id: "sess-1", title: "A" }] }], ungrouped: [],
+  handoffLinks: { "dead/0001-c2a-a.md": "sess-gone", "dead/0003-c2a-b.md": "sess-1" } };
+const deadData = { name: "dead", files: ["0001-c2a-a.md", "0002-a2c-m.md", "0003-c2a-b.md"],
+  messages: [mk("0001", "c2a"), mk("0002", "a2c", "0001"), mk("0003", "c2a", "0002")] };
+eq("사라진 세션을 가리키는 이웃은 건너뛰고 살아 있는 세션을 따른다", "sess-1", api.handoffNodeOf("dead", { num: "0002" }, deadData, deadTree).sessionId);
+testChannels["chA"] = { files: ["0001-c2a-open.md", "0002-a2c-r.md"] };
+testChannels["chB"] = { files: ["0001-c2a-open.md", "0002-a2c-r.md"] };
+const mixTree = { projects: [{ id: "cg-1", name: "proj", sessions: [{ id: "sess-a", title: "A" }, { id: "sess-b", title: "B" }] }], ungrouped: [],
+  handoffLinks: { "chA/0001-c2a-open.md": "sess-a", "chB/0001-c2a-open.md": "sess-b" } };
+const mixData = (n) => ({ name: n, files: ["0001-c2a-open.md", "0002-a2c-r.md"], messages: [mk("0001", "c2a"), mk("0002", "a2c", "0001")] });
+eq("chA 의 0002 는 chA 의 0001 세션(sess-a)", "sess-a", api.handoffNodeOf("chA", { num: "0002" }, mixData("chA"), mixTree).sessionId);
+eq("chB 의 0002 는 chB 의 0001 세션(sess-b)", "sess-b", api.handoffNodeOf("chB", { num: "0002" }, mixData("chB"), mixTree).sessionId);
+delete testChannels["chA"]; delete testChannels["chB"];
 
 console.log("\n통과 " + passed + " / 실패 " + failed);
 if (failed > 0) {

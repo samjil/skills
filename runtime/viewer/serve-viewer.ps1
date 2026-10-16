@@ -613,6 +613,16 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt, [string]$TaskId = 
             } catch {}
         }
 
+        # 멈춤 판정에 쓸 값. 워처(watch-agy.ps1)와 같은 기준(AGY_STALL_SECONDS, 기본 300초)을 화면에도 알려 줘서, 화면이 "멈춘 것으로 보임"을 같은 잣대로 말하게 한다.
+        # 오래 걸리는 명령을 백그라운드로 돌려 두고 기다리는 동안은 새 단계가 없어도 멈춘 게 아니다 - 기록 전체를 훑는 일이라 멈춤 기준에 가까워졌을 때만 확인한다.
+        $stallSec = 300
+        if (Get-Command Get-AgySecondsSetting -ErrorAction SilentlyContinue) { $stallSec = Get-AgySecondsSetting 'AGY_STALL_SECONDS' 300 30 }
+        $waitingBg = $false
+        if ((((Get-Date) - $last).TotalSeconds -ge ($stallSec - 60)) -and (Get-Command Get-AgyPendingBackgroundTasks -ErrorAction SilentlyContinue)) {
+            try { $waitingBg = (@(Get-AgyPendingBackgroundTasks $agyHome $ConversationId).Count -gt 0) } catch {}
+        }
+        $stepList = @(Get-AgyProcessStepsCached $ConversationId)
+
         return [PSCustomObject]@{
             conversation_id = $ConversationId
             step            = $step
@@ -621,7 +631,10 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt, [string]$TaskId = 
             detail          = $detail
             cwd             = $cwd
             background      = $background
-            steps           = @(Get-AgyProcessStepsCached $ConversationId)
+            step_count      = $stepList.Count
+            stall_seconds   = $stallSec
+            waiting_background = $waitingBg
+            steps           = $stepList
             thinking        = $thinking
             say             = $say
             tokens          = [PSCustomObject]@{
@@ -1312,10 +1325,15 @@ try {
                             }
 
                             # 진행 중인 작업이면 agy 대화 기록에서 현재 단계/최근 동작을 읽어 붙입니다.
+                            # 실행 표시 파일은 있는데 그 작업자 프로세스가 사라졌으면 "중단된 것으로 보이는" 작업이다(워처가 죽었거나 작업자가 비정상 종료).
+                            # 대기 중과 구별해 화면이 "대기 중"이라고 거짓말하지 않게 하고, 마지막 진행 상황도 같이 읽어 준다.
+                            $interrupted = [bool](-not $legacyQueue -and $claim -and [int]$claim.pid -gt 0 -and -not $claimAlive -and $claim.started_at)
+                            $claimUsable = [bool]($claim -and $claim.started_at -and ($claimAlive -or $interrupted))
                             $progress = $null
-                            if ($state -eq "processing" -and (($claimAlive -and $claim.started_at) -or ($legacyQueue -and $currentTask -and $currentTask.task_id -eq $f.BaseName))) {
+                            $startedText = ""
+                            if (($state -eq "processing" -or $interrupted) -and (($claimUsable) -or ($legacyQueue -and $currentTask -and $currentTask.task_id -eq $f.BaseName))) {
                                 $convId = ""
-                                if ($claimAlive -and $claim.conversation_id) { $convId = [string]$claim.conversation_id }
+                                if ($claimUsable -and $claim.conversation_id) { $convId = [string]$claim.conversation_id }
                                 if (-not $convId -and $sessionVal) {
                                     $sFile2 = Join-Path $sessionsDir ("{0}.json" -f (($sessionVal -replace '[\\/:*?"<>|]', '_').Trim()))
                                     if (Test-Path -LiteralPath $sFile2) {
@@ -1324,16 +1342,25 @@ try {
                                 }
                                 $startedAt = $null
                                 $startedText = ""
-                                if ($claimAlive -and $claim.started_at) { $startedText = [string]$claim.started_at } elseif ($currentTask) { $startedText = [string]$currentTask.started_at }
+                                if ($claimUsable) { $startedText = [string]$claim.started_at } elseif ($currentTask) { $startedText = [string]$currentTask.started_at }
                                 try { $startedAt = [datetime]::ParseExact($startedText, "yyyy-MM-dd HH:mm:ss", $null) } catch {}
                                 $qSnippet = if ($question.Length -gt 40) { $question.Substring(0, 40) } else { $question }
                                 $progress = Get-AgyProgress $convId $startedAt $f.BaseName $qSnippet
                             }
 
+                            # 5초마다 불리는 목록에 단계 전체(최대 400개)를 싣지 않는다. 개수만 알려 주고, 단계는 /api/delegate/process?since= 로 새 것만 받아 간다.
+                            $liveConvId = ""
+                            if ($progress) {
+                                $liveConvId = [string]$progress.conversation_id
+                                $progress.PSObject.Properties.Remove('steps')
+                            }
+
                             $pendingList += [PSCustomObject]@{
                                 task_id    = $f.BaseName
                                 created    = $f.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")
-                                started_at = $(if ($state -eq "processing" -and $startedText) { $startedText } else { "" })
+                                started_at = $(if (($state -eq "processing" -or $interrupted) -and $startedText) { $startedText } else { "" })
+                                conversation_id = $liveConvId
+                                interrupted = $interrupted
                                 question   = $question
                                 cwd        = @(ConvertTo-CwdList $cwdLines.ToArray())
                                 session    = $sessionVal
@@ -1439,8 +1466,12 @@ try {
 
                 # 기록에 과정이 저장되지 않은 옛 위임용: agy 의 대화 id 로 대화 기록에서 도구 호출 목록을 읽어 온다.
                 # id 는 영문자·숫자·- 만 받는다(경로 문자 차단은 Get-AgyTranscriptPath 가 한다).
+                # since=<마지막으로 받은 단계 번호> 를 주면 그 뒤의 새 단계만 돌려준다(진행 중인 작업을 몇 초마다 따라갈 때). 없으면 전부.
+                # 대화마다 읽은 위치를 기억하는 캐시(Get-AgyProcessStepsCached)를 거치므로 기록 파일이 안 바뀌었으면 파일을 다시 파싱하지 않는다.
                 $params = Get-Utf8QueryParams $request.Url
                 $cid = [string]$params["id"]
+                $sinceN = -1
+                if ($params["since"] -match '^-?\d{1,9}$') { $sinceN = [int]$params["since"] }
                 $tp = $null
                 if (Get-Command Get-AgyTranscriptPath -ErrorAction SilentlyContinue) { $tp = Get-AgyTranscriptPath (Get-AgyHomeDir) $cid }
                 if (-not $tp) {
@@ -1450,8 +1481,19 @@ try {
                 } else {
                     $found = Test-Path -LiteralPath $tp -PathType Leaf
                     $stepsOut = @()
-                    if ($found) { $stepsOut = @((Read-AgyProcessSteps $tp 0 400).Steps) }
-                    $json = ([PSCustomObject]@{ id = $cid; found = $found; steps = $stepsOut }) | ConvertTo-Json -Depth 5
+                    $total = 0
+                    $lastMs = 0
+                    if ($found) {
+                        $all = @(Get-AgyProcessStepsCached $cid)
+                        $total = $all.Count
+                        $maxN = -1
+                        foreach ($s in $all) { if ([int]$s.n -gt $maxN) { $maxN = [int]$s.n } }
+                        # 받아 간 번호가 지금 기록의 마지막보다 크면(기록이 새로 만들어짐) 처음부터 다시 준다 - reset 으로 알린다
+                        $reset = ($sinceN -gt $maxN -and $maxN -ge 0)
+                        $stepsOut = @(if ($sinceN -ge 0 -and -not $reset) { $all | Where-Object { [int]$_.n -gt $sinceN } } else { $all })
+                        $lastMs = [int64]([DateTimeOffset](Get-Item -LiteralPath $tp).LastWriteTime).ToUnixTimeMilliseconds()
+                    } else { $reset = $false }
+                    $json = ([PSCustomObject]@{ id = $cid; found = $found; steps = $stepsOut; total = $total; reset = [bool]$reset; last_activity_ms = $lastMs }) | ConvertTo-Json -Depth 5
                     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
                     $response.ContentType = "application/json; charset=utf-8"
                     $response.Headers.Add("Cache-Control", "no-store")
