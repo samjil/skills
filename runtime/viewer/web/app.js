@@ -46,10 +46,6 @@
     handoffLegendClaude:  document.getElementById("handoff-legend-claude"),
     handoffLegendAgy:     document.getElementById("handoff-legend-agy"),
     handoffAutoBar:       document.getElementById("handoff-auto-bar"),
-    handoffAutoState:     document.getElementById("handoff-auto-state"),
-    handoffAutoDetail:    document.getElementById("handoff-auto-detail"),
-    handoffAutoToggle:    document.getElementById("handoff-auto-toggle"),
-    handoffAutoReset:     document.getElementById("handoff-auto-reset"),
 
     // 사이드바 푸터 & 컨트롤
     watcherPulseDot:      document.getElementById("watcher-pulse-dot"),
@@ -5019,7 +5015,7 @@
     }
   }
 
-  // 자동 이어가기 상태 줄: 지금 보는 메시지가 채널 하나의 것일 때만 보인다. 상태는 /api/handoff/project 의 auto.
+  // 자동 이어가기 상태 줄: 보는 메시지가 속한 채널마다 한 줄. 상태는 /api/handoff/project 의 auto.
   function handoffAutoText(auto, nowMs) {
     if (!auto) return null;
     if (!auto.enabled) return { state: "꺼짐", detail: "이 채널은 agy 가 자동으로 답하지 않습니다.", kind: "off" };
@@ -5033,29 +5029,45 @@
     return { state: "켜짐", detail: "왕복 " + auto.rounds + "/" + auto.maxRounds + " (최근 " + auto.windowMinutes + "분) · Claude 메시지에 agy 가 자동으로 답합니다.", kind: "on" };
   }
 
-  function renderHandoffAutoBar(items) {
-    if (!els.handoffAutoBar) return;
-    var channels = {};
-    var count = 0;
-    (items || []).forEach(function (it) { if (it.channel && !channels[it.channel]) { channels[it.channel] = true; count++; } });
-    var channel = count === 1 ? Object.keys(channels)[0] : "";
-    var data = channel ? handoffChannels[channel] : null;
-    var txt = data ? handoffAutoText(data.auto, Date.now()) : null;
-    if (!txt) { els.handoffAutoBar.style.display = "none"; els.handoffAutoBar.removeAttribute("data-channel"); return; }
-    els.handoffAutoBar.style.display = "flex";
-    els.handoffAutoBar.setAttribute("data-channel", channel);
-    els.handoffAutoBar.setAttribute("data-kind", txt.kind);
-    if (els.handoffAutoState) els.handoffAutoState.textContent = "자동 이어가기 · " + txt.state;
-    if (els.handoffAutoDetail) els.handoffAutoDetail.textContent = txt.detail;
-    if (els.handoffAutoToggle) {
-      els.handoffAutoToggle.textContent = data.auto.enabled ? "끄기" : "켜기";
-      els.handoffAutoToggle.setAttribute("data-action", data.auto.enabled ? "off" : "on");
+  // 지금 보는 메시지들이 속한 채널마다 자동 이어가기 상태 한 줄. 채널이 여럿이면 멈춤 > 처리 중 > 꺼짐 > 켜짐 순으로, 최대 limit 줄만 보이고 나머지는 개수만 알린다.
+  function handoffAutoRows(items, channelsMap, nowMs, limit) {
+    var order = [];
+    var seen = {};
+    (items || []).forEach(function (it) { if (it && it.channel && !seen[it.channel]) { seen[it.channel] = true; order.push(it.channel); } });
+    var rank = { halted: 0, busy: 1, off: 2, on: 3 };
+    var rows = [];
+    order.forEach(function (ch, i) {
+      var data = channelsMap ? channelsMap[ch] : null;
+      var txt = data ? handoffAutoText(data.auto, nowMs) : null;
+      if (txt) rows.push({ channel: ch, kind: txt.kind, state: txt.state, detail: txt.detail, enabled: !!data.auto.enabled, order: i });
+    });
+    if (rows.length > 1) {
+      rows.sort(function (x, y) { return (rank[x.kind] - rank[y.kind]) || (x.order - y.order); });
     }
-    if (els.handoffAutoReset) els.handoffAutoReset.style.display = txt.kind === "halted" ? "" : "none";
+    var max = limit > 0 ? limit : 5;
+    return { rows: rows.slice(0, max), hidden: Math.max(0, rows.length - max), multi: rows.length > 1 };
   }
 
-  function postHandoffAuto(action) {
-    var channel = els.handoffAutoBar ? els.handoffAutoBar.getAttribute("data-channel") : "";
+  function renderHandoffAutoBar(items) {
+    if (!els.handoffAutoBar) return;
+    var res = handoffAutoRows(items, handoffChannels, Date.now(), 5);
+    if (res.rows.length === 0) { els.handoffAutoBar.style.display = "none"; els.handoffAutoBar.innerHTML = ""; return; }
+    var html = res.rows.map(function (r) {
+      return '<div class="auto-bar" data-channel="' + escapeHtml(r.channel) + '" data-kind="' + r.kind + '">' +
+        (res.multi ? '<span class="auto-channel">' + escapeHtml(r.channel) + '</span>' : "") +
+        '<span class="auto-state">자동 이어가기 · ' + escapeHtml(r.state) + '</span>' +
+        '<span class="auto-detail">' + escapeHtml(r.detail) + '</span>' +
+        '<span class="auto-actions">' +
+        (r.kind === "halted" ? '<button type="button" class="text-btn" data-act="reset">한도 초기화</button>' : "") +
+        '<button type="button" class="text-btn" data-act="' + (r.enabled ? "off" : "on") + '">' + (r.enabled ? "끄기" : "켜기") + '</button>' +
+        '</span></div>';
+    }).join("");
+    if (res.hidden > 0) html += '<div class="auto-more">외 ' + res.hidden + '개 채널은 채널을 골라 보면 나옵니다.</div>';
+    els.handoffAutoBar.innerHTML = html;
+    els.handoffAutoBar.style.display = "";
+  }
+
+  function postHandoffAuto(channel, action, rowEl) {
     if (!channel) return;
     fetch("/api/handoff/auto?name=" + encodeURIComponent(channel) + "&action=" + encodeURIComponent(action), { method: "POST", headers: { "X-Samjil-Viewer": "1" } })
       .then(function (res) {
@@ -5063,7 +5075,8 @@
         return loadHandoffProjects(true);
       })
       .catch(function (err) {
-        if (els.handoffAutoDetail) els.handoffAutoDetail.textContent = "요청에 실패했습니다: " + err.message;
+        var d = rowEl ? rowEl.querySelector(".auto-detail") : null;
+        if (d) d.textContent = "요청에 실패했습니다: " + err.message;
       });
   }
 
@@ -5364,8 +5377,11 @@
     // Handoff 사이드바 검색 및 필터
     if (els.handoffProjectSearch) els.handoffProjectSearch.addEventListener("input", renderHandoffTree);
     if (els.handoffDirFilter) els.handoffDirFilter.addEventListener("change", renderHandoffMessages);
-    if (els.handoffAutoToggle) els.handoffAutoToggle.addEventListener("click", function () { postHandoffAuto(els.handoffAutoToggle.getAttribute("data-action") || "off"); });
-    if (els.handoffAutoReset) els.handoffAutoReset.addEventListener("click", function () { postHandoffAuto("reset"); });
+    if (els.handoffAutoBar) els.handoffAutoBar.addEventListener("click", function (ev) {
+      var btn = ev.target && ev.target.closest ? ev.target.closest("button[data-act]") : null;
+      var row = btn ? btn.closest(".auto-bar") : null;
+      if (btn && row) postHandoffAuto(row.getAttribute("data-channel"), btn.getAttribute("data-act"), row);
+    });
     if (els.handoffStatusFilter) els.handoffStatusFilter.addEventListener("change", renderHandoffMessages);
     if (els.handoffSearch) els.handoffSearch.addEventListener("input", renderHandoffMessages);
 
