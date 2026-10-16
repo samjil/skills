@@ -1130,6 +1130,11 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   transition: transform 0.15s ease;
 }
 .qa[open] > summary::after { transform: rotate(45deg); }
+/* 펼치면 질문·답변 머리줄 아래에 얇은 실선(--line)을 긋고 글씨를 굵게 한다. 배경색으로 가르지 않는다(에이전트 인수인계의 .handoff-card 와 같은 방식). */
+.qa[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+.qa[open] > summary .qa-preview-keyword { font-weight: 600; }
 
 .qa-type-badge {
   font-size: var(--fs-xs);
@@ -1150,7 +1155,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .qa.q:not([open]) .qa-preview-keyword { color: var(--ink-2); }
 
-.qa > .body { padding: 6px 12px 10px; }
+.qa > .body { padding: 12px 14px 14px; }
 
 .qa .body > pre,
 .qa-content > pre {
@@ -1416,7 +1421,11 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   user-select: none;
 }
 .handoff-card-header:hover { background: var(--surface); }
-.handoff-card.is-open > .handoff-card-header { background: var(--surface); }
+/* 펼치면 제목 줄 아래에 얇은 실선(--line)을 긋고 제목을 굵게 한다. 배경색으로 가르지 않는다(위임 실행 기록의 .qa 와 같은 방식). */
+.handoff-card.is-open > .handoff-card-header {
+  border-bottom: 1px solid var(--line);
+}
+.handoff-card.is-open .handoff-title { font-weight: 600; }
 
 .handoff-num {
   font-family: var(--font-mono);
@@ -1453,8 +1462,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 
 .handoff-card-body {
-  padding: 4px 16px 18px 79px;
-  background: var(--surface);
+  padding: 12px 16px 18px 79px;
 }
 .handoff-card-body-loading { color: var(--ink-3); font-size: var(--fs-sm); padding: 8px 0; }
 /* 본문은 .md 의 글줄 길이 제한(100ch)을 블록이 아니라 안쪽 내용에만 건다. 블록은 헤더·자동 이어가기 줄과 같은 폭(카드 폭)을 쓴다. */
