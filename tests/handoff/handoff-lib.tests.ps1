@@ -202,6 +202,25 @@ try {
     $env:AGY_HANDOFF_MAX_ROUNDS = "3"
     Assert-Equal "  환경변수로 바꿀 수 있다" 3 (Get-HandoffMaxRounds)
     Remove-Item Env:\AGY_HANDOFF_MAX_ROUNDS -ErrorAction SilentlyContinue
+
+    $modelCh = Join-Path $root "model-ch"
+    New-Item -ItemType Directory -Force -Path (Join-Path $modelCh "msg") | Out-Null
+    Set-Content -LiteralPath (Join-Path $modelCh "INDEX.md") -Value "# INDEX`n| 번호 | 시각 | 방향 | 제목 | 상태 |`n|---|---|---|---|---|" -Encoding UTF8
+    Write-Host "모델 자리표시자 · 모델 채워 넣기"
+    $nS = Add-HandoffMessage $modelCh "a2c" "자리표시자 모델" "## 요약`n- s" "" "(session)"
+    Assert-Equal "'(session)' 은 모델명이 아니라 머리말에 넣지 않는다" "" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $modelCh $nS).FullName)["모델"])
+    $nM = Add-HandoffMessage $modelCh "c2a" "모델 없이 보냄" "## 요약`n- m"
+    $fM = (Get-HandoffMessageFile $modelCh $nM).FullName
+    Assert-Equal "Set-HandoffMessageModel: 모델이 없으면 넣는다" $true (Set-HandoffMessageModel $fM "claude-opus-4-5-20251101")
+    $hM = Read-HandoffFrontMatter $fM
+    Assert-Equal "  머리말에 모델이 생기고 나머지는 그대로" "claude-opus-4-5-20251101|c2a|모델 없이 보냄" ("{0}|{1}|{2}" -f $hM["모델"], $hM["방향"], $hM["제목"])
+    Assert-Equal "  본문은 그대로" $true ((Read-Raw $fM) -match "---\r?\n\r?\n## 요약\r?\n- m")
+    Assert-Equal "  이미 있으면 덮어쓰지 않는다" $false (Set-HandoffMessageModel $fM "claude-sonnet-4-5")
+    Assert-Equal "  그대로 claude-opus-4-5-20251101" "claude-opus-4-5-20251101" ([string](Read-HandoffFrontMatter $fM)["모델"])
+    $fNo = Join-Path $modelCh "msg\9999-c2a-머리말-없음.md"
+    Set-Content -LiteralPath $fNo -Value "본문만 있는 파일" -Encoding UTF8
+    Assert-Equal "  머리말이 없는 파일은 건드리지 않는다" $false (Set-HandoffMessageModel $fNo "claude-opus-4-5")
+    Remove-Item -LiteralPath $fNo -Force
 }
 finally {
     $env:AGENT_HANDOFF_ROOT = $savedRoot

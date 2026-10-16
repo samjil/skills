@@ -149,6 +149,30 @@ try {
     $r = Invoke-Hook $appCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "30" }
     Assert-Equal "10분보다 오래전에 보낸 메시지는 기다리지 않는다" "0|" ("{0}|{1}" -f $r.Exit, $r.Out.Trim())
 
+    Write-Host "모델이 빠진 c2a 에 이 세션의 모델을 적어 둔다"
+    $st = New-Channel "stamp-app"
+    $stCwd = Join-Path $code "stamp-app"
+    New-Item -ItemType Directory -Force -Path $stCwd | Out-Null
+    $nOld = Add-HandoffMessage $st "c2a" "오래된 보냄" "## 요약`n- old"
+    Set-RowTime $st $nOld (Get-Date).AddHours(-3)
+    $nNew = Add-HandoffMessage $st "c2a" "방금 보냄" "## 요약`n- new"
+    $nHas = Add-HandoffMessage $st "c2a" "모델 이미 있음" "## 요약`n- has" "" "claude-sonnet-4-5"
+    $tr = Join-Path $work "transcript.jsonl"
+    $trLines = @(
+        '{"type":"user","message":{"role":"user","content":"hi"}}',
+        '{"type":"assistant","message":{"model":"claude-opus-4-5-20251101","role":"assistant","content":[{"type":"text","text":"ok"}]}}',
+        '{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"x"}]}}'
+    )
+    [IO.File]::WriteAllText($tr, (($trLines -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
+    $stdinSt = (@{ cwd = $stCwd; session_id = "s1"; hook_event_name = "Stop"; transcript_path = $tr } | ConvertTo-Json -Compress)
+    $r = Invoke-Hook $stCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "1" } $stdinSt
+    Assert-Equal "  방금 보낸 c2a 에 대화 기록의 마지막 모델이 적힌다" "claude-opus-4-5-20251101" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nNew).FullName)["모델"])
+    Assert-Equal "  15분보다 오래된 c2a 는 건드리지 않는다" "" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nOld).FullName)["모델"])
+    Assert-Equal "  모델이 이미 있는 c2a 는 그대로 둔다" "claude-sonnet-4-5" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nHas).FullName)["모델"])
+    $nNew2 = Add-HandoffMessage $st "c2a" "대화 기록 없이" "## 요약`n- z"
+    $r = Invoke-Hook $stCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "1" }
+    Assert-Equal "  대화 기록 경로가 없으면 모델을 만들어 넣지 않는다" "" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nNew2).FullName)["모델"])
+
     Write-Host "한글 채널 이름·경로, 하위 폴더에서 열기"
     $kr = New-Channel "프로젝트-가나다"
     $krCwd = Join-Path $code "프로젝트-가나다\src"
