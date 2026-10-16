@@ -67,7 +67,8 @@ let p = api.handoffLabelParts(msgs[0], msgs);
 eq("모델이 있는 c2a: 보낸 쪽은 자기 모델", "Claude Opus 4.5", p.sender);
 eq("  받는 쪽: 아직 답이 없는 0001 -> agy 의 가장 최근 모델(추정 표시)", ["Gemini 3.8 Flash (High)", true], [p.receiver, p.inferred]);
 p = api.handoffLabelParts(msgs[2], msgs);
-eq("모델 기록이 없는 c2a(0003): 보낸 쪽은 Claude 라고만", "Claude", p.sender);
+eq("모델 기록이 없는 c2a(0003): 보낸 쪽은 Claude 가 가장 최근에 쓴 모델(추정 표시)", ["Claude Opus 4.5", true], [p.sender, p.senderInferred]);
+eq("  모델이 아예 없는 채널이면 Claude 라고만", ["Claude", false], (function () { const q = api.handoffLabelParts({ num: "0001", dir: "c2a" }, [{ num: "0001", dir: "c2a" }]); return [q.sender, q.senderInferred]; })());
 eq("  받는 쪽: 0003 에 답한 0004 의 모델(실제로 받은 쪽, 추정 아님)", ["Gemini 3.8 Flash (High)", false], [p.receiver, p.inferred]);
 p = api.handoffLabelParts(msgs[3], msgs);
 eq("a2c 회신(0004): 보낸 쪽은 agy 모델, 방향 색은 agy", ["Gemini 3.8 Flash (High)", "agy", "claude"], [p.sender, p.senderParty, p.receiverParty]);
@@ -81,7 +82,7 @@ eq("프로젝트 목록 API 의 가벼운 메시지(model 필드 없음)는 전�
 console.log("\ndirLabelHtml: 화면에 들어가는 HTML");
 const api2 = make({ "my-app": { messages: msgs } });
 eq("모델명 + 보낸 쪽 색 클래스", '<span class="who-claude">Claude Opus 4.5</span> → <span title="이 메시지에 답한 기록이 아직 없어, 그 쪽이 가장 최근에 쓴 모델로 표시했습니다">Gemini 3.8 Flash (High)</span>', api2.dirLabelHtml("c2a", msgs[0], "my-app"));
-eq("답이 확인된 메시지는 추정 안내(title)가 없다", '<span class="who-claude">Claude</span> → <span>Gemini 3.8 Flash (High)</span>', api2.dirLabelHtml("c2a", msgs[2], "my-app"));
+eq("답이 확인된 메시지는 받는 쪽 추정 안내(title)가 없고, 모델이 비어 있던 보낸 쪽에만 있다", '<span class="who-claude" title="이 메시지 머리말에 모델이 없어, 그 쪽이 가장 최근에 쓴 모델로 표시했습니다">Claude Opus 4.5</span> → <span>Gemini 3.8 Flash (High)</span>', api2.dirLabelHtml("c2a", msgs[2], "my-app"));
 eq("채널 정보가 없으면 예전 표시(c2a)", '<span class="who-claude">Claude</span> → agy', api.dirLabelHtml("c2a"));
 eq("  예전 표시(a2c)", '<span class="who-agy">agy</span> → Claude', api.dirLabelHtml("a2c"));
 eq("HTML 을 깨는 모델 이름은 이스케이프한다", '<span class="who-claude">&lt;b&gt;x&lt;/b&gt;</span> → <span>agy</span>', make({ c: { messages: [] } }).dirLabelHtml("c2a", { num: "1", dir: "c2a", model: "<b>x</b>" }, "c"));

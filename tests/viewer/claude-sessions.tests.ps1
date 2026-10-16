@@ -268,7 +268,8 @@ try {
     $s1Lines = @(
         '{"timestamp":"2026-10-14T08:00:00.000Z","message":"작업 요청: claude_1791969860_1001 및 0004-c2a-카드-그림자.md"}',
         '{"timestamp":"2026-10-14T08:30:00.000Z","message":"공통 작업 claude_1791969860_2001 실행"}',
-        '{"timestamp":"2026-10-14T12:00:00.000Z","message":"동일시각 작업 claude_1791969860_3001"}'
+        '{"timestamp":"2026-10-14T12:00:00.000Z","message":"동일시각 작업 claude_1791969860_3001"}',
+        '{"timestamp":"2026-10-14T12:10:00.000Z","message":"쓴 파일 D:\\handoff\\chan-a\\msg\\0007-c2a-채널-개통.md"}'
     )
     [System.IO.File]::WriteAllText($s1Log, (($s1Lines -join "`n") + "`n"), $utf8NoBom)
 
@@ -280,7 +281,8 @@ try {
     $s2Lines = @(
         '{"timestamp":"2026-10-14T08:15:00.000Z","message":"포크 세션에서 claude_1791969860_2001 먼저 발생"}',
         '{"timestamp":"2026-10-14T09:00:00.000Z","message":"세션2 작업 claude_1791969860_4001_a 및 0005-a2c-결과-보고.md"}',
-        '{"timestamp":"2026-10-14T12:00:00.000Z","message":"동일시각 작업 claude_1791969860_3001"}'
+        '{"timestamp":"2026-10-14T12:00:00.000Z","message":"동일시각 작업 claude_1791969860_3001"}',
+        '{"timestamp":"2026-10-14T09:30:00.000Z","message":"목록 chan-b/msg/0007-c2a-채널-개통.md 와 파일 이름만 0008-a2c-이름만.md"}'
     )
     [System.IO.File]::WriteAllText($s2Log, (($s2Lines -join "`n") + "`n"), $utf8NoBom)
 
@@ -294,6 +296,12 @@ try {
     Assert-Equal "한글 메시지 0004-c2a-카드-그림자.md 는 cli-session-1 소유" "cli-session-1" $read1.Msgs["0004-c2a-카드-그림자.md"]
     Assert-Equal "작업 4001_a 는 cli-session-2 소유" "cli-session-2" $read1.Tasks["claude_1791969860_4001_a"]
     Assert-Equal "메시지 0005-a2c-결과-보고.md 는 cli-session-2 소유" "cli-session-2" $read1.Msgs["0005-a2c-결과-보고.md"]
+
+    # 채널 이름이 붙은 경로는 "채널/파일" 키로 나뉘어, 같은 파일 이름이라도 채널마다 다른 세션에 붙는다
+    Assert-Equal "chan-a 의 0007 은 cli-session-1 소유(JSON 이스케이프된 역슬래시 경로)" "cli-session-1" $read1.Msgs["chan-a/0007-c2a-채널-개통.md"]
+    Assert-Equal "chan-b 의 0007 은 cli-session-2 소유(슬래시 경로)" "cli-session-2" $read1.Msgs["chan-b/0007-c2a-채널-개통.md"]
+    Assert-Equal "채널 이름이 있으면 파일 이름만의 키는 만들지 않는다" $false ($read1.Msgs.ContainsKey("0007-c2a-채널-개통.md"))
+    Assert-Equal "파일 이름만 나온 기록은 파일 이름 키로 남는다" "cli-session-2" $read1.Msgs["0008-a2c-이름만.md"]
 
     # (b) 시각 비교: 2001 은 cli-session-2 가 08:15 로 더 이르므로 cli-session-2 소유
     Assert-Equal "공통 작업 2001 은 시각이 더 이른 cli-session-2 가 소유" "cli-session-2" $read1.Tasks["claude_1791969860_2001"]

@@ -168,7 +168,7 @@ function Complete-HandoffDispatch([string]$ChannelDir, $Disp, $Ctx) {
 
     if ($failure) {
         $body = "## 요약`n`n- agy 자동 처리에 실패했습니다 (메시지 #$num).`n- 사유는 아래에 있습니다. 같은 요청을 다시 보내거나 사용자에게 알려 주세요.`n- 자동 이어가기는 이 메시지에서 멈춥니다.`n`n---`n`n$failure"
-        $model = if ($usage) { [string]$usage.model } else { "" }
+        $model = if ($usage -and [string]$usage.model -ne "(session)") { [string]$usage.model } else { "" }
         $newNum = Add-HandoffMessage $ChannelDir "a2c" ("자동 처리 실패: " + $replyTitleBase) $body $num $model $true "보냄"
         [void](Set-HandoffStatus $ChannelDir $num "보류")
         Write-HandoffLog "핸드오프 [$(Split-Path -Leaf $ChannelDir)] #$num 자동 처리 실패 -> 보류, 알림 회신 #$newNum"
@@ -182,7 +182,7 @@ function Complete-HandoffDispatch([string]$ChannelDir, $Disp, $Ctx) {
     }
 
     $model = ""
-    if ($usage -and [string]$usage.model) { $model = [string]$usage.model }
+    if ($usage -and [string]$usage.model -and [string]$usage.model -ne "(session)") { $model = [string]$usage.model }
     if (-not $model) { $model = Get-HandoffSessionModel $Ctx.SessionsDir ("handoff-" + (ConvertTo-HandoffSafeName (Split-Path -Leaf $ChannelDir))) }
     $newNum = Add-HandoffMessage $ChannelDir "a2c" ("Re: " + $replyTitleBase) (ConvertTo-HandoffReplyBody $respText) $num $model $true "보냄"
     if (-not $newNum) {

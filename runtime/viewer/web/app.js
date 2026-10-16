@@ -1425,9 +1425,23 @@
     return "";
   }
 
+  // 세션 연결은 "채널/파일" 키를 먼저 보고, 파일 이름만 나온 기록은 같은 이름이 다른 채널에 없을 때만 쓴다.
+  function handoffLinkOf(tree, channelName, file) {
+    var links = tree && tree.handoffLinks;
+    if (!links || !file) { return null; }
+    if (channelName && links[channelName + "/" + file]) { return links[channelName + "/" + file]; }
+    if (!links[file]) { return null; }
+    for (var cn in handoffChannels) {
+      if (!Object.prototype.hasOwnProperty.call(handoffChannels, cn) || cn === channelName) { continue; }
+      var cf = handoffChannels[cn] && handoffChannels[cn].files;
+      if (Array.isArray(cf) && cf.indexOf(file) >= 0) { return null; }
+    }
+    return links[file];
+  }
+
   function handoffNodeOf(channelName, msg, channelData, tree) {
     var file = handoffMsgFileOf(msg, channelData);
-    var link = (tree && tree.handoffLinks && file && tree.handoffLinks[file]) ? tree.handoffLinks[file] : null;
+    var link = handoffLinkOf(tree, channelName, file);
     if (link) {
       if (tree && Array.isArray(tree.projects)) {
         for (var i = 0; i < tree.projects.length; i++) {
@@ -2608,7 +2622,13 @@
     if (m.model === undefined) {
       for (var k = 0; k < list.length; k++) { if (list[k] && String(list[k].num) === String(m.num)) { full = list[k]; break; } }
     }
-    var sender = formatModelName(full.model) || generic[senderParty];
+    var sender = formatModelName(full.model);
+    var senderInferred = false;
+    if (!sender) {
+      var latestSender = handoffLatestModels(list)[senderParty];
+      if (latestSender) { sender = formatModelName(latestSender); senderInferred = true; }
+    }
+    if (!sender) sender = generic[senderParty];
     var receiver = "";
     var inferred = false;
     for (var i = 0; i < list.length; i++) {
@@ -2623,7 +2643,7 @@
       if (latest) { receiver = formatModelName(latest); inferred = true; }
     }
     if (!receiver) receiver = generic[receiverParty];
-    return { senderParty: senderParty, sender: sender, receiverParty: receiverParty, receiver: receiver, inferred: inferred };
+    return { senderParty: senderParty, sender: sender, receiverParty: receiverParty, receiver: receiver, inferred: inferred, senderInferred: senderInferred };
   }
 
   // 방향 표시: 모델명으로 "Claude Opus 5.5 → Gemini 3.8 Flash (High)". 채널 정보가 없으면 예전처럼 Claude/agy.
@@ -2632,7 +2652,8 @@
     var parts = m ? handoffLabelParts(m, data ? data.messages : null) : null;
     if (parts) {
       var tip = parts.inferred ? ' title="이 메시지에 답한 기록이 아직 없어, 그 쪽이 가장 최근에 쓴 모델로 표시했습니다"' : "";
-      return '<span class="who-' + parts.senderParty + '">' + escapeHtml(parts.sender) + '</span> → <span' + tip + '>' + escapeHtml(parts.receiver) + '</span>';
+      var sTip = parts.senderInferred ? ' title="이 메시지 머리말에 모델이 없어, 그 쪽이 가장 최근에 쓴 모델로 표시했습니다"' : "";
+      return '<span class="who-' + parts.senderParty + '"' + sTip + '>' + escapeHtml(parts.sender) + '</span> → <span' + tip + '>' + escapeHtml(parts.receiver) + '</span>';
     }
     if (dir === "c2a") return '<span class="who-claude">Claude</span> → agy';
     if (dir === "a2c") return '<span class="who-agy">agy</span> → Claude';
