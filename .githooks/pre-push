@@ -1,10 +1,10 @@
 #!/bin/sh
-# pre-push: 푸시하기 전에 전체 시험(tests/run-all.ps1)을 돌리고, 하나라도 실패하면 푸시를 막는다.
+# pre-push: 푸시하기 전에 시험(tests/run-all.ps1)을 돌리고, 하나라도 실패하면 푸시를 막는다.
 #
-# 켜는 법(저장소를 새로 받았다면 한 번만):  git config core.hooksPath .githooks
+# 켜는 법(저장소를 새로 받았다면 한 번만):  powershell -NoProfile -ExecutionPolicy Bypass -File tools/setup-dev.ps1   (= git config core.hooksPath .githooks + 환경 점검)
 #
-# 걸리는 시간: 전부 약 9분. 환경변수로 조절한다.
-#   PREPUSH_FAST=1            오래 걸리는 시험(e2e 등)을 뺀다(run-all.ps1 -Fast)
+# 걸리는 시간: 기본은 빠른 실행(run-all.ps1 -Fast, 약 40초) — 오래 걸리는 시험(e2e·멈춤 판정·뷰어 자동 시작 등)은 뺀다.
+#   PREPUSH_FULL=1            전체 시험을 돌린다(병렬로 약 3분)
 #   PREPUSH_ARGS="-Only a,b"  run-all.ps1 에 넘길 인자(이름에 이 글자가 든 시험만 등)
 #   SKIP_PREPUSH_TESTS=1      시험을 건너뛴다(급할 때). git push --no-verify 도 같은 효과
 # 주의: 시험은 "푸시할 커밋"이 아니라 지금 작업 폴더의 파일로 돈다. 커밋하지 않은 변경이 있으면 그것도 포함된다.
@@ -23,12 +23,18 @@ if [ "$SKIP_PREPUSH_TESTS" = "1" ]; then
     exit 0
 fi
 
+# Windows 가 아닌 환경 등 powershell.exe 가 없으면 시험을 돌릴 수 없으니 푸시를 막지 않고 알리기만 한다
+if ! command -v powershell.exe >/dev/null 2>&1; then
+    echo "[pre-push] powershell.exe 가 없어 시험을 건너뜁니다."
+    exit 0
+fi
+
 root=$(git rev-parse --show-toplevel)
 runner="$root/tests/run-all.ps1"
 if command -v cygpath >/dev/null 2>&1; then runner=$(cygpath -w "$runner"); fi
 
 args="$PREPUSH_ARGS"
-if [ "$PREPUSH_FAST" = "1" ]; then args="-Fast $args"; fi
+if [ "$PREPUSH_FULL" != "1" ]; then args="-Fast $args"; fi
 
 echo "[pre-push] 푸시 전에 시험을 돌립니다 (run-all.ps1 $args) ..."
 # shellcheck disable=SC2086
