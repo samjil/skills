@@ -88,6 +88,7 @@ $targets = @(
     "sub\watch-agy.ps1",
     "sub\agy-task-worker.ps1",
     "sub\ensure-agy-running.ps1",
+    "sub\handoff-pump.ps1",
     "sub\log-qa.ps1"
 )
 

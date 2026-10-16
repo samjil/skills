@@ -35,12 +35,17 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $ScriptDir = if ($env:SAMJIL_SCRIPT_DIR) { $env:SAMJIL_SCRIPT_DIR } elseif ($PSScriptRoot) { $PSScriptRoot } else { "" }
 $TargetDir = ""
 $Uninstall = $false
+# 핸드오프 자동 이어가기 Stop 훅을 ~/.claude/settings.json 에 등록할지(옵트인). irm | iex 로 받을 때는 인자를 줄 수 없어
+# 환경변수 SAMJIL_HANDOFF_AUTO_HOOK=1 로도 켠다.
+$HandoffAutoHook = ($env:SAMJIL_HANDOFF_AUTO_HOOK -eq "1")
 if ($args) {
     for ($i = 0; $i -lt $args.Count; $i++) {
         if ($args[$i] -eq "-TargetDir" -and ($i + 1) -lt $args.Count) {
             $TargetDir = $args[++$i]
         } elseif ($args[$i] -eq "-Uninstall") {
             $Uninstall = $true
+        } elseif ($args[$i] -eq "-HandoffAutoHook") {
+            $HandoffAutoHook = $true
         }
     }
 }
@@ -308,7 +313,27 @@ if (Test-Path $srcRuntime) {
         $destHandoff = Join-Path $SamjilRoot "handoff"
         New-Item -ItemType Directory -Force -Path $destHandoff | Out-Null
         Copy-Item -Recurse -Force -Path (Join-Path $srcHandoff "*") -Destination $destHandoff
-        Write-Host "[+] handoff 템플릿 배치 완료 (~/.samjil/handoff)" -ForegroundColor Green
+        Write-Host "[+] handoff 템플릿·스크립트 배치 완료 (~/.samjil/handoff)" -ForegroundColor Green
+
+        # 3-1b. 핸드오프 자동 이어가기 Stop 훅(옵트인): agy 회신이 오면 같은 Claude 세션에서 "메시지 확인해줘" 없이 이어 간다.
+        #       Claude Code 설정을 바꾸는 일이라 -HandoffAutoHook 을 준 때만 하고, 바꾸기 전에 settings.json 을 백업한다.
+        $regHook = Join-Path $destHandoff "scripts\register-handoff-hook.ps1"
+        if (Test-Path $regHook) {
+            try {
+                $regArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $regHook)
+                if (-not $HandoffAutoHook) { $regArgs += "-Check" }
+                $regOut = (& powershell.exe @regArgs 2>&1 | Out-String).Trim()
+                if ($HandoffAutoHook) {
+                    Write-Host "[+] 핸드오프 자동 이어가기 Stop 훅 등록: $regOut (~/.claude/settings.json)" -ForegroundColor Green
+                } elseif ($regOut -eq "PRESENT") {
+                    Write-Host "[i] 핸드오프 자동 이어가기 Stop 훅이 이미 등록돼 있습니다(경로를 새로 고치려면 -HandoffAutoHook 로 다시 실행)." -ForegroundColor Gray
+                } else {
+                    Write-Host "[i] 핸드오프 자동 이어가기 Stop 훅은 등록하지 않았습니다. Claude 쪽도 자동으로 이어 가려면: .\install.ps1 -HandoffAutoHook" -ForegroundColor Gray
+                }
+            } catch {
+                Write-Warning "핸드오프 Stop 훅 등록 중 오류: $_"
+            }
+        }
     }
 
     $srcViewer = Join-Path $srcRuntime "viewer"
@@ -400,5 +425,6 @@ Write-Host "    - 위임 워처 시작/재시작 : ~/.samjil/delegate-agy/script
 Write-Host "      (창 없이 시작하려면 -Hidden)" -ForegroundColor Gray
 Write-Host "    - 위임 워처 안전 중지   : ~/.samjil/delegate-agy/scripts/stop-agy.ps1" -ForegroundColor Gray
 Write-Host "    - 대화 저장소         : ~/.samjil/handoff/" -ForegroundColor Gray
+Write-Host "    - 핸드오프 자동 이어가기: agy 쪽은 워처가 자동 처리(채널에 AUTO.off 파일을 두면 끔). Claude 쪽은 .\install.ps1 -HandoffAutoHook 로 Stop 훅을 등록" -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""

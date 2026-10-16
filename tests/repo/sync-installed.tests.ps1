@@ -47,6 +47,8 @@ W (Join-Path $src "runtime\delegate-agy\scripts\sub\watch-agy.ps1") "watch v1"
 W (Join-Path $src "runtime\viewer\serve-viewer.ps1") "serve v1"
 W (Join-Path $src "runtime\viewer\web\app.js") "app v1"
 W (Join-Path $src "runtime\handoff\templates\t.md") "tpl v1"
+W (Join-Path $src "runtime\handoff\scripts\handoff-lib.ps1") "lib v1"
+W (Join-Path $src "runtime\handoff\scripts\handoff-stop-hook.ps1") "hook v1"
 W (Join-Path $src "samjil-delegate-agy\SKILL.md") "skill v1"
 # 설치본에는 살아 있는 운영 데이터가 있다: 건드리면 안 된다
 W (Join-Path $inst "delegate-agy\runtime\logs\usage.csv") "LIVE DATA"
@@ -59,6 +61,7 @@ Assert-Equal "  종료 코드 0" 0 $r.Code
 Assert-Equal "  워처 스크립트가 복사됐다" "watch v1" ([System.IO.File]::ReadAllText((Join-Path $inst "delegate-agy\scripts\sub\watch-agy.ps1")))
 Assert-Equal "  뷰어 화면 파일이 복사됐다" "app v1" ([System.IO.File]::ReadAllText((Join-Path $inst "viewer\web\app.js")))
 Assert-Equal "  handoff 템플릿이 복사됐다" "tpl v1" ([System.IO.File]::ReadAllText((Join-Path $inst "handoff\templates\t.md")))
+Assert-Equal "  handoff 스크립트(라이브러리·Stop 훅)가 ~/.samjil/handoff/scripts 로 복사됐다" "lib v1|hook v1" (([System.IO.File]::ReadAllText((Join-Path $inst "handoff\scripts\handoff-lib.ps1"))) + "|" + ([System.IO.File]::ReadAllText((Join-Path $inst "handoff\scripts\handoff-stop-hook.ps1"))))
 Assert-Equal "  스킬 문서가 ~/.agents/skills 로 복사됐다" "skill v1" ([System.IO.File]::ReadAllText((Join-Path $agents "samjil-delegate-agy\SKILL.md")))
 Assert-Equal "  운영 데이터(usage.csv)는 그대로다" "LIVE DATA" ([System.IO.File]::ReadAllText((Join-Path $inst "delegate-agy\runtime\logs\usage.csv")))
 Assert-Equal "  handoff 대화 기록은 그대로다" "LIVE HANDOFF" ([System.IO.File]::ReadAllText((Join-Path $inst "handoff\some-project\0001.md")))
@@ -88,6 +91,14 @@ Write-Host "뷰어 본체 스크립트가 바뀌면 재시작 안내를 한다"
 W (Join-Path $src "runtime\viewer\serve-viewer.ps1") "serve v2"
 $r = Run-Sync
 Assert-Equal "  뷰어 재시작 안내가 있다" $true ($r.Out -like "*뷰어 본체 스크립트가 바뀌었습니다*")
+
+Write-Host "handoff-lib.ps1 이 바뀌면 워처 재시작을 알리고, Stop 훅만 바뀌면 알리지 않는다(워처는 켜질 때 라이브러리를 읽어 올린다)"
+W (Join-Path $src "runtime\handoff\scripts\handoff-stop-hook.ps1") "hook v2"
+$r = Run-Sync
+Assert-Equal "  훅 스크립트만 바뀌면 워처 재시작 안내가 없다" $false ($r.Out -like "*워처 스크립트가 바뀌었*")
+W (Join-Path $src "runtime\handoff\scripts\handoff-lib.ps1") "lib v2"
+$r = Run-Sync
+Assert-Equal "  handoff-lib.ps1 이 바뀌면 워처 재시작 안내가 있다" $true ($r.Out -like "*워처 스크립트가 바뀌었*")
 
 Write-Host "소스에서 지운 파일은 설치본에 남기고 알리기만 한다"
 Remove-Item -LiteralPath (Join-Path $src "runtime\handoff\templates\t.md") -Force

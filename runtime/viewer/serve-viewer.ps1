@@ -643,6 +643,12 @@ if ($agyProgressLib) { . $agyProgressLib }
 # 번역 캐시 읽기 함수(Read-TranslationCache)도 같이 쓴다. 인자 없이 불러서 함수만 정의된다.
 $processTranslateLib = Find-DelegateScript "sub\process-translate.ps1"
 if ($processTranslateLib) { . $processTranslateLib }
+# 핸드오프 채널 공용 함수(handoff-lib.ps1): 메시지 머리말의 모델과 "자동 이어가기" 상태를 읽는다. 못 찾으면 그 정보만 빠진다.
+$script:HandoffMetaCache = @{}
+$handoffLibLoaded = $false
+foreach ($hlCand in @((Join-Path $PSScriptRoot "..\handoff\scripts\handoff-lib.ps1"), (Join-Path $env:USERPROFILE ".samjil\handoff\scripts\handoff-lib.ps1"))) {
+    if (Test-Path -LiteralPath $hlCand) { try { . $hlCand; $handoffLibLoaded = $true } catch {}; break }
+}
 
 # HTTP 리스너 기동 (충돌 시 기존 뷰어 자동 정리 및 대체 포트 탐색)
 $listener = $null
@@ -1052,28 +1058,34 @@ try {
                                     }
                                 }
 
+                                # 메시지 머리말의 모델·답장대상·자동(없으면 빈 값). 파일이 안 바뀌면 캐시를 쓴다.
+                                $mMeta = @{ model = ""; replyTo = ""; auto = $false }
+                                if ($handoffLibLoaded -and $msgFilesByNum.ContainsKey($mNum)) {
+                                    try { $mMeta = Get-HandoffMessageMeta $msgFilesByNum[$mNum].FullName $script:HandoffMetaCache } catch {}
+                                }
                                 $parsedMessages += [PSCustomObject]@{
-                                    num    = $mNum
-                                    time   = $mTime
-                                    dir    = $mDir
-                                    title  = $mTitle
-                                    status = if ($mStatus) { $mStatus } else { "처리됨" }
+                                    num     = $mNum
+                                    time    = $mTime
+                                    dir     = $mDir
+                                    title   = $mTitle
+                                    status  = if ($mStatus) { $mStatus } else { "처리됨" }
+                                    model   = [string]$mMeta.model
+                                    replyTo = [string]$mMeta.replyTo
+                                    auto    = [bool]$mMeta.auto
                                 }
                             }
                         }
 
 
 
+                        $autoSummary = $null
+                        if ($handoffLibLoaded) { try { $autoSummary = Get-HandoffAutoSummary $pDir } catch {} }
                         $resObj = [PSCustomObject]@{
-
                             name     = $pName
-
                             brief    = $briefText
-
                             messages = $parsedMessages
-
                             files    = $fileList
-
+                            auto     = $autoSummary
                         }
 
                         $json = $resObj | ConvertTo-Json -Depth 5
@@ -1150,6 +1162,48 @@ try {
 
                 }
 
+            } elseif ($urlPath -eq "/api/handoff/auto") {
+                # 채널의 자동 이어가기 상태(GET)와 켜기·끄기·한도 초기화(POST ?action=on|off|reset).
+                # 채널 파일(AUTO.off, AUTO.json)을 바꾸는 동작이라 워처 켜기와 같이 POST + 전용 헤더만 받는다.
+                $params = Get-Utf8QueryParams $request.Url
+                $aName = [string]$params["name"]
+                $aAct = [string]$params["action"]
+                $aCode = 200
+                $aPayload = $null
+                $aMsg = ""
+                if (-not $handoffLibLoaded) {
+                    $aCode = 503; $aMsg = "handoff-lib.ps1 not found"
+                } elseif ([string]::IsNullOrWhiteSpace($aName) -or $aName.Contains("..") -or $aName.Contains("/") -or $aName.Contains("\")) {
+                    $aCode = 400; $aMsg = "Invalid project name"
+                } elseif ($request.HttpMethod -ne "GET" -and $request.HttpMethod -ne "POST") {
+                    $aCode = 405; $aMsg = "Method Not Allowed"
+                    $response.Headers.Add("Allow", "GET, POST")
+                } elseif ($request.HttpMethod -eq "POST" -and $request.Headers["X-Samjil-Viewer"] -ne "1") {
+                    $aCode = 403; $aMsg = "Forbidden"
+                } else {
+                    $aDir = Find-HandoffProjectDir $aName
+                    if (-not $aDir) {
+                        $aCode = 404; $aMsg = "Project not found"
+                    } elseif ($request.HttpMethod -eq "POST" -and -not (Set-HandoffAutoAction $aDir $aAct)) {
+                        $aCode = 400; $aMsg = "Invalid action"
+                    } else {
+                        if ($request.HttpMethod -eq "POST") {
+                            Write-Host ("[{0}] 핸드오프 자동 이어가기 {1}: {2}" -f (Get-Date -Format 'HH:mm:ss'), $aAct, $aName) -ForegroundColor Yellow
+                        }
+                        $aPayload = Get-HandoffAutoSummary $aDir
+                    }
+                }
+                $response.StatusCode = $aCode
+                if ($aPayload) {
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($aPayload | ConvertTo-Json -Depth 5))
+                    $response.ContentType = "application/json; charset=utf-8"
+                    $response.Headers.Add("Cache-Control", "no-store")
+                } else {
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($aMsg)
+                    $response.ContentType = "text/plain; charset=utf-8"
+                }
+                $response.ContentLength64 = $bytes.Length
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
             } elseif ($urlPath -eq "/api/delegate/pending") {
 
                 $runtimeDir = Split-Path (Split-Path $DataDir -Parent) -Parent

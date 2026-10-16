@@ -43,6 +43,13 @@
     handoffTreeSort:      document.getElementById("handoff-tree-sort"),
     handoffDirFilter:     document.getElementById("handoff-dir-filter"),
     handoffStatusFilter:  document.getElementById("handoff-status-filter"),
+    handoffLegendClaude:  document.getElementById("handoff-legend-claude"),
+    handoffLegendAgy:     document.getElementById("handoff-legend-agy"),
+    handoffAutoBar:       document.getElementById("handoff-auto-bar"),
+    handoffAutoState:     document.getElementById("handoff-auto-state"),
+    handoffAutoDetail:    document.getElementById("handoff-auto-detail"),
+    handoffAutoToggle:    document.getElementById("handoff-auto-toggle"),
+    handoffAutoReset:     document.getElementById("handoff-auto-reset"),
 
     // 사이드바 푸터 & 컨트롤
     watcherPulseDot:      document.getElementById("watcher-pulse-dot"),
@@ -2529,7 +2536,78 @@
     return dir === "c2a" ? "claude" : (dir === "a2c" ? "agy" : null);
   }
 
-  function dirLabelHtml(dir) {
+  // 모델 ID -> 사람이 읽는 이름. 모르는 모양이면 추측하지 않고 그대로 돌려준다.
+  //   claude-opus-4-5-20251101 -> Claude Opus 4.5 · claude-sonnet-5-5 -> Claude Sonnet 5.5 · claude-3-5-sonnet-20241022 -> Claude 3.5 Sonnet
+  //   gemini-3.8-flash-high -> Gemini 3.8 Flash (High) · "Claude Opus 5.5" 처럼 이미 사람이 쓴 이름(공백·대문자)은 그대로
+  function formatModelName(raw) {
+    var s = String(raw == null ? "" : raw).trim();
+    if (!s) return "";
+    if (/[\sA-Z]/.test(s)) return s;
+    s = s.replace(/\[[^\]]*\]$/, "");
+    var cap = function (w) { return w.charAt(0).toUpperCase() + w.slice(1); };
+    var m = s.match(/^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/);
+    if (m) return "Claude " + cap(m[1]) + " " + m[2] + (m[3] ? "." + m[3] : "");
+    m = s.match(/^claude-(\d+)(?:-(\d+))?-(opus|sonnet|haiku)(?:-\d{8})?$/);
+    if (m) return "Claude " + m[1] + (m[2] ? "." + m[2] : "") + " " + cap(m[3]);
+    m = s.match(/^gemini-(\d+(?:\.\d+)?)-(flash|pro|ultra|nano|lite)(?:-(low|medium|high))?$/);
+    if (m) return "Gemini " + m[1] + " " + cap(m[2]) + (m[3] ? " (" + cap(m[3]) + ")" : "");
+    return s;
+  }
+
+  // 메시지 목록(번호 오름차순)에서 두 쪽이 가장 최근에 쓴 모델(메시지 머리말의 `모델:` 기준). 없으면 빈 문자열.
+  function handoffLatestModels(messages) {
+    var out = { claude: "", agy: "" };
+    var list = Array.isArray(messages) ? messages : [];
+    for (var i = list.length - 1; i >= 0; i--) {
+      var m = list[i];
+      if (!m || !m.model) continue;
+      var p = dirParty(m.dir);
+      if (p && !out[p]) out[p] = m.model;
+      if (out.claude && out.agy) break;
+    }
+    return out;
+  }
+
+  // 메시지 하나의 "보낸 쪽 → 받는 쪽" 이름.
+  //   보낸 쪽: 그 메시지 머리말의 모델(없는 옛 메시지는 Claude/agy 라고만).
+  //   받는 쪽: 그 메시지에 답한 메시지(답장대상이 이 번호)의 모델이 있으면 그것(실제로 받은 쪽). 아직 답이 없으면 그 쪽이 가장 최근에 쓴 모델
+  //            (inferred=true 로 표시해 "추정"임을 밝힌다). 그것도 없으면 Claude/agy 라고만.
+  function handoffLabelParts(m, messages) {
+    var senderParty = m ? dirParty(m.dir) : null;
+    if (!senderParty) return null;
+    var receiverParty = senderParty === "claude" ? "agy" : "claude";
+    var generic = { claude: "Claude", agy: "agy" };
+    var list = Array.isArray(messages) ? messages : [];
+    var full = m;
+    if (m.model === undefined) {
+      for (var k = 0; k < list.length; k++) { if (list[k] && String(list[k].num) === String(m.num)) { full = list[k]; break; } }
+    }
+    var sender = formatModelName(full.model) || generic[senderParty];
+    var receiver = "";
+    var inferred = false;
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i];
+      if (r && r.model && r.replyTo && String(r.replyTo) === String(m.num) && dirParty(r.dir) === receiverParty) {
+        receiver = formatModelName(r.model);
+        break;
+      }
+    }
+    if (!receiver) {
+      var latest = handoffLatestModels(list)[receiverParty];
+      if (latest) { receiver = formatModelName(latest); inferred = true; }
+    }
+    if (!receiver) receiver = generic[receiverParty];
+    return { senderParty: senderParty, sender: sender, receiverParty: receiverParty, receiver: receiver, inferred: inferred };
+  }
+
+  // 방향 표시: 모델명으로 "Claude Opus 5.5 → Gemini 3.8 Flash (High)". 채널 정보가 없으면 예전처럼 Claude/agy.
+  function dirLabelHtml(dir, m, channelName) {
+    var data = (m && channelName && handoffChannels[channelName]) ? handoffChannels[channelName] : null;
+    var parts = m ? handoffLabelParts(m, data ? data.messages : null) : null;
+    if (parts) {
+      var tip = parts.inferred ? ' title="이 메시지에 답한 기록이 아직 없어, 그 쪽이 가장 최근에 쓴 모델로 표시했습니다"' : "";
+      return '<span class="who-' + parts.senderParty + '">' + escapeHtml(parts.sender) + '</span> → <span' + tip + '>' + escapeHtml(parts.receiver) + '</span>';
+    }
     if (dir === "c2a") return '<span class="who-claude">Claude</span> → agy';
     if (dir === "a2c") return '<span class="who-agy">agy</span> → Claude';
     return escapeHtml(dir || "");
@@ -2600,8 +2678,8 @@
   function handoffRow(projectName, m, subPrefix) {
     var waitText = "";
     if (m.status === "보냄" || m.status === "읽음") {
-      waitText = m.dir === "c2a" ? '<span class="who-agy">agy 처리 대기</span>' :
-                 (m.dir === "a2c" ? '<span class="who-claude">Claude 처리 대기</span>' : "");
+      var waitParts = handoffLabelParts(m, handoffChannels[projectName] ? handoffChannels[projectName].messages : null);
+      if (waitParts) waitText = '<span class="who-' + waitParts.receiverParty + '">' + escapeHtml(waitParts.receiver) + ' 처리 대기</span>';
     }
     return buildRow({
       party: dirParty(m.dir),
@@ -2609,7 +2687,7 @@
       titleHtml: '<span class="num">#' + escapeHtml(m.num) + '</span>' + escapeHtml(m.title || "(제목 없음)"),
       subHtml: (subPrefix ? '<span>' + subPrefix + '</span>' : "") +
         '<span>' + escapeHtml(projectName) + '</span>' +
-        (waitText || '<span>' + dirLabelHtml(m.dir) + '</span>'),
+        (waitText || '<span>' + dirLabelHtml(m.dir, m, projectName) + '</span>'),
       sideHtml: stepsHtml(m.status),
       onClick: goHandoffProject(projectName, m)
     });
@@ -4878,10 +4956,76 @@
     }
   }
 
+  // 머리 범례와 방향 필터의 이름을 지금 보는 메시지들의 최근 모델로(없으면 Claude/agy).
+  function updateHandoffPartyLabels(items) {
+    var latest = handoffLatestModels((items || []).map(function (it) { return it.msg; }));
+    var claudeName = formatModelName(latest.claude) || "Claude";
+    var agyName = formatModelName(latest.agy) || "agy";
+    if (els.handoffLegendClaude) els.handoffLegendClaude.textContent = claudeName + " 보냄";
+    if (els.handoffLegendAgy) els.handoffLegendAgy.textContent = agyName + " 보냄";
+    if (els.handoffDirFilter) {
+      for (var i = 0; i < els.handoffDirFilter.options.length; i++) {
+        var o = els.handoffDirFilter.options[i];
+        if (o.value === "c2a") o.textContent = claudeName + " → " + agyName;
+        else if (o.value === "a2c") o.textContent = agyName + " → " + claudeName;
+      }
+    }
+  }
+
+  // 자동 이어가기 상태 줄: 지금 보는 메시지가 채널 하나의 것일 때만 보인다. 상태는 /api/handoff/project 의 auto.
+  function handoffAutoText(auto, nowMs) {
+    if (!auto) return null;
+    if (!auto.enabled) return { state: "꺼짐", detail: "이 채널은 agy 가 자동으로 답하지 않습니다.", kind: "off" };
+    if (auto.halted) return { state: "멈춤 · 사용자 확인 필요", detail: auto.haltedReason || "자동 왕복 한도에 도달했습니다.", kind: "halted" };
+    var flight = Array.isArray(auto.inFlight) && auto.inFlight.length ? auto.inFlight[0] : null;
+    if (flight) {
+      var started = Date.parse(String(flight.at || "").replace(" ", "T"));
+      var mins = isNaN(started) ? null : Math.max(0, Math.round(((nowMs || Date.now()) - started) / 60000));
+      return { state: "켜짐 · agy 처리 중", detail: "#" + flight.num + (mins == null ? "" : " · " + mins + "분 경과") + " · 왕복 " + auto.rounds + "/" + auto.maxRounds, kind: "busy" };
+    }
+    return { state: "켜짐", detail: "왕복 " + auto.rounds + "/" + auto.maxRounds + " (최근 " + auto.windowMinutes + "분) · Claude 메시지에 agy 가 자동으로 답합니다.", kind: "on" };
+  }
+
+  function renderHandoffAutoBar(items) {
+    if (!els.handoffAutoBar) return;
+    var channels = {};
+    var count = 0;
+    (items || []).forEach(function (it) { if (it.channel && !channels[it.channel]) { channels[it.channel] = true; count++; } });
+    var channel = count === 1 ? Object.keys(channels)[0] : "";
+    var data = channel ? handoffChannels[channel] : null;
+    var txt = data ? handoffAutoText(data.auto, Date.now()) : null;
+    if (!txt) { els.handoffAutoBar.style.display = "none"; els.handoffAutoBar.removeAttribute("data-channel"); return; }
+    els.handoffAutoBar.style.display = "flex";
+    els.handoffAutoBar.setAttribute("data-channel", channel);
+    els.handoffAutoBar.setAttribute("data-kind", txt.kind);
+    if (els.handoffAutoState) els.handoffAutoState.textContent = "자동 이어가기 · " + txt.state;
+    if (els.handoffAutoDetail) els.handoffAutoDetail.textContent = txt.detail;
+    if (els.handoffAutoToggle) {
+      els.handoffAutoToggle.textContent = data.auto.enabled ? "끄기" : "켜기";
+      els.handoffAutoToggle.setAttribute("data-action", data.auto.enabled ? "off" : "on");
+    }
+    if (els.handoffAutoReset) els.handoffAutoReset.style.display = txt.kind === "halted" ? "" : "none";
+  }
+
+  function postHandoffAuto(action) {
+    var channel = els.handoffAutoBar ? els.handoffAutoBar.getAttribute("data-channel") : "";
+    if (!channel) return;
+    fetch("/api/handoff/auto?name=" + encodeURIComponent(channel) + "&action=" + encodeURIComponent(action), { method: "POST", headers: { "X-Samjil-Viewer": "1" } })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return loadHandoffProjects(true);
+      })
+      .catch(function (err) {
+        if (els.handoffAutoDetail) els.handoffAutoDetail.textContent = "요청에 실패했습니다: " + err.message;
+      });
+  }
+
   function renderHandoffMessages() {
     if (!els.handoffCards) return;
 
     var items = handoffMessagesOf(handoffChannels, claudeTree, currentHandoffProject, currentHandoffSession);
+    updateHandoffPartyLabels(items);
+    renderHandoffAutoBar(items);
 
     var q = (els.handoffSearch ? els.handoffSearch.value : "").trim().toLowerCase();
     var dirFilter = els.handoffDirFilter ? els.handoffDirFilter.value : "";
@@ -4938,7 +5082,7 @@
         '<span class="handoff-num">#' + escapeHtml(m.num) + '</span>',
         '<div class="handoff-card-header-left">',
         '  <span class="handoff-title" title="' + escapeHtml(m.title || "") + '"><span class="handoff-channel">' + escapeHtml(channel) + '</span>' + escapeHtml(m.title || "(제목 없음)") + '</span>',
-        '  <span class="handoff-dir">' + dirLabelHtml(m.dir) + '</span>',
+        '  <span class="handoff-dir">' + dirLabelHtml(m.dir, m, channel) + '</span>',
         '</div>',
         '<div class="handoff-card-header-right">',
         '  <span class="handoff-time">' + escapeHtml(m.time || "") + '</span>',
@@ -5173,6 +5317,8 @@
     // Handoff 사이드바 검색 및 필터
     if (els.handoffProjectSearch) els.handoffProjectSearch.addEventListener("input", renderHandoffTree);
     if (els.handoffDirFilter) els.handoffDirFilter.addEventListener("change", renderHandoffMessages);
+    if (els.handoffAutoToggle) els.handoffAutoToggle.addEventListener("click", function () { postHandoffAuto(els.handoffAutoToggle.getAttribute("data-action") || "off"); });
+    if (els.handoffAutoReset) els.handoffAutoReset.addEventListener("click", function () { postHandoffAuto("reset"); });
     if (els.handoffStatusFilter) els.handoffStatusFilter.addEventListener("change", renderHandoffMessages);
     if (els.handoffSearch) els.handoffSearch.addEventListener("input", renderHandoffMessages);
 

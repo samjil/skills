@@ -8,6 +8,7 @@
 #   runtime\delegate-agy\scripts   -> ~\.samjil\delegate-agy\scripts      (delegate-agy\runtime 의 로그·큐·세션은 건드리지 않는다)
 #   runtime\viewer                 -> ~\.samjil\viewer
 #   runtime\handoff\templates      -> ~\.samjil\handoff\templates         (handoff 의 대화 기록은 건드리지 않는다)
+#   runtime\handoff\scripts        -> ~\.samjil\handoff\scripts           (자동 이어가기 라이브러리·Stop 훅·등록기. 워처와 뷰어가 불러 쓴다)
 #   <스킬>\SKILL.md                -> ~\.agents\skills\<스킬>\SKILL.md      (samjil-handoff, samjil-delegate-agy, samjil-git-commit)
 # 소스에서 지운 파일은 설치본에 남는다(지우지 않고 "설치본에만 있는 파일"로 알리기만 한다).
 #
@@ -61,7 +62,8 @@ function Compare-Tree([string]$Src, [string]$Dest) {
 $mappings = @(
     @{ Name = "delegate-agy 스크립트"; Src = (Join-Path $SourceRoot "runtime\delegate-agy\scripts"); Dest = (Join-Path $InstallRoot "delegate-agy\scripts") },
     @{ Name = "웹 뷰어";               Src = (Join-Path $SourceRoot "runtime\viewer");               Dest = (Join-Path $InstallRoot "viewer") },
-    @{ Name = "handoff 템플릿";        Src = (Join-Path $SourceRoot "runtime\handoff\templates");    Dest = (Join-Path $InstallRoot "handoff\templates") }
+    @{ Name = "handoff 템플릿";        Src = (Join-Path $SourceRoot "runtime\handoff\templates");    Dest = (Join-Path $InstallRoot "handoff\templates") },
+    @{ Name = "handoff 스크립트";      Src = (Join-Path $SourceRoot "runtime\handoff\scripts");      Dest = (Join-Path $InstallRoot "handoff\scripts") }
 )
 
 $allChanged = @()
@@ -103,7 +105,8 @@ foreach ($c in $allChanged) {
 if ($allChanged.Count -gt 0) { Write-Host ("복사했습니다: {0}개" -f $allChanged.Count) -ForegroundColor Green }
 
 # --- 재시작이 필요한가 ---
-$watcherChanged = @($allChanged | Where-Object { $_.Group -eq "delegate-agy 스크립트" -and $_.Rel -like "*.ps1" })
+# 워처는 켜질 때 handoff-lib.ps1(handoff 스크립트)도 읽어 올리므로 그 파일이 바뀌어도 워처를 다시 켜야 한다(훅·등록기만 바뀐 것은 해당 없음)
+$watcherChanged = @($allChanged | Where-Object { ($_.Group -eq "delegate-agy 스크립트" -and $_.Rel -like "*.ps1") -or ($_.Group -eq "handoff 스크립트" -and $_.Rel -eq "handoff-lib.ps1") })
 $viewerMain = @("serve-viewer.ps1", "claude-sessions.ps1", "watcher-health.ps1")
 $viewerChanged = @($allChanged | Where-Object { $_.Group -eq "웹 뷰어" -and ($viewerMain -contains $_.Rel) })
 

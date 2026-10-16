@@ -1883,5 +1883,24 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
   box-shadow: inset 0 -1px 0 var(--line-strong, #30363d);
 }
 
-
-
+/* 핸드오프 자동 이어가기 상태 줄 */
+.auto-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.auto-state { font-weight: 600; color: var(--ink); }
+.auto-detail { flex: 1 1 240px; min-width: 0; color: var(--ink-3); }
+.auto-actions { display: inline-flex; gap: 12px; margin-left: auto; }
+.auto-bar[data-kind="halted"] { border-color: rgba(229, 112, 122, 0.45); background: var(--err-soft); }
+.auto-bar[data-kind="halted"] .auto-state { color: var(--err); }
+.auto-bar[data-kind="busy"] .auto-state { color: var(--agy); }
+.auto-bar[data-kind="off"] .auto-state { color: var(--ink-3); }
