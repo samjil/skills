@@ -596,6 +596,13 @@ if (-not (Test-Path $progressFile)) {
 }
 . $progressFile
 
+# 요청의 난이도로 모델의 노력 단계(low / medium / high)를 자동으로 고르는 헬퍼(agy-autotier.ps1). 테스트: tests\delegate-agy
+$autoTierFile = Join-Path $PSScriptRoot "agy-autotier.ps1"
+if (-not (Test-Path $autoTierFile)) {
+    $autoTierFile = Join-Path (Split-Path $PSScriptRoot -Parent) "agy-autotier.ps1"
+}
+. $autoTierFile
+
 # 핸드오프 "자동 이어가기" 펌프(워처 본체만 씀): 채널에 Claude 가 새 메시지를 보내면 agy 에게 위임하고, 답이 오면 회신 메시지로 기록한다.
 # 못 찾거나 불러오지 못해도 워처의 본래 일(inbox 위임)에는 영향이 없다. 함수 정의는 handoff-pump.ps1 머리말 참고. 테스트: tests\handoff
 $script:HandoffPumpReady = $false
@@ -1085,7 +1092,7 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
 
 # 쿼터 초과 등 폴백 대상 오류면(새 세션 시도일 때만) 다음 모델로, 그 외 오류면 즉시 중단합니다.
 
-function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFile, [string]$conversationId = "", [string]$knownModel = "", [string]$taskId = "", [string]$promptFile = "", [string]$requestedModel = "") {
+function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFile, [string]$conversationId = "", [string]$knownModel = "", [string]$taskId = "", [string]$promptFile = "", [string]$requestedModel = "", [string]$autoModel = "") {
     $result = [ordered]@{
         Success        = $false
         Response       = $null
@@ -1112,7 +1119,8 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
     # "실패(시도한 모델: )"로 끝나버립니다. 그래서 $null이 아닌 문자열 자리표시자를 씁니다.
     # 이어가는 세션: 호출 한 번. @model 로 지정했으면 그 모델 하나만(폴백 없음). 아니면 우선순위 목록.
     # @() 로 감싸는 이유: if 식은 원소 하나짜리 배열을 문자열로 풀어서 $candidates[-1] 이 마지막 "글자"가 된다.
-    $candidates = @(if ($conversationId) { "(continue)" } elseif ($requestedModel) { $requestedModel } else { $ModelPriority })
+    # 자동 선택($autoModel, 낮은 단계)은 지정이 아니라 "먼저 시도할 모델"이라, 쿼터 초과 같은 오류면 우선순위 목록으로 이어서 폴백한다.
+    $candidates = @(if ($conversationId) { "(continue)" } elseif ($requestedModel) { $requestedModel } elseif ($autoModel) { @($autoModel) + @($ModelPriority | Where-Object { $_ -ne $autoModel }) } else { $ModelPriority })
 
     foreach ($candidate in $candidates) {
         $result.Attempts++
@@ -1557,6 +1565,15 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
     $requestedModel = $modelCheck.Model
     if ($requestedModel) { Log "  -> 지정 모델(@model): $requestedModel (다른 모델로 자동 전환하지 않음)" }
 
+    # 모델을 지정하지 않았고 새 대화(@session 없음)면 요청 난이도로 노력 단계를 자동 선택한다(agy-autotier.ps1).
+    # 분명히 쉬운 일만 low/medium 으로 낮추고, 애매하거나 어려우면 지금처럼 우선순위 목록(high)을 쓴다. 이어가는 세션은 시작할 때의 모델을 유지한다.
+    $autoModel = ""
+    if (-not $requestedModel -and -not $sessionName -and (Test-AgyAutoTierEnabled)) {
+        $autoTier = Get-AgyAutoTier $promptText (@($targetCwds).Count -gt 0)
+        if ($autoTier.Tier -ne "high") { $autoModel = [string]$autoTier.Model }
+        Log "  -> 모델 자동 선택: $($autoTier.Tier) ($($autoTier.Reason))$(if ($autoModel) { " -> $autoModel 먼저, 안 되면 기본 우선순위" } else { " -> 기본 우선순위" })"
+    }
+
     $missingCwds = @(Get-MissingCwds $targetCwds)
     if ($missingCwds.Count -gt 0) {
         Set-Content -Path $outFile -Value "지정한 @cwd 경로를 찾을 수 없습니다: $($missingCwds -join ', ')" -Encoding UTF8
@@ -1610,7 +1627,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
         [System.IO.File]::WriteAllText($tempPromptFile, $promptText, (New-Object System.Text.UTF8Encoding($false)))
         $safePrompt = $promptText -replace '"', '\"'
 
-        $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwds -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel -taskId $baseName -promptFile $tempPromptFile -requestedModel $requestedModel
+        $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwds -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel -taskId $baseName -promptFile $tempPromptFile -requestedModel $requestedModel -autoModel $autoModel
 
         $agyStderr = [string]$agyResult.StdErr
         if ($agyResult.RawJson) {
@@ -1747,6 +1764,7 @@ Log "  로그 폴더              : $LogsDir"
 
 Log "  모델 우선순위          : $($ModelPriority -join ' -> ')"
 Log "  지정 가능 모델(@model:): $($SelectableModels -join ', ')"
+Log "  모델 자동 선택         : $(if (Test-AgyAutoTierEnabled) { '켜짐 (AGY_AUTO_MODEL=off 로 끔)' } else { '꺼짐 (AGY_AUTO_MODEL)' })"
 
 Log "  컴퓨터 이름            : $ComputerName"
 

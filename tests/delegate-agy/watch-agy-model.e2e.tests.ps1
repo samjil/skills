@@ -64,17 +64,23 @@ try {
     Assert-Equal "  임시 런타임에서 워처가 시작됐다" $true $started
 
     Send-Task "e2e_low"     "@model: gemini-3.8-flash-low`n간단한 질문입니다."
-    Send-Task "e2e_default" "모델을 지정하지 않은 질문입니다."
+    Send-Task "e2e_default" "모델을 지정하지 않은 질문입니다. 이 구조를 설계해 주세요."   # 어려운 단어(설계) -> 자동 선택이 high(기본 우선순위)로 둔다
+    Send-Task "e2e_auto_low" "모델을 지정하지 않은 간단한 질문입니다."   # 분명히 쉬움 -> 자동으로 low
+    Send-Task "e2e_auto_fallback" "이 코드가 왜 느린지 분석해 주세요."   # 분석 -> 자동으로 medium. 쿼터 초과(FAKE_QUOTA_MODELS)면 지정이 아니라서 기본 우선순위로 폴백한다
+    Send-Task "e2e_auto_session" "@session: e2e-auto-session`n간단한 질문입니다."   # @session 이 있으면 자동 선택을 하지 않는다(대화는 시작할 때의 모델을 유지)
     Send-Task "e2e_bad"     "@model: claude-opus-4-6-thinking`n질문"
     Send-Task "e2e_quota"   "@model: gemini-3.8-flash-medium`n질문"
 
-    $names = @("e2e_low", "e2e_default", "e2e_bad", "e2e_quota")
+    $names = @("e2e_low", "e2e_default", "e2e_bad", "e2e_quota", "e2e_auto_low", "e2e_auto_fallback", "e2e_auto_session")
     $deadline = (Get-Date).AddSeconds(120)
     while ((Get-Date) -lt $deadline -and (@($names | Where-Object { $null -ne (Get-Response $_) }).Count -lt $names.Count)) { Start-Sleep -Seconds 2 }
 
     Write-Host "처리 결과 (outbox)"
     Assert-Equal "  @model 로 낮은 단계를 고르면 그 모델로 처리된다" "ok from gemini-3.8-flash-low" (Get-Response "e2e_low")
-    Assert-Equal "  모델을 안 고르면 우선순위 첫 모델로 처리된다" "ok from gemini-3.8-flash-high" (Get-Response "e2e_default")
+    Assert-Equal "  모델을 안 골라도 어려운 요청은 우선순위 첫 모델(high)로 처리된다" "ok from gemini-3.8-flash-high" (Get-Response "e2e_default")
+    Assert-Equal "  모델을 안 고르고 분명히 쉬운 요청은 자동으로 low 로 처리된다" "ok from gemini-3.8-flash-low" (Get-Response "e2e_auto_low")
+    Assert-Equal "  자동 선택(medium)이 쿼터 초과면 지정이 아니므로 기본 우선순위(high)로 폴백해 처리된다" "ok from gemini-3.8-flash-high" (Get-Response "e2e_auto_fallback")
+    Assert-Equal "  @session 이 있으면 쉬운 요청이어도 자동 선택을 하지 않는다(high)" "ok from gemini-3.8-flash-high" (Get-Response "e2e_auto_session")
     $bad = Get-Response "e2e_bad"
     Assert-Equal "  쓸 수 없는 모델(claude)은 agy 를 부르지 않고 실패 메시지를 준다" $true ($bad -like "*지정한 @model 을 쓸 수 없습니다*claude-opus-4-6-thinking*")
     Assert-Equal "    실패 메시지에 쓸 수 있는 모델 목록이 있다" $true ($bad -like "*gemini-3.8-flash-medium*")
@@ -85,10 +91,10 @@ try {
 
     Write-Host "agy 호출 기록 (가짜 agy)"
     $calls = @(if (Test-Path $env:FAKE_ARGS_LOG) { Get-Content $env:FAKE_ARGS_LOG })
-    Assert-Equal "  agy 는 정확히 3번만 불렸다 (low, 기본, 쿼터 초과 medium 1번 / 잘못된 모델은 호출 없음)" 3 $calls.Count
-    Assert-Equal "  low 요청 -> --model gemini-3.8-flash-low" 1 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-low" }).Count
-    Assert-Equal "  기본 요청 -> 첫 우선순위 모델" 1 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-high" }).Count
-    Assert-Equal "  쿼터 초과 요청 -> 다른 모델을 시도하지 않고 medium 1번만" 1 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-medium" }).Count
+    Assert-Equal "  agy 는 정확히 7번 불렸다 (low 2, high 3, 쿼터 초과 medium 2 / 잘못된 모델은 호출 없음)" 7 $calls.Count
+    Assert-Equal "  low: 지정한 요청 1번 + 자동 선택 1번" 2 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-low" }).Count
+    Assert-Equal "  high: 어려운 기본 요청 + 자동 medium 의 폴백 + @session 요청" 3 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-high" }).Count
+    Assert-Equal "  medium: 지정한 쿼터 초과 요청은 다른 모델을 시도하지 않고 1번 + 자동 선택 medium 1번(쿼터 초과 뒤 폴백)" 2 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-medium" }).Count
 
     Write-Host "기록(qa jsonl)에 과정 저장"
 $qaFile = Join-Path $rt "logs\data"
@@ -96,7 +102,7 @@ $deadline2 = (Get-Date).AddSeconds(40)
 $qaRows = @()
 while ((Get-Date) -lt $deadline2) {
     $qaRows = @(Get-ChildItem $qaFile -Filter "qa-*.jsonl" -File -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
-    if (@($qaRows | Where-Object { $_.task_id -like "e2e_*" }).Count -ge 4) { break }
+    if (@($qaRows | Where-Object { $_.task_id -like "e2e_*" }).Count -ge 7) { break }
     Start-Sleep -Seconds 2
 }
 $qaLow = $qaRows | Where-Object { $_.task_id -eq "e2e_low" } | Select-Object -First 1
@@ -206,7 +212,14 @@ Write-Host "사용량 기록 (usage.csv)"
     $usage = @(Import-Csv (Join-Path $rt "logs\usage.csv") -Encoding UTF8)
     $row = { param($id) $usage | Where-Object { $_.task_id -eq $id } | Select-Object -First 1 }
     Assert-Equal "  low: 모델 칸에 그 모델, 상태 OK" "gemini-3.8-flash-low|OK" ("{0}|{1}" -f (& $row "e2e_low").model, (& $row "e2e_low").status)
-    Assert-Equal "  기본: 모델 칸에 첫 우선순위 모델" "gemini-3.8-flash-high|OK" ("{0}|{1}" -f (& $row "e2e_default").model, (& $row "e2e_default").status)
+    Assert-Equal "  기본(어려운 요청): 모델 칸에 첫 우선순위 모델" "gemini-3.8-flash-high|OK" ("{0}|{1}" -f (& $row "e2e_default").model, (& $row "e2e_default").status)
+    Assert-Equal "  자동 low: 모델 칸에 low, 상태 OK" "gemini-3.8-flash-low|OK" ("{0}|{1}" -f (& $row "e2e_auto_low").model, (& $row "e2e_auto_low").status)
+    Assert-Equal "  자동 medium 이 폴백: 모델 칸에 실제로 쓴 high, 시도한 모델에 medium 이 먼저 있다" $true (((& $row "e2e_auto_fallback").model -eq "gemini-3.8-flash-high") -and ((& $row "e2e_auto_fallback").tried_models -like "*gemini-3.8-flash-medium*gemini-3.8-flash-high*"))
+    $wlog = @(Get-Content (Join-Path $rt "logs\watcher.log") -Encoding UTF8)
+    Assert-Equal "  watcher.log 에 자동 선택 이유가 남는다(low)" 1 @($wlog | Where-Object { $_ -like "*e2e_auto_low*모델 자동 선택: low*" }).Count
+    Assert-Equal "  watcher.log: 분석 요청은 medium 으로 골랐다고 남는다" 1 @($wlog | Where-Object { $_ -like "*e2e_auto_fallback*모델 자동 선택: medium*" }).Count
+    Assert-Equal "  watcher.log: 어려운 요청은 high(기본 우선순위)" 1 @($wlog | Where-Object { $_ -like "*e2e_default*모델 자동 선택: high*" }).Count
+    Assert-Equal "  watcher.log: @session 요청과 @model 요청은 자동 선택 줄이 없다" 0 @($wlog | Where-Object { $_ -like "*e2e_auto_session*모델 자동 선택*" -or $_ -like "*e2e_low*모델 자동 선택*" }).Count
     Assert-Equal "  잘못된 모델: ERROR, 시도한 모델 칸에 요청값 (화면에서 어떤 모델을 요청했는지 보임)" "ERROR|claude-opus-4-6-thinking" ("{0}|{1}" -f (& $row "e2e_bad").status, (& $row "e2e_bad").tried_models)
     Assert-Equal "  쿼터 초과: ERROR, 시도한 모델은 하나" "ERROR|gemini-3.8-flash-medium" ("{0}|{1}" -f (& $row "e2e_quota").status, (& $row "e2e_quota").tried_models)
 }
