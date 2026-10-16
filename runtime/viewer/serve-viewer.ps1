@@ -111,6 +111,16 @@ if (Test-Path -LiteralPath $claudeSessionsScript) {
     }
 }
 
+# Claude 세션 기록에서 호출별 사용량을 읽는 헬퍼(핸드오프 c2a 카드의 Claude 쪽 토큰). 못 불러와도 그 기능만 빠진다.
+$claudeUsageScript = Join-Path $PSScriptRoot "claude-usage.ps1"
+if (Test-Path -LiteralPath $claudeUsageScript) {
+    try {
+        . $claudeUsageScript
+    } catch {
+        Write-Warning ("claude-usage.ps1 로드 실패: {0}" -f $_.Exception.Message)
+    }
+}
+
 $RouteMap = [ordered]@{
 
     "/handoff/" = (Resolve-Path $HandoffDir).Path
@@ -1076,6 +1086,9 @@ try {
                                 if ($handoffLibLoaded -and $msgFilesByNum.ContainsKey($mNum)) {
                                     try { $mMeta = Get-HandoffMessageMeta $msgFilesByNum[$mNum].FullName $script:HandoffMetaCache } catch {}
                                 }
+                                # 메시지 파일이 만들어진 시각(UTC, 초 단위). Claude 가 보낸 c2a 가 어느 Claude 호출에서 나왔는지 짐작하는 데 쓴다(수정해도 만든 시각은 그대로).
+                                $mCreated = ""
+                                if ($msgFilesByNum.ContainsKey($mNum)) { try { $mCreated = $msgFilesByNum[$mNum].CreationTimeUtc.ToString("yyyy-MM-ddTHH:mm:ssZ") } catch {} }
                                 $parsedMessages += [PSCustomObject]@{
                                     num     = $mNum
                                     time    = $mTime
@@ -1085,6 +1098,7 @@ try {
                                     model   = [string]$mMeta.model
                                     replyTo = [string]$mMeta.replyTo
                                     auto    = [bool]$mMeta.auto
+                                    created = $mCreated
                                 }
                             }
                         }
@@ -1462,6 +1476,34 @@ try {
                 $response.ContentLength64 = $bytes.Length
                 $response.OutputStream.Write($bytes, 0, $bytes.Length)
 
+            } elseif ($urlPath -eq "/api/handoff/claude-usage") {
+                # c2a 메시지 카드의 Claude 쪽 토큰: 세션(session)의 기록에서 각 시각(ts, 쉼표로 여럿) 바로 앞에 끝난 Claude 호출의 사용량.
+                # 근사치다(claude-usage.ps1 머리말). 읽기만 하고, 세션 ID 는 영문자·숫자·- 만 받는다.
+                $params = Get-Utf8QueryParams $request.Url
+                $cuSid = [string]$params["session"]
+                if ($cuSid -notmatch '^[A-Za-z0-9-]{8,64}$' -or -not (Get-Command Find-ClaudeCallBefore -ErrorAction SilentlyContinue)) {
+                    $response.StatusCode = 400
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes("Invalid session")
+                    $response.ContentType = "text/plain; charset=utf-8"
+                } else {
+                    $cuPath = Get-ClaudeTranscriptPath $cuSid
+                    $cuItems = [ordered]@{}
+                    if ($cuPath) {
+                        $cuCalls = Get-ClaudeUsageCalls $cuPath
+                        foreach ($cuTs in @(([string]$params["ts"]) -split ',' | Where-Object { $_ } | Select-Object -First 200)) {
+                            $cuAt = [datetime]::MinValue
+                            if ([datetime]::TryParse($cuTs, [System.Globalization.CultureInfo]::InvariantCulture, ([System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal), [ref]$cuAt)) {
+                                $cuItems[$cuTs] = Find-ClaudeCallBefore $cuCalls $cuAt
+                            } else { $cuItems[$cuTs] = $null }
+                        }
+                    }
+                    $json = ([PSCustomObject]@{ session = $cuSid; found = [bool]$cuPath; items = $cuItems }) | ConvertTo-Json -Depth 5
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+                    $response.ContentType = "application/json; charset=utf-8"
+                    $response.Headers.Add("Cache-Control", "no-store")
+                }
+                $response.ContentLength64 = $bytes.Length
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
             } elseif ($urlPath -eq "/api/delegate/process") {
 
                 # 기록에 과정이 저장되지 않은 옛 위임용: agy 의 대화 id 로 대화 기록에서 도구 호출 목록을 읽어 온다.

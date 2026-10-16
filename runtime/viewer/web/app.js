@@ -1,6 +1,6 @@
 // app.js
 // samjil 에이전트 통합 대시보드 & 뷰어
-// 2단 사이드바 레이아웃: 대시보드(Home), 세션별 위임 실행 기록(QA), 프로젝트별 인수인계(Handoff)
+// 2단 사이드바 레이아웃: 대시보드(Home), 세션별 에이전트 위임(QA), 프로젝트별 인수인계(Handoff)
 (function () {
   "use strict";
 
@@ -394,7 +394,7 @@
       els.topbarCategory.textContent = "홈";
       els.topbarCurrent.textContent = "대시보드";
     } else if (currentNav === "qa") {
-      els.topbarCategory.textContent = "위임 실행 기록";
+      els.topbarCategory.textContent = "에이전트 위임";
       if (!currentQaProject) {
         els.topbarCurrent.textContent = "전체 프로젝트 피드";
       } else {
@@ -407,7 +407,7 @@
         }
       }
     } else if (currentNav === "handoff") {
-      els.topbarCategory.textContent = "에이전트 인수인계";
+      els.topbarCategory.textContent = "에이전트 협의";
       if (!currentHandoffProject) {
         els.topbarCurrent.textContent = "전체 프로젝트";
       } else {
@@ -1519,6 +1519,30 @@
     return null;
   }
 
+  // BRIEF.md 의 "세션 ID: `ID1`, `ID2`" 줄에서 세션 ID 를 모두 꺼낸다(자리표시자 <...> 는 뺀다). handoff-lib.ps1 의 Get-HandoffBriefSessionIds 와 같은 규칙이다.
+  function handoffBriefSessionIds(brief) {
+    var line = /세션\s*ID\*{0,2}\s*[:：]([^\r\n]*)/.exec(String(brief == null ? "" : brief));
+    var ids = [];
+    if (!line) { return ids; }
+    var re = /`([^`]+)`/g, m;
+    while ((m = re.exec(line[1])) !== null) {
+      var id = m[1].trim();
+      if (id && id.charAt(0) !== "<" && ids.indexOf(id) < 0) { ids.push(id); }
+    }
+    return ids;
+  }
+
+  // 세션 전용 채널(BRIEF 에 세션 ID 가 적힌 채널)의 메시지는 그 세션에 붙인다. 세션 기록에 파일 이름이 안 찍혀 연결이 없고 답장대상 이웃도 연결이 없을 때의 마지막 근거다.
+  // 이어서 다시 열어 ID 가 여럿이면 목록의 뒤쪽(최근) 것부터 보고, 트리에 있는 세션만 쓴다.
+  function handoffBriefNodeOf(channelData, tree) {
+    var ids = handoffBriefSessionIds(channelData && channelData.brief);
+    for (var i = ids.length - 1; i >= 0; i--) {
+      var node = handoffSessionNodeOf(tree, ids[i]);
+      if (node) { return node; }
+    }
+    return null;
+  }
+
   function handoffNodeOf(channelName, msg, channelData, tree) {
     var file = handoffMsgFileOf(msg, channelData);
     var link = handoffLinkOf(tree, channelName, file);
@@ -1526,6 +1550,8 @@
     if (direct) { return direct; }
     var chained = handoffChainNodeOf(channelName, msg, channelData, tree);
     if (chained) { return chained; }
+    var bound = handoffBriefNodeOf(channelData, tree);
+    if (bound) { return bound; }
     var cName = (channelName != null && String(channelName).trim() !== "") ? String(channelName) : "";
     return {
       projectId: QA_UNLINKED,
@@ -1881,7 +1907,7 @@
 
   // 사이드바 행(프로젝트·세션)에는 시각을 두 개 보인다.
   //   세션: Claude Desktop 세션의 마지막 활동. 프로젝트 행은 그 안의 세션들 중 가장 최근 활동.
-  //   위임(위임 실행 기록) / 인수인계(에이전트 인수인계): agy 쪽 기록의 시각.
+  //   위임(에이전트 위임) / 인수인계(에이전트 협의): agy 쪽 기록의 시각.
   function treeSessionTime(node) {
     if (!node) return "";
     if (node.lastActivity) return String(node.lastActivity);
@@ -1915,7 +1941,7 @@
       (extraHtml || "") + '</span>';
   }
 
-  // 위임 실행 기록 화면의 날짜 정렬은 agy 작업(위임 기록) 시각 기준이라 라벨도 그렇게 보인다
+  // 에이전트 위임 화면의 날짜 정렬은 agy 작업(위임 기록) 시각 기준이라 라벨도 그렇게 보인다
   function qaSortLabel(m) {
     if (m.value === "recent-desc") return "agy 최근 작업순";
     if (m.value === "recent-asc") return "agy 오래된 작업순";
@@ -2272,7 +2298,7 @@
       '<span class="project-icon">' + icon("feed") + '</span>',
       '<div class="project-info">',
       '  <span class="project-name">전체 프로젝트</span>',
-      '  <span class="project-sub session-sub">모든 인수인계를 시간순으로</span>',
+      '  <span class="project-sub session-sub">모든 협의를 시간순으로</span>',
       '</div>',
       '<span class="project-badge">' + totalAllMsgs + '</span>'
     ].join("");
@@ -2295,7 +2321,7 @@
       var sessCount = p.sessions ? p.sessions.length : 0;
       var waitHtml = p.waiting > 0 ? '<span class="tree-time-count who-agy">대기 중 ' + p.waiting + '</span>' : '';
       // 시각 두 줄: 세션(Desktop 세션의 마지막 활동, 세션 개수 포함) / 인수인계(마지막 메시지 시각)
-      var subHtml = treeTimePairHtml("project-sub session-sub", p, "인수인계", p.latestTime ? formatRelativeTime(p.latestTime) : "없음", p.latestTime, '<span class="tree-time-count">' + sessCount + '개</span>' + waitHtml);
+      var subHtml = treeTimePairHtml("project-sub session-sub", p, "협의", p.latestTime ? formatRelativeTime(p.latestTime) : "없음", p.latestTime, '<span class="tree-time-count">' + sessCount + '개</span>' + waitHtml);
 
       var badgeHtml = '<span class="project-badge">' + p.total + '</span>';
       if (p.waiting > 0) {
@@ -2354,7 +2380,7 @@
           sItem.setAttribute("role", "treeitem");
 
           var sWaitHtml = s.waiting > 0 ? '<span class="tree-time-count who-agy">대기 중 ' + s.waiting + '</span>' : '';
-          var sSubHtml = treeTimePairHtml("session-sub", s, "인수인계", s.latestTime ? formatRelativeTime(s.latestTime) : "없음", s.latestTime, sWaitHtml);
+          var sSubHtml = treeTimePairHtml("session-sub", s, "협의", s.latestTime ? formatRelativeTime(s.latestTime) : "없음", s.latestTime, sWaitHtml);
 
           var sBadgeHtml = '<span class="session-badge">' + s.total + '</span>';
           if (s.waiting > 0) {
@@ -2624,6 +2650,169 @@
       '<span class="steps-label">' + escapeHtml(status || "상태 없음") + '</span></span>';
   }
 
+  // 핸드오프 채널 이름 -> 워처가 위임 작업 이름(handoff_<이름>_<번호>_<시각>)에 쓰는 이름.
+  // handoff-pump.ps1 의 ConvertTo-HandoffSafeName 와 같은 규칙이다(영문·숫자·한글·_· - 만 남기고 40자까지).
+  function handoffSafeName(name) {
+    var s = String(name == null ? "" : name).replace(/[^A-Za-z0-9가-힣_-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!s) s = "channel";
+    if (s.length > 40) s = s.substring(0, 40).replace(/-+$/g, "");
+    return s;
+  }
+
+  // 토큰 수를 짧게: 1만 이상은 "2.4만", 그 밖에는 천 단위 쉼표.
+  function tokenShort(n) {
+    n = Number(n) || 0;
+    return n >= 10000 ? (n / 10000).toFixed(1) + "만" : n.toLocaleString();
+  }
+
+  // 한 채널의 핸드오프 위임 기록(위임 완료 레코드)에서 "메시지 번호 -> 그 호출이 쓴 토큰"을 만든다.
+  // 레코드의 task_id 는 handoff_<채널>_<c2a 번호>_<시각> 이다. agy 는 채널마다 대화 하나를 이어 쓰고 usage 는 그 대화의 누적값이라,
+  // 같은 대화(session_id)의 앞 호출과의 차이를 "이번 호출이 쓴 양"으로 본다. 앞 호출보다 줄었거나 앞 호출이 없으면(새 대화) 그 값이 곧 이번 호출이다.
+  function handoffUsageIndex(channel, records) {
+    var prefix = "handoff_" + handoffSafeName(channel) + "_";
+    var num = function (v) { var n = parseInt(v, 10); return isNaN(n) ? 0 : n; };
+    var list = [];
+    (Array.isArray(records) ? records : []).forEach(function (r) {
+      var id = r && r.task_id ? String(r.task_id) : "";
+      if (id.indexOf(prefix) !== 0) { return; }
+      var mm = /^(\d{4})_\d+$/.exec(id.slice(prefix.length));
+      if (!mm) { return; }
+      var total = num(r.total_tokens);
+      if (total <= 0) { return; }
+      list.push({
+        num: mm[1], ts: String(r.timestamp || ""), sid: String(r.session_id || r.session || ""), model: String(r.model || ""),
+        input: num(r.input_tokens), output: num(r.output_tokens), thinking: num(r.thinking_tokens), total: total
+      });
+    });
+    list.sort(function (a, b) { return a.ts < b.ts ? -1 : (a.ts > b.ts ? 1 : 0); });
+    var prev = {};
+    var out = {};
+    list.forEach(function (c) {
+      var p = prev[c.sid];
+      var baseline = true;
+      var d = { input: c.input, output: c.output, thinking: c.thinking, total: c.total };
+      if (p && c.total >= p.total && c.input >= p.input && c.output >= p.output && c.thinking >= p.thinking) {
+        baseline = false;
+        d = { input: c.input - p.input, output: c.output - p.output, thinking: c.thinking - p.thinking, total: c.total - p.total };
+      }
+      prev[c.sid] = c;
+      out[c.num] = { num: c.num, model: c.model, ts: c.ts, delta: d, cumulative: { input: c.input, output: c.output, thinking: c.thinking, total: c.total }, baseline: baseline };
+    });
+    return out;
+  }
+
+  // 머리줄 칩 글자와 설명(title). 설명은 이 숫자가 대화 누적에서 뺀 증가분이라는 것과 세부 값을 알려 준다.
+  function handoffUsageText(u) {
+    if (!u || !u.delta) { return null; }
+    var d = u.delta, c = u.cumulative;
+    var sign = u.baseline ? "" : "+";
+    var tip = [
+      u.baseline ? "이 대화의 첫 호출(누적값이 곧 이번 호출)" : "이번 호출이 쓴 양 (agy 대화 누적값의 증가분)",
+      "총 " + sign + d.total.toLocaleString() + " · 입력 " + sign + d.input.toLocaleString() + " · 출력 " + sign + d.output.toLocaleString() + " · 사고 " + sign + d.thinking.toLocaleString(),
+      "대화 누적 총 " + c.total.toLocaleString() + " 토큰" + (u.model ? " · " + u.model : "")
+    ].join("\n");
+    return { chip: sign + tokenShort(d.total) + " 토큰", title: tip, delta: d, cumulative: c, baseline: u.baseline };
+  }
+
+  // Claude 가 보낸 c2a 카드의 사용량(근사). u 는 서버(/api/handoff/claude-usage)가 돌려준 호출 하나의 값:
+  //   front = 출력 + 새 입력(이 호출이 한 일의 크기), context = 그 호출이 본 대화 맥락의 크기(캐시에서 다시 읽은 입력 포함).
+  // 맥락은 호출마다 대화 전체가 거의 그대로 다시 읽혀 "이 메시지에 든 양"이 아니라서 앞에 두지 않고 따로 보인다.
+  function claudeUsageText(u) {
+    if (!u || typeof u.front !== "number") { return null; }
+    var n = function (v) { return Number(v || 0).toLocaleString(); };
+    var tip = [
+      "이 메시지를 만든 Claude 호출 한 번의 사용량 (근사치)",
+      "출력 " + n(u.output) + " + 새 입력 " + n(u.newInput) + " = " + n(u.front) + " 토큰",
+      "새 입력 = 이 호출에서 처음 들어간 맥락(일반 입력 + 캐시에 새로 쓴 입력)",
+      "대화 맥락 " + n(u.context) + " 토큰 = 새 입력 + 캐시에서 다시 읽은 " + n(u.cacheRead) + " (맥락 크기이지 이 메시지에 든 양이 아닙니다)",
+      "근사치인 이유: 어느 호출이 메시지를 만들었는지는 기록에 없어 파일이 생긴 시각 바로 앞의 호출로 짐작했고, 그 호출 안의 다른 일도 함께 들어 있으며, 메시지를 만들기까지 이어진 다른 호출은 빠졌습니다." + (u.model ? "\n모델 " + u.model : "")
+    ].join("\n");
+    return { chip: "≈" + tokenShort(u.front) + " 토큰", title: tip, output: u.output, newInput: u.newInput, front: u.front, context: u.context };
+  }
+
+  // 펼친 c2a 카드의 Claude 사용량 줄(agy 쪽 줄과 같은 모양, 앞에는 한 일의 크기, 맥락은 따로).
+  function buildClaudeUsageEl(t) {
+    var el = document.createElement("div");
+    el.className = "handoff-usage is-claude";
+    el.title = t.title;
+    var items = [["출력", t.output.toLocaleString()], ["새 입력", t.newInput.toLocaleString()], ["합계", "≈" + t.front.toLocaleString()]];
+    el.innerHTML = '<span class="handoff-usage-head">Claude 사용량 · 근사</span>' + items.map(function (it) {
+      return '<span class="handoff-usage-item"><span class="handoff-usage-k">' + escapeHtml(it[0]) + '</span> ' + escapeHtml(it[1]) + '</span>';
+    }).join("") + '<span class="handoff-usage-item handoff-usage-ctx"><span class="handoff-usage-k">대화 맥락</span> ' + escapeHtml(t.context.toLocaleString()) + '</span>';
+    return el;
+  }
+
+  // c2a 메시지가 붙은 세션의 기록에서 읽은 값을 세션|생성시각 키로 모아 둔다. 값이 없으면(못 찾음) false 로 두어 다시 묻지 않는다.
+  var claudeUsageStore = {};
+  var claudeUsageAsked = {};
+  var claudeUsageQueue = {};
+  var claudeUsageTimer = null;
+
+  function claudeUsageFor(channel, m) {
+    if (!m || m.dir !== "c2a" || !m.created) { return null; }
+    var node = handoffNodeOf(channel, m, handoffChannels[channel], claudeTree);
+    if (!node || node.projectId === QA_UNLINKED || String(node.sessionId).indexOf("c:") === 0) { return null; }
+    var key = node.sessionId + "|" + m.created;
+    if (Object.prototype.hasOwnProperty.call(claudeUsageStore, key)) { return claudeUsageStore[key] || null; }
+    if (!claudeUsageAsked[key]) {
+      claudeUsageAsked[key] = true;
+      (claudeUsageQueue[node.sessionId] = claudeUsageQueue[node.sessionId] || []).push(m.created);
+      if (!claudeUsageTimer) { claudeUsageTimer = setTimeout(flushClaudeUsage, 0); }
+    }
+    return null;
+  }
+
+  // 모아 둔 요청을 세션별로 한 번에 보내고, 새 값이 있으면 카드를 다시 그린다.
+  function flushClaudeUsage() {
+    claudeUsageTimer = null;
+    var queue = claudeUsageQueue;
+    claudeUsageQueue = {};
+    var sids = Object.keys(queue);
+    if (!sids.length) { return; }
+    Promise.all(sids.map(function (sid) {
+      var all = queue[sid];
+      var batches = [];
+      for (var i = 0; i < all.length; i += 100) { batches.push(all.slice(i, i + 100)); }
+      return Promise.all(batches.map(function (ts) {
+        return fetchJson("/api/handoff/claude-usage?session=" + encodeURIComponent(sid) + "&ts=" + encodeURIComponent(ts.join(","))).then(function (res) {
+          ts.forEach(function (t) { claudeUsageStore[sid + "|" + t] = (res && res.items && res.items[t]) ? res.items[t] : false; });
+        }).catch(function () {
+          ts.forEach(function (t) { claudeUsageStore[sid + "|" + t] = false; });
+        });
+      }));
+    })).then(function () {
+      if (currentNav === "handoff") { renderHandoffMessages(); }
+    });
+  }
+
+  var handoffUsageCache = { key: "", maps: {} };
+  // 렌더마다 채널별로 한 번만 만든다. 위임 기록이 바뀌면(개수나 가장 최근 시각) 다시 만든다.
+  function handoffUsageFor(channel) {
+    var key = allItems.length + "|" + (allItems[0] && allItems[0].timestamp || "");
+    if (handoffUsageCache.key !== key) { handoffUsageCache = { key: key, maps: {} }; }
+    if (!handoffUsageCache.maps[channel]) { handoffUsageCache.maps[channel] = handoffUsageIndex(channel, allItems); }
+    return handoffUsageCache.maps[channel];
+  }
+
+  // 펼친 카드의 사용량 줄(에이전트 위임 카드의 토큰 줄과 같은 항목).
+  function buildHandoffUsageEl(t) {
+    var el = document.createElement("div");
+    el.className = "handoff-usage";
+    var s = t.baseline ? "" : "+";
+    var items = [
+      ["총 토큰", s + t.delta.total.toLocaleString()],
+      ["입력", s + t.delta.input.toLocaleString()],
+      ["출력", s + t.delta.output.toLocaleString()],
+      ["사고", s + t.delta.thinking.toLocaleString()],
+      ["대화 누적", t.cumulative.total.toLocaleString()]
+    ];
+    el.title = t.title;
+    el.innerHTML = '<span class="handoff-usage-head">agy 사용량 · ' + (t.baseline ? "첫 호출" : "이번 호출") + '</span>' + items.map(function (it) {
+      return '<span class="handoff-usage-item"><span class="handoff-usage-k">' + escapeHtml(it[0]) + '</span> ' + escapeHtml(it[1]) + '</span>';
+    }).join("");
+    return el;
+  }
+
   function dirParty(dir) {
     return dir === "c2a" ? "claude" : (dir === "a2c" ? "agy" : null);
   }
@@ -2833,7 +3022,7 @@
 
     els.dashAttention.innerHTML = "";
     if (items.length === 0) {
-      els.dashAttention.innerHTML = '<li class="row-empty">확인할 항목이 없습니다. 처리를 기다리는 인수인계 메시지나 최근 24시간 안에 실패한 위임이 생기면 여기에 나옵니다.</li>';
+      els.dashAttention.innerHTML = '<li class="row-empty">확인할 항목이 없습니다. 처리를 기다리는 협의 메시지나 최근 24시간 안에 실패한 위임이 생기면 여기에 나옵니다.</li>';
       return;
     }
     var frag = document.createDocumentFragment();
@@ -2886,7 +3075,7 @@
     handoffProjects.forEach(function (p) {
       var m = p.latestMsg;
       if (!m) return;
-      entries.push({ time: m.time || p.updated || "", node: function () { return handoffRow(p.name, m, "인수인계"); } });
+      entries.push({ time: m.time || p.updated || "", node: function () { return handoffRow(p.name, m, "협의"); } });
     });
 
     entries.sort(function (a, b) { return String(b.time).localeCompare(String(a.time)); });
@@ -2894,7 +3083,7 @@
 
     els.dashTimeline.innerHTML = "";
     if (entries.length === 0) {
-      els.dashTimeline.innerHTML = '<li class="row-empty">아직 기록이 없습니다. Claude가 agy에 작업을 위임하거나 인수인계 메시지를 보내면 여기에 쌓입니다.</li>';
+      els.dashTimeline.innerHTML = '<li class="row-empty">아직 기록이 없습니다. Claude가 agy에 작업을 위임하거나 협의 메시지를 보내면 여기에 쌓입니다.</li>';
       return;
     }
     var frag = document.createDocumentFragment();
@@ -2936,7 +3125,7 @@
         ["오늘", todayCount + "건"],
         ["성공률", successRate],
         ["평균 소요", avgSec],
-        ["인수인계 채널", handoffProjects.length + "개"],
+        ["협의 채널", handoffProjects.length + "개"],
         ["메시지", totalHandoffMsgs.toLocaleString() + "개"]
       ];
       els.dashStats.innerHTML = stats.map(function (s) {
@@ -3007,7 +3196,7 @@
   }
 
   // ==========================================================================
-  // 2. 위임 실행 기록 메인 뷰 (QA Cards & Session Thread Rendering)
+  // 2. 에이전트 위임 메인 뷰 (QA Cards & Session Thread Rendering)
   // ==========================================================================
 
   function uniqueModels() {
@@ -5185,7 +5374,7 @@
   }
 
   // ==========================================================================
-  // 3. 에이전트 인수인계 메인 뷰 (Handoff Messages Thread Rendering)
+  // 3. 에이전트 협의 메인 뷰 (Handoff Messages Thread Rendering)
   // ==========================================================================
 
   function renderHandoffView() {
@@ -5488,7 +5677,12 @@
       card.dataset.num = m.num;
       card.dataset.channel = channel;
 
-      // [#번호][제목 / 보낸 쪽 → 받는 쪽][시각, 상태 진행 표시]
+      // agy 가 쓴 회신(a2c)에는 그 회신을 만든 호출(답장대상 c2a)이 쓴 토큰을 보인다. Claude 쪽 사용량은 채널에 기록이 없어 보이지 않는다.
+      var usageText = (m.dir === "a2c" && m.replyTo) ? handoffUsageText(handoffUsageFor(channel)[m.replyTo]) : null;
+      // Claude 가 보낸 c2a 에는 그 메시지를 만든 Claude 호출의 사용량(근사)을 보인다. 값은 세션 기록에서 서버가 읽어 오고, 오기 전에는 칩이 없다가 도착하면 다시 그린다.
+      var claudeText = claudeUsageText(claudeUsageFor(channel, m));
+
+      // [#번호][제목 / 보낸 쪽 → 받는 쪽][토큰, 시각, 상태 진행 표시]
       var header = document.createElement("div");
       header.className = "handoff-card-header";
       header.innerHTML = [
@@ -5498,6 +5692,8 @@
         '  <span class="handoff-dir">' + dirLabelHtml(m.dir, m, channel) + '</span>',
         '</div>',
         '<div class="handoff-card-header-right">',
+        (usageText ? '  <span class="handoff-tokens" title="' + escapeHtml(usageText.title) + '">' + escapeHtml(usageText.chip) + '</span>' : ''),
+        (claudeText ? '  <span class="handoff-tokens is-claude" title="' + escapeHtml(claudeText.title) + '">' + escapeHtml(claudeText.chip) + '</span>' : ''),
         '  <span class="handoff-time">' + escapeHtml(m.time || "") + '</span>',
         '  ' + stepsHtml(m.status),
         '</div>'
@@ -5543,6 +5739,8 @@
       });
 
       card.appendChild(header);
+      if (claudeText) { card.appendChild(buildClaudeUsageEl(claudeText)); }
+      if (usageText) { card.appendChild(buildHandoffUsageEl(usageText)); }   // 닫힌 카드에서는 CSS 로 숨긴다(펼칠 때 다시 그리지 않으므로 늘 넣어 둔다)
       var liveInfo = handoffLiveFor(channel, m);
       if (liveInfo) { card.appendChild(buildHandoffLiveEl(channel, m, liveInfo)); }
       card.appendChild(body);
@@ -5645,7 +5843,7 @@
           renderProcessDialog();
         }
       } else if (currentNav === "handoff") {
-        if (force || treeRes.changed) {
+        if (force || treeRes.changed || qaRes.changed) {   // qaRes: 새 위임 기록이 들어오면 회신 카드의 토큰 칩도 갱신
           renderHandoffView();
         }
         refreshHandoffLive();

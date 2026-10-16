@@ -1027,7 +1027,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .qa-chip-err { color: var(--err); }
 
 /* ==========================================================================
-   위임 실행 기록 카드
+   에이전트 위임 카드
    ========================================================================== */
 #cards, .handoff-chat-stream, .handoff-content-wrap, .auto-bars { max-width: 960px; }
 
@@ -1425,7 +1425,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   user-select: none;
 }
 .handoff-card-header:hover { background: var(--surface); }
-/* 펼치면 제목 줄 아래에 얇은 실선(--line)을 긋고 제목을 굵게 한다. 배경색으로 가르지 않는다(위임 실행 기록의 .qa 와 같은 방식). */
+/* 펼치면 제목 줄 아래에 얇은 실선(--line)을 긋고 제목을 굵게 한다. 배경색으로 가르지 않는다(에이전트 위임의 .qa 와 같은 방식). */
 .handoff-card.is-open > .handoff-card-header {
   border-bottom: 1px solid var(--line);
 }
@@ -1469,6 +1469,32 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   padding: 12px 16px 18px 79px;
 }
 .handoff-card-body-loading { color: var(--ink-3); font-size: var(--fs-sm); padding: 8px 0; }
+
+/* agy 사용량: 머리줄의 토큰 칩(회신 카드에만)과, 펼쳤을 때 제목 줄 바로 아래의 항목별 줄 */
+.handoff-tokens {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: help;
+}
+.handoff-usage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 16px;
+  padding: 10px 16px 0 79px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.handoff-card:not(.is-open) > .handoff-usage { display: none; }
+.handoff-usage-head { color: var(--agy); font-family: var(--font-sans); font-weight: 600; }
+.handoff-usage.is-claude .handoff-usage-head { color: var(--claude); }
+.handoff-usage-ctx { margin-left: auto; }   /* 맥락 크기는 앞의 "한 일의 크기" 값들과 떨어뜨려 오른쪽에 둔다 */
+.handoff-usage-k { color: var(--ink-3); }
 /* 본문은 .md 의 글줄 길이 제한(100ch)을 블록이 아니라 안쪽 내용에만 건다. 블록은 헤더·자동 이어가기 줄과 같은 폭(카드 폭)을 쓴다. */
 .handoff-card-body.md { max-width: none; }
 .handoff-card-body.md > * { max-width: 100ch; }
@@ -1487,17 +1513,16 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   border-radius: 1px;
   background: var(--line-strong);
 }
-/* 색은 뜻을 따른다: 보냄 = 회색(아직 아무도 손대지 않음), 읽음 = 청록(진행 중 배지와 같은 색), 처리됨·확인함 = 초록(끝남).
-   처리됨은 막대 3칸, 확인함은 4칸 + 굵은 글씨로 "반영만 함"과 "검증까지 끝남"을 가른다. */
+/* 색은 흐름을 따른다: 보냄 회색(아직 아무도 손대지 않음) → 읽음 청록(작업 중, 진행 중 배지와 같은 색) →
+   처리됨 호박색(반영했지만 아직 검증 전) → 확인함 초록(검증까지 끝남). 막대 칸 수(1~4)와 확인함의 굵은 글씨도 같은 흐름을 말한다. */
 .steps[data-step="1"] .steps-track i:nth-child(-n+1) { background: var(--ink-2); }
 .steps[data-step="2"] .steps-track i:nth-child(-n+2) { background: var(--agy); }
-.steps[data-step="3"] .steps-track i:nth-child(-n+3),
+.steps[data-step="3"] .steps-track i:nth-child(-n+3) { background: var(--claude); }
 .steps[data-step="4"] .steps-track i { background: var(--ok); }
 .steps-label { font-size: var(--fs-xs); color: var(--ink-2); min-width: 3.2em; }
 .steps[data-step="2"] .steps-label { color: var(--agy); }
-.steps[data-step="3"] .steps-label,
-.steps[data-step="4"] .steps-label { color: var(--ok); }
-.steps[data-step="4"] .steps-label { font-weight: 600; }
+.steps[data-step="3"] .steps-label { color: var(--claude); }
+.steps[data-step="4"] .steps-label { color: var(--ok); font-weight: 600; }
 .steps.on-hold .steps-track i { background: transparent; outline: 1px dashed var(--ink-3); outline-offset: -1px; }
 .steps.on-hold .steps-label { color: var(--ink-3); font-style: italic; }
 
