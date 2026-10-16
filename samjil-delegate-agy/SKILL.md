@@ -440,7 +440,7 @@ done
 
 ## agy 모델과 로그
 
-`watch-agy.ps1`이 `--model`을 직접 지정해 호출한다. `@model:`이 없으면 `$ModelPriority`(현재 Gemini 계열) 순서대로, 있으면 그 모델 하나만 쓴다. 결과는 `~/.samjil/delegate-agy/runtime/logs/usage.csv`(작업별), `usage_summary.csv`(모델별 집계), `data/qa-*.jsonl`에 자동 기록된다(모델 칸에는 실제로 쓴 모델이 들어간다). 이 위임 기록과 Handoff 인수인계 내역은 통합 대시보드(`~/.samjil/viewer/serve-viewer.ps1` / http://127.0.0.1:8787)에서 브라우저 탭으로 실시간 확인할 수 있다.
+`watch-agy.ps1`이 `--model`을 직접 지정해 호출한다. `@model:`이 없으면 `$ModelPriority`(현재 Gemini 계열) 순서대로, 있으면 그 모델 하나만 쓴다. 결과는 `~/.samjil/delegate-agy/runtime/logs/agy.db`(SQLite, 작업별 사용량·질문·답·과정)에 자동 기록된다(모델 칸에는 실제로 쓴 모델이 들어간다). CSV 가 필요하면 `tools\export-usage-csv.ps1` 로 만든다. 이 위임 기록과 Handoff 인수인계 내역은 통합 대시보드(`~/.samjil/viewer/serve-viewer.ps1` / http://127.0.0.1:8787)에서 브라우저 탭으로 실시간 확인할 수 있다.
 
 ## 구현 상세 (시행착오 기록 - 재발견 방지용)
 

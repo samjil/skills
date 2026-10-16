@@ -52,7 +52,8 @@ if (-not $DataDir) {
     $dataCandidates += (Join-Path $PSScriptRoot "runtime\delegate-agy\runtime\logs\data")
 
     foreach ($cand in $dataCandidates) {
-        if ($cand -and (Test-Path (Join-Path $cand "index.json"))) {
+        # 위임 기록 DB(logs\agy.db)가 있거나, 이전 전의 index.json 이 있는 후보를 고른다
+        if ($cand -and ((Test-Path (Join-Path $cand "index.json")) -or (Test-Path (Join-Path (Split-Path $cand -Parent) "agy.db")))) {
             $DataDir = $cand
             break
         }
@@ -100,6 +101,8 @@ if (-not (Test-Path $WebDir)) {
 # 워처 상태 판정/자동 재시작 헬퍼
 . (Join-Path $PSScriptRoot "watcher-health.ps1")
 $WatcherRuntimeDir = Get-WatcherRuntimeDir $DataDir
+# 위임 기록·세션 DB. DataDir 이 <런타임>\logs\data 라서 한 단계 위(<런타임>\logs)에 있다. /data/ 로 내보내는 폴더 밖에 둔다.
+$AgyDbPath = Join-Path (Split-Path $DataDir -Parent) "agy.db"
 
 # Claude Desktop 세션 및 링크 색인 헬퍼
 $claudeSessionsScript = Join-Path $PSScriptRoot "claude-sessions.ps1"
@@ -660,6 +663,9 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt, [string]$TaskId = 
     }
 }
 
+# 위임 기록·세션 DB 접근 모듈(agy-db.ps1). 못 찾으면 위임 기록 API 가 503 을 돌려주고 대기 작업의 세션 모델·대화 id 만 빠진다.
+$agyDbLib = Find-DelegateScript "sub\agy-db.ps1"
+if ($agyDbLib) { . $agyDbLib } else { Write-Warning "agy-db.ps1 을 찾지 못했습니다. 위임 기록을 읽을 수 없습니다." }
 # 워처와 같이 쓰는 도구 호출·과정 읽기 코드(agy-progress.ps1). 못 찾으면 진행 표시의 도구 설명과 과정 목록만 빠진다.
 $agyProgressLib = Find-DelegateScript "sub\agy-progress.ps1"
 if ($agyProgressLib) { . $agyProgressLib }
@@ -1231,6 +1237,25 @@ try {
                 }
                 $response.ContentLength64 = $bytes.Length
                 $response.OutputStream.Write($bytes, 0, $bytes.Length)
+            } elseif ($urlPath -eq "/api/qa/records") {
+
+                # 위임 완료 기록. 화면은 처음에 since=0 으로 전부 받고, 이후엔 마지막으로 받은 seq 이후만 받는다.
+                $params = Get-Utf8QueryParams $request.Url
+                $qaSince = [long]0
+                if ($params["since"]) { [void][long]::TryParse([string]$params["since"], [ref]$qaSince) }
+                $qaJson = $null
+                try { $qaJson = Get-QaRecordsJson $AgyDbPath $qaSince } catch { $qaJson = $null }
+                if ($null -eq $qaJson) {
+                    $response.StatusCode = 503
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes("위임 기록 DB 를 읽지 못했습니다.")
+                    $response.ContentType = "text/plain; charset=utf-8"
+                } else {
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($qaJson)
+                    $response.ContentType = "application/json; charset=utf-8"
+                    $response.Headers.Add("Cache-Control", "no-store")
+                }
+                $response.ContentLength64 = $bytes.Length
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
             } elseif ($urlPath -eq "/api/delegate/pending") {
 
                 $runtimeDir = Split-Path (Split-Path $DataDir -Parent) -Parent
@@ -1239,7 +1264,6 @@ try {
                 $watcherAlive = [bool](Test-WatcherAlive -RuntimeDir $WatcherRuntimeDir).Alive
 
                 $currentTaskFile = Join-Path $runtimeDir "logs\current_task.json"
-                $sessionsDir = Join-Path $runtimeDir "logs\sessions"
                 $currentTask = $null
                 if (Test-Path -LiteralPath $currentTaskFile) {
                     try {
@@ -1321,15 +1345,13 @@ try {
                                 $resolvedModel = [string]$currentTask.model
                             }
                             if (-not $resolvedModel -and $sessionVal) {
-                                $safeSessionName = ($sessionVal -replace '[\\/:*?"<>|]', '_').Trim()
-                                $sFile = Join-Path $sessionsDir ("{0}.json" -f $safeSessionName)
-                                if (Test-Path -LiteralPath $sFile) {
-                                    try {
-                                        $sObj = Get-Content -LiteralPath $sFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                                try {
+                                    $sObj = Get-AgySession $AgyDbPath $sessionVal
+                                    if ($sObj) {
                                         if ($sObj.model) { $resolvedModel = [string]$sObj.model }
                                         if ($sObj.conversation_id) { $sessionId = [string]$sObj.conversation_id }
-                                    } catch {}
-                                }
+                                    }
+                                } catch {}
                             }
                             if (-not $resolvedModel -and $modelVal) {
                                 $resolvedModel = $modelVal
@@ -1349,10 +1371,7 @@ try {
                                 $convId = ""
                                 if ($claimUsable -and $claim.conversation_id) { $convId = [string]$claim.conversation_id }
                                 if (-not $convId -and $sessionVal) {
-                                    $sFile2 = Join-Path $sessionsDir ("{0}.json" -f (($sessionVal -replace '[\\/:*?"<>|]', '_').Trim()))
-                                    if (Test-Path -LiteralPath $sFile2) {
-                                        try { $convId = [string]((Get-Content -LiteralPath $sFile2 -Raw -Encoding UTF8 | ConvertFrom-Json).conversation_id) } catch {}
-                                    }
+                                    try { $sObj2 = Get-AgySession $AgyDbPath $sessionVal; if ($sObj2) { $convId = [string]$sObj2.conversation_id } } catch {}
                                 }
                                 $startedAt = $null
                                 $startedText = ""

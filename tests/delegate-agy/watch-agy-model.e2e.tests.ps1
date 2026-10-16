@@ -6,6 +6,7 @@
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $watcher  = Join-Path $repoRoot "runtime\delegate-agy\scripts\sub\watch-agy.ps1"
+. (Join-Path $repoRoot "runtime\delegate-agy\scripts\sub\agy-db.ps1")
 
 $script:Failed = 0
 $script:Passed = 0
@@ -96,13 +97,13 @@ try {
     Assert-Equal "  high: 어려운 기본 요청 + 자동 medium 의 폴백 + @session 요청" 3 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-high" }).Count
     Assert-Equal "  medium: 지정한 쿼터 초과 요청은 다른 모델을 시도하지 않고 1번 + 자동 선택 medium 1번(쿼터 초과 뒤 폴백)" 2 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-medium" }).Count
 
-    Write-Host "기록(qa jsonl)에 과정 저장"
-$qaFile = Join-Path $rt "logs\data"
+    Write-Host "기록(DB)에 과정 저장"
+$dbPath = Join-Path $rt "logs\agy.db"
 $deadline2 = (Get-Date).AddSeconds(40)
 $qaRows = @()
 while ((Get-Date) -lt $deadline2) {
-    $qaRows = @(Get-ChildItem $qaFile -Filter "qa-*.jsonl" -File -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
-    if (@($qaRows | Where-Object { $_.task_id -like "e2e_*" }).Count -ge 7) { break }
+    $qaRows = @((ConvertFrom-Json -InputObject (Get-QaRecordsJson $dbPath 0)).records)
+    if (@($qaRows | Where-Object { $_.task_id -like "e2e_*" }).Count -ge 4) { break }
     Start-Sleep -Seconds 2
 }
 $qaLow = $qaRows | Where-Object { $_.task_id -eq "e2e_low" } | Select-Object -First 1
@@ -133,11 +134,11 @@ Assert-Equal "  모델을 안 고른 성공 작업도 process 가 저장된다" 
     }
     $watcherLog = Join-Path $rt "logs\watcher.log"
     # 응답 파일이 먼저 생기고 세션 파일은 그 직후에 쓰이므로, 기대한 내용이 될 때까지 잠깐 기다리며 읽는다
-    function Read-SessionUntil([string]$path, [scriptblock]$ok) {
+    function Read-SessionUntil([string]$name, [scriptblock]$ok) {
         $obj = $null
         $until = (Get-Date).AddSeconds(15)
         while ((Get-Date) -lt $until) {
-            try { $obj = (Get-Content -Raw -LiteralPath $path -Encoding UTF8) | ConvertFrom-Json } catch { $obj = $null }
+            try { $obj = Get-AgySession $dbPath $name } catch { $obj = $null }
             if ($obj -and (& $ok $obj)) { break }
             Start-Sleep -Milliseconds 300
         }
@@ -181,36 +182,29 @@ Assert-Equal "  모델을 안 고른 성공 작업도 process 가 저장된다" 
     Write-Host "@cwd 여러 폴더 + 세션(@session)"
     $r = Invoke-CwdTask "cwd_s1" "@session: 다폴더-세션`n@cwd: $dirA`n@cwd: $dirB`n@model: gemini-3.8-flash-low`n첫 호출"
     Assert-Equal "첫 호출: 두 폴더가 열린다" "dirs=$dirA|$dirB" $r.Dirs[0]
-    $sessFile = Join-Path $rt "logs\sessions\다폴더-세션.json"
-    $sess = Read-SessionUntil $sessFile { param($o) @($o.cwd).Count -eq 2 }
-    Assert-Equal "  세션 파일의 cwd 는 두 폴더 배열" "$dirA|$dirB" (@($sess.cwd) -join "|")
+    $sess = Read-SessionUntil "다폴더-세션" { param($o) @($o.cwd).Count -eq 2 }
+    Assert-Equal "  세션의 cwd 는 두 폴더 배열" "$dirA|$dirB" (@($sess.cwd) -join "|")
     $r = Invoke-CwdTask "cwd_s2" "@session: 다폴더-세션`n두 번째 호출(@cwd 없음)"
     Assert-Equal "두 번째 호출(@cwd 없음): 세션의 두 폴더가 그대로 열린다" "dirs=$dirA|$dirB" $r.Dirs[0]
     $r = Invoke-CwdTask "cwd_s3" "@session: 다폴더-세션`n@cwd: $dirC`n세 번째 호출(@cwd 하나)"
     Assert-Equal "이번 호출에 @cwd 가 하나라도 있으면 이번 목록만 쓴다(세션의 폴더와 합치지 않는다)" "dirs=$dirC" $r.Dirs[0]
-    $sess = Read-SessionUntil $sessFile { param($o) @($o.cwd).Count -eq 1 -and @($o.cwd)[0] -eq $dirC }
+    $sess = Read-SessionUntil "다폴더-세션" { param($o) @($o.cwd).Count -eq 1 -and @($o.cwd)[0] -eq $dirC }
     Assert-Equal "  세션에는 새 목록이 저장된다" "$dirC" (@($sess.cwd) -join "|")
     $r = Invoke-CwdTask "cwd_s4" "@session: 다폴더-세션`n네 번째 호출(@cwd 없음)"
     Assert-Equal "  그다음 @cwd 없는 호출은 바뀐 목록(C)을 이어서 쓴다" "dirs=$dirC" $r.Dirs[0]
 
-    Write-Host "예전 형식 세션 파일(cwd 가 문자열)"
-    $oldSess = '{ "name": "예전-세션", "conversation_id": "conv-old", "cwd": ' + (ConvertTo-Json -InputObject $dirB) + ', "model": "gemini-3.8-flash-low", "created_at": "2026-10-01 10:00:00", "last_used_at": "2026-10-01 10:00:00", "turn_count": 2 }'
-    [System.IO.File]::WriteAllText((Join-Path $rt "logs\sessions\예전-세션.json"), $oldSess, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host "이미 저장된 세션을 이어간다 (폴더 하나, 횟수 2)"
+    $dbSeed = Open-AgyDb $dbPath
+    Invoke-AgyDbTransaction $dbSeed { Set-AgySessionRow $dbSeed "예전-세션" "conv-old" @($dirB) "gemini-3.8-flash-low" "2026-10-01 10:00:00" "2026-10-01 10:00:00" 2 }
+    $dbSeed.Dispose()
     $r = Invoke-CwdTask "cwd_old" "@session: 예전-세션`n예전 세션을 이어갑니다"
-    Assert-Equal "문자열 cwd 가 든 세션을 이어가면 그 폴더 하나가 열린다" "dirs=$dirB" $r.Dirs[0]
-    # 응답 파일이 먼저 생기고 세션 파일은 그 직후에 쓰이므로, 다 쓰일 때까지(횟수가 3이 될 때까지) 잠깐 기다린다
-    $oldAfter = $null
-    $untilSess = (Get-Date).AddSeconds(15)
-    while ((Get-Date) -lt $untilSess) {
-        try { $oldAfter = (Get-Content -Raw -LiteralPath (Join-Path $rt "logs\sessions\예전-세션.json") -Encoding UTF8) | ConvertFrom-Json } catch { $oldAfter = $null }
-        if ($oldAfter -and $oldAfter.turn_count -eq 3) { break }
-        Start-Sleep -Milliseconds 300
-    }
-    Assert-Equal "  이어간 뒤 세션 파일은 배열 형식으로 바뀌고 폴더·횟수가 유지된다" "$dirB|1|3" ("{0}|{1}|{2}" -f (@($oldAfter.cwd) -join "|"), @($oldAfter.cwd).Count, $oldAfter.turn_count)
+    Assert-Equal "저장된 세션의 폴더 하나가 열린다" "dirs=$dirB" $r.Dirs[0]
+    # 응답 파일이 먼저 생기고 세션은 그 직후에 쓰이므로, 횟수가 3이 될 때까지 잠깐 기다린다
+    $oldAfter = Read-SessionUntil "예전-세션" { param($o) $o.turn_count -eq 3 }
+    Assert-Equal "  이어간 뒤 폴더·폴더 수·횟수가 유지된다" "$dirB|1|3" ("{0}|{1}|{2}" -f (@($oldAfter.cwd) -join "|"), @($oldAfter.cwd).Count, $oldAfter.turn_count)
 
-Write-Host "사용량 기록 (usage.csv)"
-    $usage = @(Import-Csv (Join-Path $rt "logs\usage.csv") -Encoding UTF8)
-    $row = { param($id) $usage | Where-Object { $_.task_id -eq $id } | Select-Object -First 1 }
+Write-Host "사용량 기록 (tasks 표)"
+    $row = { param($id) Get-QaTaskRow $dbPath $id }
     Assert-Equal "  low: 모델 칸에 그 모델, 상태 OK" "gemini-3.8-flash-low|OK" ("{0}|{1}" -f (& $row "e2e_low").model, (& $row "e2e_low").status)
     Assert-Equal "  기본(어려운 요청): 모델 칸에 첫 우선순위 모델" "gemini-3.8-flash-high|OK" ("{0}|{1}" -f (& $row "e2e_default").model, (& $row "e2e_default").status)
     Assert-Equal "  자동 low: 모델 칸에 low, 상태 OK" "gemini-3.8-flash-low|OK" ("{0}|{1}" -f (& $row "e2e_auto_low").model, (& $row "e2e_auto_low").status)

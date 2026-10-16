@@ -30,7 +30,7 @@
 
 #   - 화면 표시는 이 스크립트가 아니라 serve-report.ps1이 띄우는 로컬 웹 서버 + web\
 
-#     페이지가 담당합니다. 이 스크립트는 logs\data\qa-*.jsonl 원본 기록만 관리합니다.
+#     페이지가 담당합니다. 이 스크립트는 logs\agy.db 의 위임 기록만 관리합니다.
 
 #
 
@@ -311,26 +311,11 @@ function Log($msg) {
 
 
 # --- 사용량(모델/토큰/소요시간) 기록 ---
+# 사용량은 위임 기록 DB(agy.db 의 tasks 표)에 작업 끝에 한 행씩 쓴다. CSV 는 필요할 때 tools\export-usage-csv.ps1 로 만든다.
 
 # 참고: agy.exe 응답 JSON에는 model, cost 필드가 없습니다 (CLI 자체 한계, 2026-09 확인).
-
-#       cost_usd는 알아낼 방법이 없어 컬럼에서 뺐습니다. model은 우리가 --model로 직접
-
+#       cost_usd는 알아낼 방법이 없어 칸에서 뺐습니다. model은 우리가 --model로 직접
 #       지정해서 성공한 값이므로 그대로 신뢰해서 기록합니다.
-
-$UsageCsv       = Join-Path $LogsDir "usage.csv"
-
-$UsageMaxBytes  = 2MB
-
-$UsageKeepLines = 3000
-
-
-
-# 매 작업(행)마다 쌓이는 usage.csv와 별도로, "모델별로 한눈에 보기" 편하도록 모델 단위로
-
-# 집계한 요약 CSV도 함께 유지합니다.
-
-$SummaryCsv = Join-Path $LogsDir "usage_summary.csv"
 
 
 
@@ -368,227 +353,31 @@ function Get-JsonField($obj, [string[]]$paths) {
 
 
 
-# usage.csv의 정식 헤더입니다. 예전 버전으로 이미 파일이 존재하면, 컬럼 수가 안 맞아서
-
-# 이후 Import-Csv 집계가 깨지므로 자동으로 예전 파일을 보관하고 새로 시작합니다.
-
-# session: @session:으로 이어간 작업이면 그 이름, 아니면 빈 칸 (3.8절 - docs\설계.md).
-
-# session_id: agy 응답의 conversation_id (동일 세션 식별용).
-
-$UsageCsvHeader = "timestamp,computer_name,task_id,model,attempts,tried_models,input_tokens,output_tokens,thinking_tokens,total_tokens,elapsed_sec,status,session,session_id"
-# 이 프로세스가 usage.csv 에 처음 쓴 행. 작업자는 작업 하나만 하므로 그 작업의 행이고, Complete-TaskQaRecord 가
-# 기록 저장소에 넣을 레코드를 만들 때 usage.csv 를 다시 읽지 않고 이걸 쓴다.
-$script:FirstUsageRow = $null
-
-
-
-function Write-UsageRowUnlocked($taskId, $model, $attempts, $triedModels, $inputTokens, $outputTokens, $thinkingTokens, $totalTokens, $elapsedSec, $status, [string]$session = "", [string]$sessionId = "") {
-
-    try {
-
-        if (-not (Test-Path $UsageCsv)) {
-
-            $UsageCsvHeader | Set-Content -Path $UsageCsv -Encoding UTF8
-
-        } else {
-
-            $firstLine = Get-Content -Path $UsageCsv -TotalCount 1 -ErrorAction SilentlyContinue
-
-            if ($firstLine -ne $UsageCsvHeader) {
-
-                # 스키마가 다른 예전 파일 - 섞이면 집계가 깨지므로 보관하고 새로 시작합니다.
-
-                $archivePath = Join-Path $LogsDir ("usage_before_{0}.csv" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
-
-                Move-Item -Path $UsageCsv -Destination $archivePath -Force
-
-                Log "usage.csv 스키마가 예전 버전이라 '$archivePath' 로 보관하고 새로 시작합니다."
-
-                $UsageCsvHeader | Set-Content -Path $UsageCsv -Encoding UTF8
-
-            } elseif ((Get-Item $UsageCsv).Length -gt $UsageMaxBytes) {
-
-                $header = Get-Content -Path $UsageCsv -TotalCount 1
-
-                $tail   = Get-Content -Path $UsageCsv -Tail $UsageKeepLines
-
-                @($header) + $tail | Set-Content -Path $UsageCsv -Encoding UTF8
-
-            }
-
-        }
-
-        $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-
-        $row = @($ts, $ComputerName, $taskId, $model, $attempts, $triedModels, $inputTokens, $outputTokens, $thinkingTokens, $totalTokens, $elapsedSec, $status, $session, $sessionId) |
-
-            ForEach-Object { if ($null -eq $_) { "" } else { ($_ -replace ',', ';') } }
-
-        ($row -join ",") | Add-Content -Path $UsageCsv -Encoding UTF8
-        if ($null -eq $script:FirstUsageRow) {
-            $script:FirstUsageRow = [PSCustomObject]([ordered]@{
-                timestamp = $row[0]; computer_name = $row[1]; task_id = $row[2]; model = $row[3]; attempts = $row[4]; tried_models = $row[5]
-                input_tokens = $row[6]; output_tokens = $row[7]; thinking_tokens = $row[8]; total_tokens = $row[9]
-                elapsed_sec = $row[10]; status = $row[11]; session = $row[12]; session_id = $row[13]
-            })
-        }
-
-    } catch {
-
-        Log "usage.csv 기록 중 오류: $($_.Exception.Message)"
-
-    }
-
-}
-
-
-
-# usage.csv 전체를 모델별로 집계해서 usage_summary.csv를 다시 씁니다.
-
-function Update-UsageSummaryUnlocked {
-
-    try {
-
-        if (-not (Test-Path $UsageCsv)) { return }
-
-        $rows = Import-Csv -Path $UsageCsv -Encoding UTF8
-
-        if (-not $rows) { return }
-
-
-
-        $groups = @($rows | Group-Object { if ($_.model) { $_.model } else { "(모델 미확정/실패)" } })
-
-
-
-        $summary = foreach ($g in $groups) {
-
-            # 참고: Windows PowerShell 5.1에서는 Where-Object 결과가 1건뿐이면 배열이 아니라
-
-            # 단일 객체로 풀려서 .Count 프로퍼티가 아예 없어져(=$null) 버립니다. @(...)로
-
-            # 감싸서 결과가 0건이든 1건이든 항상 배열이 되도록 강제합니다.
-
-            $okRows  = @($g.Group | Where-Object { $_.status -eq 'OK' })
-
-            $errRows = @($g.Group | Where-Object { $_.status -eq 'ERROR' })
-
-
-
-            $inSum    = ($okRows | Where-Object { $_.input_tokens }    | Measure-Object -Property input_tokens    -Sum).Sum
-
-            $outSum   = ($okRows | Where-Object { $_.output_tokens }   | Measure-Object -Property output_tokens   -Sum).Sum
-
-            $thinkSum = ($okRows | Where-Object { $_.thinking_tokens } | Measure-Object -Property thinking_tokens -Sum).Sum
-
-            $totSum   = ($okRows | Where-Object { $_.total_tokens }    | Measure-Object -Property total_tokens    -Sum).Sum
-
-
-
-            $elapsedVals = $okRows | Where-Object { $_.elapsed_sec } | ForEach-Object { [double]$_.elapsed_sec }
-
-            $avgElapsed  = if ($elapsedVals) { [math]::Round((($elapsedVals | Measure-Object -Average).Average), 1) } else { $null }
-
-
-
-            $lastUsed = ($g.Group | Sort-Object timestamp -Descending | Select-Object -First 1).timestamp
-
-
-
-            [PSCustomObject]@{
-
-                model                 = $g.Name
-
-                tasks_ok              = $okRows.Count
-
-                tasks_error           = $errRows.Count
-
-                total_input_tokens    = $inSum
-
-                total_output_tokens   = $outSum
-
-                total_thinking_tokens = $thinkSum
-
-                total_tokens          = $totSum
-
-                avg_elapsed_sec       = $avgElapsed
-
-                last_used_at          = $lastUsed
-
-            }
-
-        }
-
-
-
-        $summary | Sort-Object -Property total_tokens -Descending |
-
-            Export-Csv -Path $SummaryCsv -NoTypeInformation -Encoding UTF8 -Force
-
-    } catch {
-
-        Log "usage_summary.csv 갱신 중 오류: $($_.Exception.Message)"
-
-    }
-
-}
 
 
 
 # ============================================================================
 
-# Q&A 기록 저장소 (JSON Lines)
-
+# 위임 기록 저장소 (SQLite: logs\agy.db, 접근은 agy-db.ps1)
 # ----------------------------------------------------------------------------
-
-#   logs\data\qa-YYYY-MM.jsonl : 원본 기록. 한 줄에 작업 한 건(JSON). 이어붙이기만 하므로
-
-#                                파일 전체를 다시 쓰지 않습니다. 메모장으로 열면 그대로 읽힙니다.
-
-#                                한 파일이 5MB를 넘으면 qa-YYYY-MM.p2.jsonl 로 나뉩니다.
-
-#   logs\data\index.json       : 어떤 파일이 있고 총 몇 건인지 (사람이 읽는 목차).
-
+#   tasks 표         : 작업 한 건이 한 줄. 사용량(토큰·모델)은 작업이 끝날 때 먼저 넣고(Write-UsageRow), 질문·답·과정은 지시파일을
+#                      processed 로 옮긴 직후에 채운다(Complete-TaskQaRecord). 답이 채워진 줄이 "끝난 기록"이고 뷰어는 그것만 보인다.
+#   agy_sessions 표  : @session: <이름> 으로 이어가는 agy 대화의 이름 <-> conversation_id (common.ps1 의 Read-Session/Write-Session).
 #
-
-# 화면 표시용 껍데기 파일은 여기서 만들지 않습니다. serve-report.ps1이 띄우는 로컬 웹
-
-# 서버가 이 jsonl 파일들을 직접 서빙하고, web\app.js가 fetch()로 읽어 렌더링합니다.
-
+# 화면은 뷰어(serve-viewer.ps1)가 이 DB 를 읽어 /api/qa/records 로 내보냅니다.
 # ============================================================================
 
-$DataDir          = Join-Path $LogsDir "data"
-
-$QaIndexFile      = Join-Path $DataDir "index.json"
-
-$QaShardMaxBytes  = 5MB    # 월별 파일이 이보다 커지면 .p2, .p3 으로 나눕니다.
-
-$QaKeepMonths     = 12     # 이보다 오래된 월별 파일은 자동으로 지웁니다.
-
+$AgyDbPath        = Join-Path $LogsDir "agy.db"
+$QaKeepMonths     = 12     # 이보다 오래된 기록은 워처가 켜질 때 자동으로 지웁니다.
 # 기록에 저장하는 "과정"(agy 가 부른 도구 목록)의 최대 개수. 한 작업이 100~수백 번 도구를 부르는 일이 있어
-# 기록 파일이 커지는 것을 막는다. 넘으면 앞쪽 이만큼만 남긴다.
+# 기록이 커지는 것을 막는다. 넘으면 앞쪽 이만큼만 남긴다.
 $QaProcessMaxSteps = 400
-
-
-
-# @session: <이름>으로 이어가는 agy 대화의 이름<->conversation_id 매핑 파일들이 담깁니다.
-
-# (common.ps1의 세션 헬퍼 함수들이 이 경로를 씁니다. 3.8절 참고 - docs\설계.md)
-
-$SessionsDir      = Join-Path $LogsDir "sessions"
 
 $SessionMaxAgeDays = 30    # 이보다 오래 안 쓴 세션은 자동으로 정리합니다.
 
 
 
-$script:QaKnownIds = $null
-
-$script:QaTotal    = 0
-
-
-
-# ConvertTo-ReadableJson / Get-QaShardFiles / Get-QaShardPath는 common.ps1에서 로드됨
+# New-QaRecord / Read-Session / Write-Session 등은 common.ps1에서, DB 함수는 agy-db.ps1에서 로드됨
 # 호출 하나가 "일하는 중인지 멈췄는지" 판정하는 헬퍼(agy-progress.ps1). 테스트: tests\delegate-agy
 $progressFile = Join-Path $PSScriptRoot "agy-progress.ps1"
 if (-not (Test-Path $progressFile)) {
@@ -627,76 +416,21 @@ if (-not $WorkerTask) {
 
 
 
-# 워처가 켜질 때 한 번만: 기존 기록을 읽어 "이미 저장된 작업ID"를 메모리에 올립니다.
+# 워처가 켜질 때 한 번만: 보관 기간이 지난 기록을 정리합니다.
 
 function Initialize-QaStore {
-
-    $script:QaKnownIds = New-Object 'System.Collections.Generic.HashSet[string]'
-
-    $script:QaTotal    = 0
-
     try {
-
-        New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
-
-
-
-        # 보관 기간이 지난 월별 파일 정리
-
-        $cutMonth = (Get-Date).AddMonths(-$QaKeepMonths).ToString("yyyy-MM")
-
-        foreach ($f in (Get-QaShardFiles)) {
-
-            if ($f.Name -match '^qa-(\d{4}-\d{2})') {
-
-                if ($matches[1] -lt $cutMonth) {
-
-                    Remove-Item -Path $f.FullName -Force -ErrorAction SilentlyContinue
-
-                    Log "보관 기간($QaKeepMonths 개월)이 지난 기록 파일을 정리했습니다: $($f.Name)"
-
-                }
-
-            }
-
-        }
-
-
-
-        foreach ($f in (Get-QaShardFiles)) {
-
-            foreach ($line in @(Get-Content -Path $f.FullName -Encoding UTF8 -ErrorAction SilentlyContinue)) {
-
-                if ([string]::IsNullOrWhiteSpace($line)) { continue }
-
-                $rec = $null
-
-                try { $rec = $line | ConvertFrom-Json } catch { continue }
-
-                if ($null -eq $rec) { continue }
-
-                $script:QaTotal++
-
-                if ($rec.task_id) { [void]$script:QaKnownIds.Add([string]$rec.task_id) }
-
-            }
-
-        }
-
-        Log "기록 저장소를 읽었습니다: 총 $($script:QaTotal) 건 (폴더: $DataDir)"
-
+        $removed = Remove-QaRecordsOlderThan $AgyDbPath $QaKeepMonths
+        if ($removed -gt 0) { Log "보관 기간($QaKeepMonths 개월)이 지난 기록 $removed 건을 정리했습니다." }
     } catch {
-
         Log "기록 저장소 초기화 중 오류: $($_.Exception.Message)"
-
     }
-
 }
 
 
 
-# usage.csv 의 행 하나(없는 칸은 빈 문자열)로 기록 저장소(jsonl)에 넣을 레코드를 만듭니다.
-# Sync-QaStore(usage.csv 를 읽어 빠진 것을 채움)와 작업자의 단일 추가(Complete-TaskQaRecord)가 같은 레코드를 만들도록 한 곳에 둡니다.
+# tasks 표의 행 하나(없는 칸은 NULL)로 완성된 기록 레코드를 만듭니다.
+# Sync-QaStore(사용량 행만 있는 작업을 채움)와 작업자의 마무리(Complete-TaskQaRecord)가 같은 레코드를 만들도록 한 곳에 둡니다.
 # $QuestionPath 를 주면 그 지시파일을 질문으로 쓰고, 안 주면 processed 폴더에서 작업 ID 로 찾습니다.
 function New-QaRecordFromRow($r, [string]$QuestionPath = "") {
     $taskId = [string]$r.task_id
@@ -745,26 +479,14 @@ function New-QaRecordFromRow($r, [string]$QuestionPath = "") {
     })
 }
 
-# usage.csv에 있는데 아직 jsonl에 없는 작업을 찾아서 이어붙입니다.
+# 사용량 행만 있고 질문·답이 아직 안 채워진 작업을 찾아서 채웁니다(워처가 켜질 때, 사라진 작업을 정리할 때).
 function Sync-QaStore {
-    if ($null -eq $script:QaKnownIds) { Initialize-QaStore }
-    if (-not (Test-Path $UsageCsv)) { return 0 }
     $added = 0
     try {
-        $rows = @(Import-Csv -Path $UsageCsv -Encoding UTF8 | Sort-Object timestamp)
-        foreach ($r in $rows) {
-            $taskId = [string]$r.task_id
-            if ([string]::IsNullOrWhiteSpace($taskId)) { continue }
-            if ($script:QaKnownIds.Contains($taskId)) { continue }
-
+        foreach ($r in @(Get-QaIncompleteRows $AgyDbPath)) {
+            if ([string]::IsNullOrWhiteSpace([string]$r.task_id)) { continue }
             $rec = New-QaRecordFromRow $r
-            $line = ConvertTo-ReadableJson $rec 6
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            Add-QaLine (Get-QaShardPath) $line
-
-            [void]$script:QaKnownIds.Add($taskId)
-            $script:QaTotal++
-            $added++
+            if ((Write-QaRecordToDb $AgyDbPath $rec 'FillIfIncomplete') -eq 'saved') { $added++ }
         }
     } catch {
         Log "기록 저장소 동기화 중 오류: $($_.Exception.Message)"
@@ -772,103 +494,49 @@ function Sync-QaStore {
     return $added
 }
 
-function Update-QaIndex([int]$Total = -1) {
-
-    try {
-
-        $shards = @()
-
-        foreach ($f in (Get-QaShardFiles)) {
-
-            $shards += [ordered]@{
-
-                file     = $f.Name
-
-                bytes    = $f.Length
-
-                modified = $f.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
-
-            }
-
-        }
-
-        $idx = [ordered]@{
-
-            updated     = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-
-            total       = $(if ($Total -ge 0) { $Total } else { $script:QaTotal })
-
-            keep_months = $QaKeepMonths
-
-            note        = "qa-YYYY-MM.jsonl 파일의 한 줄이 작업 한 건입니다. 한 파일이 5MB를 넘으면 같은 달이라도 qa-YYYY-MM.p2.jsonl 처럼 나뉩니다."
-
-            shards      = @($shards)
-
-        }
-
-        Set-Content -Path $QaIndexFile -Value (ConvertTo-ReadableJson $idx 6 -Pretty) -Encoding UTF8
-
-    } catch {
-
-        Log "index.json 갱신 중 오류: $($_.Exception.Message)"
-
-    }
-
-}
-
-
-
-# index.json 에 적힌 기록 건수(없거나 읽을 수 없으면 0). 작업자가 건수를 +1 할 때 쓴다.
-function Get-QaIndexTotal {
-    try {
-        if (-not (Test-Path -LiteralPath $QaIndexFile)) { return 0 }
-        $o = Get-Content -Raw -LiteralPath $QaIndexFile -Encoding UTF8 | ConvertFrom-Json
-        if ($o -and $o.total) { return [int]$o.total }
-    } catch {}
-    return 0
-}
-
-# 작업자가 작업 하나를 끝낼 때의 마무리: 지시파일을 processed 로 옮기고, 기록 저장소에 "이 작업 한 건만" 덧붙이고,
-# index.json 을 갱신한다. 전부 뮤텍스 한 번 안에서 한다.
-# 예전에는 여기서 Update-QAReport(전체 동기화)를 불렀다. 작업자는 작업마다 새 프로세스라 그때마다 모든 기록 파일을
-# 처음부터 끝까지 JSON 으로 읽어야 했고, 그것도 뮤텍스를 쥔 채였다. 전체 동기화는 이제 워처가 켜질 때와
-# 사라진 작업을 정리할 때(Resolve-DeadClaim)만 한다.
-# 이 작업의 usage 행을 이 프로세스가 쓰지 못했거나 덧붙이다 오류가 나면 예전 방식(usage.csv 기준 전체 동기화)으로 물러선다.
+# 작업자가 작업 하나를 끝낼 때의 마무리: 지시파일을 processed 로 옮기고, 그 작업의 행(사용량 행은 Write-UsageRow 가 먼저 넣었다)에
+# 질문·답·과정을 채운다. 작업자는 작업마다 새 프로세스라 전체 기록을 읽지 않고 이 한 건만 다룬다.
+# 사용량 행이 없거나 채우다 오류가 나면 미완료 작업 전체를 채우는 보충(Update-QAReport)으로 물러선다.
 function Complete-TaskQaRecord([string]$TaskId, [string]$SourcePath, [string]$DonePath) {
-    Invoke-WithRuntimeLock {
-        Move-Item -Path $SourcePath -Destination $DonePath -Force
-        $row = $script:FirstUsageRow
-        if ($null -eq $row -or [string]$row.task_id -ne $TaskId) {
-            Update-QAReportUnlocked
-            return
-        }
-        try {
-            $shard = Get-QaShardPath
-            if (Test-QaTaskIdInShardTail $shard $TaskId) { return }
-            $line = ConvertTo-ReadableJson (New-QaRecordFromRow $row $DonePath) 6
-            if ([string]::IsNullOrWhiteSpace($line)) { throw "레코드를 JSON으로 변환하지 못했습니다." }
-            Add-QaLine $shard $line
-            if ($null -ne $script:QaKnownIds) { [void]$script:QaKnownIds.Add($TaskId); $script:QaTotal++ }
-            Update-QaIndex ((Get-QaIndexTotal) + 1)
-        } catch {
-            Log "기록 저장소에 작업 한 건을 덧붙이다 오류가 나서 전체 동기화로 대신합니다: $($_.Exception.Message)"
-            Update-QAReportUnlocked
-        }
+    Move-Item -Path $SourcePath -Destination $DonePath -Force
+    try {
+        $row = Get-QaTaskRow $AgyDbPath $TaskId
+        if ($null -eq $row) { Update-QAReport; return }       # 사용량 행을 못 썼다: 있는 미완료 작업이라도 채워 둔다
+        if ($null -ne $row.answer) { return }                  # 이미 채워졌다(워처가 켜질 때의 보충이 먼저 한 경우)
+        $rec = New-QaRecordFromRow $row $DonePath
+        if ((Write-QaRecordToDb $AgyDbPath $rec 'FillIfIncomplete') -eq 'pending') { Log "기록을 DB 에 바로 쓰지 못해 pending 폴더에 두었습니다: $TaskId" }
+    } catch {
+        Log "기록 저장소에 작업 한 건을 채우다 오류가 나서 전체 보충으로 대신합니다: $($_.Exception.Message)"
+        Update-QAReport
     }
 }
 
-function Update-QAReportUnlocked {
-    $null = Sync-QaStore
-    Update-QaIndex
-}
-
-# 위 세 함수는 usage.csv·기록 저장소를 읽고 다시 쓰므로, 작업자 여러 개가 동시에 부르지 못하게 잠금 안에서 부른다.
+# 사용량 행(tasks 표)을 쓴다: 작업이 끝났을 때 한 번.
 function Write-UsageRow($taskId, $model, $attempts, $triedModels, $inputTokens, $outputTokens, $thinkingTokens, $totalTokens, $elapsedSec, $status, [string]$session = "", [string]$sessionId = "") {
-    $bound = $PSBoundParameters
-    Invoke-WithRuntimeLock { Write-UsageRowUnlocked @bound }
+    try {
+        $rec = New-QaRecord ([ordered]@{
+            timestamp       = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+            computer_name   = $ComputerName
+            task_id         = [string]$taskId
+            model           = $model
+            attempts        = $attempts
+            tried_models    = $triedModels
+            input_tokens    = $inputTokens
+            output_tokens   = $outputTokens
+            thinking_tokens = $thinkingTokens
+            total_tokens    = $totalTokens
+            elapsed_sec     = $elapsedSec
+            status          = $status
+            session         = $session
+            session_id      = $sessionId
+        })
+        # 같은 작업 ID 의 사용량 행이 이미 있으면 먼저 쓴 것을 둔다(InsertOnly). DB 를 잠깐 못 쓰면 pending 폴더에 두었다가 다음에 가져온다.
+        if ((Write-QaRecordToDb $AgyDbPath $rec 'InsertOnly') -eq 'pending') { Log "사용량 기록을 DB 에 바로 쓰지 못해 pending 폴더에 두었습니다: $taskId" }
+    } catch {
+        Log "사용량 기록 중 오류: $($_.Exception.Message)"
+    }
 }
-function Update-UsageSummary { Invoke-WithRuntimeLock { Update-UsageSummaryUnlocked } }
-function Update-QAReport { Invoke-WithRuntimeLock { Update-QAReportUnlocked } }
+function Update-QAReport { [void](Sync-QaStore) }
 
 # agy 한 번 호출이 이 시간을 넘기면 강제로 중단하고 그 작업을 실패 처리합니다.
 
@@ -1224,7 +892,7 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
 
                 # 세션에 실제로 기록된 모델명이 없으면 추측해서 채우지 않습니다 - 검증 안 된
                 # 값을 사실처럼 기록하지 않는다는 원칙(SKILL.md 참고). 빈 값으로 두면
-                # usage.csv/usage_summary.csv 쪽에서 이미 "(모델 미확정/실패)"로 집계됩니다.
+                # 사용량 행(tasks 표)에서 이미 "(모델 미확정/실패)"로 집계됩니다.
                 $knownModel
 
             } else {
@@ -1536,7 +1204,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
 
     if ($sessionName) {
 
-        $existingSession = Invoke-WithRuntimeLock { Read-Session $sessionName }
+        $existingSession = Read-Session $sessionName
 
         if ($existingSession) {
 
@@ -1579,7 +1247,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
         Set-Content -Path $outFile -Value "지정한 @cwd 경로를 찾을 수 없습니다: $($missingCwds -join ', ')" -Encoding UTF8
         Log "실패: @cwd 경로 없음 ($($missingCwds -join ', '))"
         # agy를 호출하지 않고 여기서 바로 실패 처리하는 경우도, 나중에 "이 작업이
-        # 있었는지" 조회할 수 있도록 다른 실패와 똑같이 usage.csv/qa-jsonl에 남깁니다
+        # 있었는지" 조회할 수 있도록 다른 실패와 똑같이 위임 기록 DB 에 남깁니다
         # (여기서 기록하지 않으면 outbox에는 파일이 남는데 기록에서는 통째로 빠집니다).
         Write-UsageRow $baseName $null $null $null $null $null $null $null $null "ERROR" $sessionName $conversationId
 
@@ -1664,7 +1332,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
             Write-UsageRow $baseName $recModel $recAttempts $recTried $recInTok $recOutTok $recThinkTok $recTotTok $recElapsed "OK" $sessionName $effectiveSessionId
 
             if ($sessionName -and $agyResult.ConversationId) {
-                Invoke-WithRuntimeLock { Write-Session -Name $sessionName -ConversationId $agyResult.ConversationId -Cwd $targetCwds -Model $agyResult.ModelUsed }
+                Write-Session -Name $sessionName -ConversationId $agyResult.ConversationId -Cwd $targetCwds -Model $agyResult.ModelUsed
             }
         } else {
             $failMsg = "agy 실행 실패 (시도한 모델: $triedStr) - $($agyResult.ErrorMessage)"
@@ -1676,13 +1344,11 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
             Write-UsageRow $baseName $null $recAttempts $recTried $null $null $null $null $recElapsed "ERROR" $sessionName $effectiveSessionId
         }
 
-        Update-UsageSummary
     } catch {
         $errMsg = "agy 실행 중 오류: $($_.Exception.Message)"
         Set-Content -Path $outFile -Value $errMsg -Encoding UTF8
         Log $errMsg
         Write-UsageRow $baseName $null $null $null $null $null $null $null $null "ERROR" $sessionName $conversationId
-        Update-UsageSummary
     } finally {
         if ($tempPromptFile -and (Test-Path -LiteralPath $tempPromptFile)) {
             Remove-Item -LiteralPath $tempPromptFile -Force -ErrorAction SilentlyContinue
@@ -1844,6 +1510,7 @@ if (Test-Path $ManualStopFlag) {
 
 
 
+Initialize-QaStore
 Update-QAReport
 
 New-Item -ItemType Directory -Force -Path $RunningDir -ErrorAction SilentlyContinue | Out-Null
@@ -1919,7 +1586,7 @@ try {
                     $taskSession = [string]$dir.Session
                     $taskCwds = @($dir.Cwd)
                     if ($taskSession) {
-                        $sess = Invoke-WithRuntimeLock { Read-Session $taskSession }
+                        $sess = Read-Session $taskSession
                         if ($sess) { $taskCwds = @(Resolve-TaskCwds $taskCwds $sess.cwd) }
                     }
                 } catch {}
@@ -1964,7 +1631,7 @@ try {
         if ($script:HandoffPumpReady -and -not $script:Stopping -and ((Get-Date) - $script:LastHandoffPumpAt).TotalSeconds -ge 5) {
             $script:LastHandoffPumpAt = Get-Date
             try {
-                Invoke-HandoffPump @{ InboxDir = $InboxDir; OutboxDir = $OutboxDir; UsageCsv = $UsageCsv; SessionsDir = $SessionsDir }
+                Invoke-HandoffPump @{ InboxDir = $InboxDir; OutboxDir = $OutboxDir; DbPath = $AgyDbPath }
             } catch {}
         }
 
