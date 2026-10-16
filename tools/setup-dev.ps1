@@ -48,13 +48,13 @@ $cur = ""
 # 값이 없으면 git 이 아무것도 출력하지 않아 [string] 변환이 $null 이 되므로 -join 으로 받는다
 try { $cur = (@(& git -C $RepoRoot config --get core.hooksPath 2>$null) -join "").Trim() } catch {}
 if ($cur -eq ".githooks") {
-    Write-Item "[v]" "푸시 전 시험 훅: 켜져 있음 (core.hooksPath=.githooks)" Green
+    Write-Item "[v]" "푸시 전 시험 훅: 켜져 있음 (core.hooksPath=.githooks). 시험은 PREPUSH_TESTS=1 git push 처럼 명시할 때만 돕니다" Green
 } elseif ($Check) {
     Write-Item "[X]" "푸시 전 시험 훅: 꺼져 있음 (core.hooksPath='$cur'). 켜려면 -Check 없이 다시 실행하세요." Yellow
     exit 1
 } else {
     & git -C $RepoRoot config core.hooksPath .githooks
-    Write-Item "[v]" "푸시 전 시험 훅을 켰습니다 (core.hooksPath=.githooks, 이 저장소에만 적용)" Green
+    Write-Item "[v]" "푸시 전 시험 훅을 켰습니다 (core.hooksPath=.githooks, 이 저장소에만 적용). 시험은 PREPUSH_TESTS=1 git push 처럼 명시할 때만 돕니다" Green
 }
 
 # 설치본 상태(고치지 않고 알리기만)
