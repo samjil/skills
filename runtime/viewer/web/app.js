@@ -1836,17 +1836,18 @@
     return "없음";
   }
 
-  // "라벨 값" 한 줄. absTime 이 있으면 마우스를 올릴 때 정확한 날짜·시각이 보인다. wide 는 라벨 폭을 넓혀 두 줄의 값이 세로로 맞게 한다(인수인계 화면).
-  function treeTimeLineHtml(cls, label, valueText, absTime, extraHtml, wide) {
-    var title = absTime ? ' title="' + escapeHtml(label + " " + absTime) + '"' : "";
-    return '<span class="' + cls + ' tree-time"' + title + '>' +
-      '<span class="tree-time-label' + (wide ? " wide" : "") + '">' + escapeHtml(label) + '</span>' +
-      '<span class="tree-time-value">' + escapeHtml(valueText) + '</span>' + (extraHtml || "") + '</span>';
-  }
-
-  function treeSessionLineHtml(cls, node, extraHtml, wide) {
-    var t = treeSessionTime(node);
-    return treeTimeLineHtml(cls, "세션", t ? formatRelativeTime(t) : "-", t, extraHtml, wide);
+  // 시각 두 개를 한 줄에 보인다: "세션 시각 / agy 쪽 시각". 색으로 구분한다 - 세션은 Claude 색, 위임·인수인계는 agy 색.
+  // 사이드바 위의 범례와, 각 시각에 마우스를 올릴 때 뜨는 설명(이름 + 정확한 날짜·시각)이 뜻을 알려 준다.
+  function treeTimePairHtml(cls, sessNode, agyLabel, agyText, agyAbs, extraHtml) {
+    var st = treeSessionTime(sessNode);
+    var sText = st ? formatRelativeTime(st) : "-";
+    var sTitle = "세션 " + (st || "정보 없음");
+    var aTitle = agyLabel + " " + (agyAbs || agyText);
+    return '<span class="' + cls + ' tree-times">' +
+      '<span class="tt tt-session' + (st ? "" : " is-empty") + '" title="' + escapeHtml(sTitle) + '">' + escapeHtml(sText) + '</span>' +
+      '<span class="tt-sep">/</span>' +
+      '<span class="tt tt-agy' + (agyAbs ? "" : " is-empty") + '" title="' + escapeHtml(aTitle) + '">' + escapeHtml(agyText) + '</span>' +
+      (extraHtml || "") + '</span>';
   }
 
   // 위임 실행 기록 화면의 날짜 정렬은 agy 작업(위임 기록) 시각 기준이라 라벨도 그렇게 보인다
@@ -1965,8 +1966,7 @@
 
       var sessCount = p.sessions ? p.sessions.length : 0;
       // 시각 두 줄: 세션(Desktop 세션의 마지막 활동, 세션 개수 포함) / 위임(agy 작업의 완료 시각)
-      var subHtml = treeSessionLineHtml("project-sub session-sub", p, '<span class="tree-time-count">' + sessCount + '개</span>', false) +
-        treeTimeLineHtml("project-sub session-sub", "위임", qaDelegationValue(p), p.latestDone, "", false);
+      var subHtml = treeTimePairHtml("project-sub session-sub", p, "위임", qaDelegationValue(p), p.latestDone, '<span class="tree-time-count">' + sessCount + '개</span>');
 
       var badgeHtml = '<span class="project-badge">' + (p.total + p.pending) + '</span>';
       if (p.pending > 0) {
@@ -2024,8 +2024,7 @@
           sItem.dataset.session = s.id;
           sItem.setAttribute("role", "treeitem");
 
-          var sSubHtml = treeSessionLineHtml("session-sub", s, "", false) +
-            treeTimeLineHtml("session-sub", "위임", qaDelegationValue(s), s.latestDone, "", false);
+          var sSubHtml = treeTimePairHtml("session-sub", s, "위임", qaDelegationValue(s), s.latestDone, "");
 
           var sBadgeHtml = '<span class="session-badge">' + (s.total + s.pending) + '</span>';
           if (s.pending > 0) {
@@ -2231,8 +2230,7 @@
       var sessCount = p.sessions ? p.sessions.length : 0;
       var waitHtml = p.waiting > 0 ? '<span class="tree-time-count who-agy">대기 중 ' + p.waiting + '</span>' : '';
       // 시각 두 줄: 세션(Desktop 세션의 마지막 활동, 세션 개수 포함) / 인수인계(마지막 메시지 시각)
-      var subHtml = treeSessionLineHtml("project-sub session-sub", p, '<span class="tree-time-count">' + sessCount + '개</span>', true) +
-        treeTimeLineHtml("project-sub session-sub", "인수인계", p.latestTime ? formatRelativeTime(p.latestTime) : "없음", p.latestTime, waitHtml, true);
+      var subHtml = treeTimePairHtml("project-sub session-sub", p, "인수인계", p.latestTime ? formatRelativeTime(p.latestTime) : "없음", p.latestTime, '<span class="tree-time-count">' + sessCount + '개</span>' + waitHtml);
 
       var badgeHtml = '<span class="project-badge">' + p.total + '</span>';
       if (p.waiting > 0) {
@@ -2291,8 +2289,7 @@
           sItem.setAttribute("role", "treeitem");
 
           var sWaitHtml = s.waiting > 0 ? '<span class="tree-time-count who-agy">대기 중 ' + s.waiting + '</span>' : '';
-          var sSubHtml = treeSessionLineHtml("session-sub", s, "", true) +
-            treeTimeLineHtml("session-sub", "인수인계", s.latestTime ? formatRelativeTime(s.latestTime) : "없음", s.latestTime, sWaitHtml, true);
+          var sSubHtml = treeTimePairHtml("session-sub", s, "인수인계", s.latestTime ? formatRelativeTime(s.latestTime) : "없음", s.latestTime, sWaitHtml);
 
           var sBadgeHtml = '<span class="session-badge">' + s.total + '</span>';
           if (s.waiting > 0) {
