@@ -58,6 +58,32 @@ try {
     Set-Content -LiteralPath (Join-Path $proj "BRIEF.md") -Value ("저장소 경로: ``" + (Join-Path $work "없는폴더") + "``") -Encoding UTF8
     Assert-Equal "  없는 폴더도 `$null" $true ($null -eq (Get-HandoffRepoPath $proj))
 
+    Write-Host "세션 전용 채널 (BRIEF.md 의 세션 ID + 저장소 경로)"
+    $sess = New-Channel "real-repo--feature-x"
+    $sid = "44e5130e-ba9f-423c-b916-8da73d04a9b9"
+    Set-Content -LiteralPath (Join-Path $sess "BRIEF.md") -Value ("- **저장소 경로**: ``" + $repo + "```n- **세션 ID**: ``" + $sid + "``") -Encoding UTF8
+    Assert-Equal "BRIEF.md 의 세션 ID 를 읽는다" $sid (Get-HandoffBriefSessionId $sess)
+    Set-Content -LiteralPath (Join-Path $sess "BRIEF.md") -Value "세션 ID: ``<세션 ID>``" -Encoding UTF8
+    Assert-Equal "  자리표시자는 세션 ID 로 치지 않는다" "" (Get-HandoffBriefSessionId $sess)
+    Assert-Equal "  BRIEF.md 가 없으면 빈 문자열" "" (Get-HandoffBriefSessionId (Join-Path $work "없는채널"))
+    Set-Content -LiteralPath (Join-Path $sess "BRIEF.md") -Value ("- **저장소 경로**: ``" + $repo + "```n- **세션 ID**: ``" + $sid + "``") -Encoding UTF8
+    $repoSub = Join-Path $repo "src\deep"
+    New-Item -ItemType Directory -Force -Path $repoSub | Out-Null
+    Assert-Equal "세션 ID 와 저장소 경로가 맞으면 폴더 이름이 달라도 찾는다" $sess (Resolve-HandoffChannelForCwd $repo $sid)
+    Assert-Equal "  저장소 하위 폴더에서 열어도 찾는다" $sess (Resolve-HandoffChannelForCwd $repoSub $sid)
+    Assert-Equal "  끝에 \ 가 붙은 cwd 도 찾는다" $sess (Resolve-HandoffChannelForCwd ($repo + "\") $sid)
+    Assert-Equal "  다른 세션 ID 는 못 찾는다" $true ($null -eq (Resolve-HandoffChannelForCwd $repo "other-session"))
+    Assert-Equal "  세션 ID 를 안 주면(옛 호출) 못 찾는다" $true ($null -eq (Resolve-HandoffChannelForCwd $repo))
+    Assert-Equal "  저장소 경로 밖의 폴더는 못 찾는다" $true ($null -eq (Resolve-HandoffChannelForCwd (Join-Path $work "repos") $sid))
+    Assert-Equal "  접두어만 같은 형제 폴더(real-repo2)는 못 찾는다" $true ($null -eq (Resolve-HandoffChannelForCwd ($repo + "2") $sid))
+    $repoCase = $repo.ToUpperInvariant()
+    Assert-Equal "  대소문자가 달라도 찾는다" $sess (Resolve-HandoffChannelForCwd $repoCase $sid)
+    $other = New-Channel "other-session-chan"
+    Set-Content -LiteralPath (Join-Path $other "BRIEF.md") -Value ("- **저장소 경로**: ``" + $repo + "``") -Encoding UTF8
+    Assert-Equal "  세션 ID 줄이 없는 채널은 세션으로 찾지 않는다(같은 저장소여도)" $sess (Resolve-HandoffChannelForCwd $repo $sid)
+    Assert-Equal "세션 ID 로 못 찾으면 이름 규칙으로 되돌아간다" $proj (Resolve-HandoffChannelForCwd (Join-Path $work "code\my-app") "other-session")
+    Assert-Equal "  세션 ID 가 맞아도 저장소가 다르면 이름 규칙을 쓴다" $proj (Resolve-HandoffChannelForCwd (Join-Path $work "code\my-app") $sid)
+
     Write-Host "머리말 읽기 (Read-HandoffFrontMatter)"
     $fm = Join-Path $work "fm.md"
     [IO.File]::WriteAllText($fm, "---`n번호: `"0042`"`n방향: `"a2c`" # c2a 또는 a2c`n시각: 2026-10-16 10:12`n제목: [채널 개통] 제목: 콜론이 든 제목`n답장대상: 0041`n모델: Gemini 3.8 Flash`n자동: 예`n---`n`n본문: 이건 머리말이 아님`n", (New-Object Text.UTF8Encoding($false)))

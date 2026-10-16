@@ -61,7 +61,7 @@ try {
     if (-not $in -or -not $in.cwd) { exit 0 }
 
     . (Join-Path $PSScriptRoot "handoff-lib.ps1")
-    $ch = Resolve-HandoffChannelForCwd ([string]$in.cwd)
+    $ch = Resolve-HandoffChannelForCwd ([string]$in.cwd) ([string]$in.session_id)
     if (-not $ch) { exit 0 }
     if (Test-HandoffAutoDisabled $ch) { exit 0 }
     $name = Split-Path -Leaf $ch
