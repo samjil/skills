@@ -760,6 +760,54 @@ function Invoke-AgyOnce($agyArgs, $errFile, $workDir, [string]$marker = "") {
 
 # 쿼터 초과 등 폴백 대상 오류면(새 세션 시도일 때만) 다음 모델로, 그 외 오류면 즉시 중단합니다.
 
+# --- 지시문 전달 방식: 인라인(-p "글") 또는 파일 참조(-p "@파일") ---
+# 같은 질문을 두 방식으로 50회 보내 비교한 결과, 답과 특수문자 전달(따옴표·역슬래시·셸 기호·한글·이모지·여러 줄)은 같았고
+# 파일 참조는 agy 가 파일을 도구로 한 번 더 읽는 탓에 호출마다 입력이 약 2,500토큰 더 들었다. 그래서 짧은 지시는 인라인으로 보낸다.
+# 인라인을 쓰지 않는 경우(파일 참조 유지): 지시문이 길 때, @ 로 시작할 때(실제 파일 경로면 agy 가 그 파일을 끼워 넣는다),
+# 표식이 다른 실행 중 작업과 겹치거나 없을 때(표식으로 이 호출의 agy 대화를 가려내야 멈춤 판정과 뷰어 진행 표시가 맞는다).
+$InlinePromptMaxChars = 8000
+
+# 지시문 첫 줄에서 표식을 뽑는다: 따옴표·역슬래시 앞까지(대화 기록은 JSON 이라 그 글자들이 이스케이프돼 그대로 찾을 수 없다), 12자 이상일 때만, 60자까지.
+function Get-AgyPromptMarker([string]$Prompt) {
+    if (-not $Prompt) { return "" }
+    $firstLine = ($Prompt -split "[\r\n]")[0]
+    $cut = [regex]::Replace($firstLine, '[\\"].*$', '')
+    if ($cut.Length -ge 12) { return $cut.Substring(0, [Math]::Min(60, $cut.Length)) }
+    return ""
+}
+
+# 이 지시문을 어떤 방식으로 넘길지 정한다. OtherMarkers: 지금 도는 다른 작업들의 표식, OtherCount: 지금 도는 다른 작업 수.
+# 돌려주는 값: @{ Mode = 'inline'|'file'; Marker = <인라인일 때의 표식>; Reason = 'long'|'at'|'marker'|'no-marker'|'' }
+function Get-AgyPromptDelivery([string]$Prompt, [string[]]$OtherMarkers, [int]$OtherCount) {
+    if ($Prompt.Length -gt $InlinePromptMaxChars) { return @{ Mode = 'file'; Marker = ''; Reason = 'long' } }
+    if ($Prompt.TrimStart().StartsWith('@')) { return @{ Mode = 'file'; Marker = ''; Reason = 'at' } }
+    $marker = Get-AgyPromptMarker $Prompt
+    if (-not $marker) {
+        # 표식이 없으면 동시에 도는 작업이 있을 때 대화를 가릴 수 없다. 혼자 돌 때만 인라인.
+        if ($OtherCount -gt 0) { return @{ Mode = 'file'; Marker = ''; Reason = 'no-marker' } }
+        return @{ Mode = 'inline'; Marker = ''; Reason = '' }
+    }
+    # 대화 기록 맨 앞에 표식이 들어 있는지를 포함 검사로 보므로, 한쪽이 다른 쪽을 품어도 겹친 것이다
+    foreach ($m in @($OtherMarkers)) {
+        if ($m -and ($m.Contains($marker) -or $marker.Contains($m))) { return @{ Mode = 'file'; Marker = ''; Reason = 'marker' } }
+    }
+    return @{ Mode = 'inline'; Marker = $marker; Reason = '' }
+}
+
+# 지금 돌고 있는 다른 작업(자기 제외)의 인라인 표식과 작업 수. 작업 표시 파일(logs\running)에서 읽는다.
+function Get-OtherRunningMarkers([string]$ExceptTaskId) {
+    $markers = @(); $total = 0
+    if (Test-Path -LiteralPath $RunningDir) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $RunningDir -Filter "*.json" -File -ErrorAction SilentlyContinue)) {
+            $c = Read-RunningClaim $f.FullName
+            if ($null -eq $c -or [string]$c.task_id -eq $ExceptTaskId) { continue }
+            $total++
+            if ($c.marker) { $markers += [string]$c.marker }
+        }
+    }
+    return @{ Markers = $markers; Total = $total }
+}
+
 function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFile, [string]$conversationId = "", [string]$knownModel = "", [string]$taskId = "", [string]$promptFile = "", [string]$requestedModel = "", [string]$autoModel = "") {
     $result = [ordered]@{
         Success        = $false
@@ -794,6 +842,16 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
         $result.Attempts++
         $result.TriedModels += $candidate
 
+        # 지시문 전달 방식(인라인 / 파일 참조)과 표식. 인라인이면 표식을 작업 표시 파일에 적어 둬서, 같은 표식으로 시작하는 다른 작업이 파일 참조로 비켜 가게 한다.
+        $plainPrompt = ([string]$safePrompt).Replace('\"', '"')
+        $hasPromptFile = [bool]($promptFile -and (Test-Path -LiteralPath $promptFile))
+        $delivery = @{ Mode = 'inline'; Marker = (Get-AgyPromptMarker $plainPrompt); Reason = '' }
+        if ($hasPromptFile) {
+            $others = Get-OtherRunningMarkers $taskId
+            $delivery = Get-AgyPromptDelivery $plainPrompt $others.Markers $others.Total
+        }
+        if ($taskId) { try { Write-RunningClaim $taskId @{ marker = [string]$(if ($delivery.Mode -eq 'inline') { $delivery.Marker } else { '' }) } } catch {} }
+
         # 웹 뷰어 실시간 표시용: 현재 실행 중인 작업과 모델 정보를 current_task.json에 기록
         $modelForReport = if ($conversationId) {
             if ($knownModel) { $knownModel } else { $ModelPriority[0] }
@@ -814,8 +872,8 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
             } catch {}
         }
 
-        # 프롬프트 인자: 임시 프롬프트 파일(@경로)이 제공되면 파일 참조 문법 사용
-        $promptArg = if ($promptFile -and (Test-Path -LiteralPath $promptFile)) { "@$promptFile" } else { ([string]$safePrompt).Replace('\"', '"') }
+        # 프롬프트 인자: 위에서 정한 방식(인라인 글 또는 @임시프롬프트파일)
+        $promptArg = if ($delivery.Mode -eq 'file') { "@$promptFile" } else { $plainPrompt }
         $agyArgs = @('-p', $promptArg, '--output-format', 'json')
 
         if ($conversationId) { $agyArgs += @('--conversation', $conversationId) } else { $agyArgs += @('--model', $candidate) }
@@ -825,15 +883,9 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
         if ($skipPerm)  { $agyArgs += '--dangerously-skip-permissions' }
 
         # 동시에 도는 다른 작업과 대화를 헷갈리지 않게, 이 호출의 질문에만 들어 있는 글(표식)을 함께 넘긴다:
-        # 프롬프트 파일을 쓰면 그 파일 이름, 아니면 지시문 첫 줄(따옴표·역슬래시 앞까지, 12자 이상일 때만).
-        $marker = ""
-        if ($promptFile) {
-            $marker = [System.IO.Path]::GetFileName($promptFile)
-        } elseif ($safePrompt) {
-            $firstLine = ([string]$safePrompt -split "[\r\n]")[0]
-            $cut = [regex]::Replace($firstLine, '[\\"].*$', '')
-            if ($cut.Length -ge 12) { $marker = $cut.Substring(0, [Math]::Min(60, $cut.Length)) }
-        }
+        # 파일 참조면 그 파일 이름, 인라인이면 지시문 첫 줄(따옴표·역슬래시 앞까지, 12자 이상일 때만).
+        $marker = if ($delivery.Mode -eq 'file') { [System.IO.Path]::GetFileName($promptFile) } else { [string]$delivery.Marker }
+        if ($delivery.Mode -eq 'file' -and $delivery.Reason) { Log "  -> 지시문을 파일 참조로 넘깁니다($($delivery.Reason))" }
         $call = Invoke-AgyOnce $agyArgs $errFile $RuntimeDir $marker
         if ($call.StdErr) { $result.StdErr = [string]$call.StdErr }
 
