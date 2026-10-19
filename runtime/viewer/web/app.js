@@ -236,13 +236,14 @@
     }).join(",");
   }
 
-  function formatRelativeTime(dateStr) {
+  // nowMs 는 시험에서 기준 시각을 고정하려는 선택 인자다(없으면 지금).
+  function formatRelativeTime(dateStr, nowMs) {
     if (!dateStr) return "-";
     try {
       var d = new Date(dateStr.replace(/-/g, "/"));
       if (isNaN(d.getTime())) return dateStr;
-      var now = new Date();
-      var diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+      var nowTime = (nowMs == null) ? Date.now() : nowMs;
+      var diffSec = Math.floor((nowTime - d.getTime()) / 1000);
       if (diffSec < 60) return "방금 전";
       if (diffSec < 3600) return Math.floor(diffSec / 60) + "분 전";
       if (diffSec < 86400) return Math.floor(diffSec / 3600) + "시간 전";
@@ -1916,7 +1917,7 @@
       if (sec < 86400) return "진행 " + Math.floor(sec / 3600) + "시간";
       return "진행 " + Math.floor(sec / 86400) + "일";
     }
-    if (node && node.latestDone) return formatRelativeTime(node.latestDone);
+    if (node && node.latestDone) return formatRelativeTime(node.latestDone, nowMs);
     if (node && node.pending > 0) return "진행 중";
     return "없음";
   }
