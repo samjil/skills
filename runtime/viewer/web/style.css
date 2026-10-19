@@ -208,10 +208,10 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .brand-mark i { width: 10px; height: 10px; }
 .brand-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  object-fit: cover;
+  /* 가로형 로고(비율 1.414:1, 모서리가 이미 둥글다): 높이를 맞추고 너비는 비율대로 */
+  width: auto;
+  height: 32px;
+  border-radius: 8px;
   display: block;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
   transition: transform 0.2s ease;
