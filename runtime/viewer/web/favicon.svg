@@ -1,45 +1,194 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-          <defs>
-            <clipPath id="clip-c">
-              <circle cx="512" cy="512" r="512"/>
-            </clipPath>
-            <clipPath id="sky-clip-c">
-              <path d="M -20,-20 L 1044,-20 L 1044,865 Q 512,725 -20,865 Z"/>
-            </clipPath>
-          </defs>
-          <g clip-path="url(#clip-c)">
-            <path d="M -10,-10 L 1034,-10 L 1034,868 Q 512,728 -10,868 Z" fill="#F7F2E4"/>
-            <g clip-path="url(#sky-clip-c)">
-              <g transform="translate(485, 530) scale(1.081)">
-        <!-- 외곽 세이지 그린 아치 -->
-        <path d="M -395,420 C -265,-25 -155,-420 0,-420 C 155,-420 265,-25 395,420
-                 L 155,420 C 75,60 40,-160 0,-160 C -40,-160 -75,60 -155,420 Z"
-              fill="#84A98C"/>
-        <!-- 중간 코랄 아치 (세이지 그린 안쪽에 완전히 밀착) -->
-        <path d="M -318,420 C -205,5 -112,-335 0,-335 C 112,-335 205,5 318,420
-                 L 155,420 C 75,60 40,-160 0,-160 C -40,-160 -75,60 -155,420 Z"
-              fill="#E56B46"/>
-        <!-- 내측 네이비 아치 (코랄 안쪽에 완전히 밀착) -->
-        <path d="M -240,420 C -145,35 -68,-250 0,-250 C 68,-250 145,35 240,420
-                 L 158,420 C 82,70 38,-148 0,-148 C -38,-148 -82,70 -158,420 Z"
-              fill="#122B49"/>
-      
-          <g transform="translate(35, 35) rotate(-8) scale(1.95)">
-            <!-- 크림색 분리 외곽선 -->
-            <g stroke="#F7F2E4" stroke-width="14" stroke-linejoin="round" stroke-linecap="round">
-              <path d="M -15,-12 C -58,-68 -135,-82 -210,-80 C -148,-42 -82,-18 -52,12 C -38,28 -55,50 -85,68 L -15,25 Z" fill="#F7F2E4"/>
-              <path d="M 38,8 C 72,28 82,82 55,150 C 42,102 35,55 20,40 C 8,28 -8,28 -22,32 Z" fill="#F7F2E4"/>
-              <path d="M -85,68 L -175,95 L -65,25 C -32,2 -8,-22 24,-44 C 44,-56 65,-52 78,-42 L 98,-40 L 82,-28 C 76,-2 42,28 -12,42 L -125,125 L -48,52 Z" fill="#F7F2E4"/>
-            </g>
-            <!-- 제비 본체 -->
-            <path d="M -15,-12 C -58,-68 -135,-82 -210,-80 C -148,-42 -82,-18 -52,12 C -38,28 -55,50 -85,68 L -15,25 Z" fill="#122B49"/>
-            <path d="M 38,8 C 72,28 82,82 55,150 C 42,102 35,55 20,40 C 8,28 -8,28 -22,32 Z" fill="#122B49"/>
-            <path d="M -85,68 L -175,95 L -65,25 C -32,2 -8,-22 24,-44 C 44,-56 65,-52 78,-42 L 98,-40 L 82,-28 C 76,-2 42,28 -12,42 L -125,125 L -48,52 Z" fill="#122B49"/>
-            <!-- 제비 가슴 코랄 포인트 -->
-            <path d="M 78,-32 C 60,-32 42,-18 20,4 C 0,24 -14,38 -32,45 C 8,40 46,20 65,-4 C 74,-15 78,-25 78,-32 Z" fill="#E56B46"/>
-          </g>
-        </g>
-            </g>
-            <path d="M -10,860 Q 512,720 1034,860 L 1034,1034 L -10,1034 Z" fill="#122B49"/>
-          </g>
-        </svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- 배경 플레이트 그라데이션 (원형/사각 옵션 선택 시에만 표시) -->
+    <radialGradient id="bgDarkGrad" cx="35%" cy="25%" r="75%">
+      <stop offset="0%" stop-color="#172542" />
+      <stop offset="55%" stop-color="#0b1326" />
+      <stop offset="100%" stop-color="#060a14" />
+    </radialGradient>
+
+    <!-- 삼질 'S' 메인 홀로그램 그라데이션 -->
+    <linearGradient id="samjilSGrad" x1="15%" y1="10%" x2="85%" y2="90%">
+      <stop offset="0%" stop-color="#67e8f9" />
+      <stop offset="22%" stop-color="#22d3ee" />
+      <stop offset="50%" stop-color="#3b82f6" />
+      <stop offset="78%" stop-color="#a855f7" />
+      <stop offset="100%" stop-color="#f472b6" />
+    </linearGradient>
+
+    <!-- 'S' 3D 입체 두께(Extrusion) 그라데이션 -->
+    <linearGradient id="samjilSDepth" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0891b2" />
+      <stop offset="50%" stop-color="#1d4ed8" />
+      <stop offset="100%" stop-color="#6b21a8" />
+    </linearGradient>
+
+    <!-- 글래스모피즘 궤도 링 그라데이션 A (시안-퍼플-핑크) -->
+    <linearGradient id="glassRingA" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.95" />
+      <stop offset="35%" stop-color="#60a5fa" stop-opacity="0.55" />
+      <stop offset="70%" stop-color="#c084fc" stop-opacity="0.75" />
+      <stop offset="100%" stop-color="#f472b6" stop-opacity="0.95" />
+    </linearGradient>
+
+    <!-- 글래스모피즘 궤도 링 그라데이션 B (퍼플-아이스블루-시안) -->
+    <linearGradient id="glassRingB" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#93c5fd" stop-opacity="0.85" />
+      <stop offset="45%" stop-color="#818cf8" stop-opacity="0.45" />
+      <stop offset="80%" stop-color="#e879f9" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0.9" />
+    </linearGradient>
+
+    <!-- 유리 하이라이트 림(Rim) 그라데이션 -->
+    <linearGradient id="rimHighlight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95" />
+      <stop offset="45%" stop-color="#67e8f9" stop-opacity="0.75" />
+      <stop offset="100%" stop-color="#f0abfc" stop-opacity="0.9" />
+    </linearGradient>
+
+    <!-- 3D 진주빛 반중력 구체(Sphere) 그라데이션 -->
+    <radialGradient id="pearlSphere" cx="32%" cy="28%" r="68%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="22%" stop-color="#a5f3fc" />
+      <stop offset="52%" stop-color="#38bdf8" />
+      <stop offset="78%" stop-color="#6366f1" />
+      <stop offset="93%" stop-color="#c084fc" />
+      <stop offset="100%" stop-color="#e879f9" />
+    </radialGradient>
+
+    <!-- 구체 하단 반사광 -->
+    <radialGradient id="sphereSubGlow" cx="70%" cy="75%" r="55%">
+      <stop offset="0%" stop-color="#f472b6" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#3b82f6" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- 투명 배경에서도 경계가 선명하고 깔끔하게 살아나는 드롭섀도우 + 네온 필터 -->
+    <filter id="cleanGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#0f172a" flood-opacity="0.35" />
+      <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur1" />
+      <feMerge>
+        <feMergeNode in="blur1" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <filter id="sphereShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#1e1b4b" flood-opacity="0.45" />
+    </filter>
+  </defs>
+
+  
+          <circle cx="256" cy="256" r="248" fill="url(#bgDarkGrad)" />
+          <circle cx="256" cy="256" r="246" fill="none" stroke="url(#rimHighlight)" stroke-width="3" opacity="0.45" />
+        
+
+  <g transform="translate(256, 256) scale(0.96) translate(-256, -256)">
+    <!-- 1. 후면(Back) 반중력 유리 궤도 (S 뒤쪽을 지나가는 절반 영역) -->
+    <g opacity="0.68">
+      <!-- 궤도 1 (-32도) 뒷면 반원 -->
+      <path d="M -210 0 A 210 84 0 0 1 210 0" transform="translate(256 256) rotate(-32)" fill="none" stroke="url(#glassRingA)" stroke-width="22" stroke-linecap="round" />
+      <path d="M -210 0 A 210 84 0 0 1 210 0" transform="translate(256 256) rotate(-32)" fill="none" stroke="url(#rimHighlight)" stroke-width="3.5" opacity="0.7" />
+
+      <!-- 궤도 2 (+26도) 뒷면 반원 -->
+      <path d="M -212 0 A 212 92 0 0 1 212 0" transform="translate(256 256) rotate(26)" fill="none" stroke="url(#glassRingB)" stroke-width="28" stroke-linecap="round" />
+      <path d="M -212 0 A 212 92 0 0 1 212 0" transform="translate(256 256) rotate(26)" fill="none" stroke="url(#rimHighlight)" stroke-width="4" opacity="0.65" />
+
+      <!-- 궤도 3 (-68도) 뒷면 반원 -->
+      <path d="M -204 0 A 204 78 0 0 1 204 0" transform="translate(256 256) rotate(-68)" fill="none" stroke="url(#glassRingA)" stroke-width="18" stroke-linecap="round" />
+    </g>
+
+    <!-- 2. 중앙 삼질(SAMJIL) 3D 'S' 코어 심볼 -->
+    <g filter="url(#cleanGlow)">
+      <!-- 3D 입체 하단 베벨(두께감) -->
+      <path d="M 336 184
+               C 314 150, 276 138, 238 142
+               C 186 147, 162 176, 166 210
+               C 170 245, 210 254, 262 264
+               C 316 274, 344 292, 342 332
+               C 340 372, 296 394, 240 390
+               C 198 387, 168 368, 152 342"
+            transform="translate(4, 7)"
+            fill="none" stroke="url(#samjilSDepth)" stroke-width="58" stroke-linecap="butt" />
+
+      <!-- 'S' 메인 홀로그램 바디 -->
+      <path d="M 336 184
+               C 314 150, 276 138, 238 142
+               C 186 147, 162 176, 166 210
+               C 170 245, 210 254, 262 264
+               C 316 274, 344 292, 342 332
+               C 340 372, 296 394, 240 390
+               C 198 387, 168 368, 152 342"
+            fill="none" stroke="url(#samjilSGrad)" stroke-width="56" stroke-linecap="butt" />
+
+      <!-- 'S' 상단 유리 엣지 스페큘러 하이라이트 -->
+      <path d="M 336 184
+               C 314 150, 276 138, 238 142
+               C 186 147, 162 176, 166 210
+               C 170 245, 210 254, 262 264
+               C 316 274, 344 292, 342 332
+               C 340 372, 296 394, 240 390
+               C 198 387, 168 368, 152 342"
+            transform="translate(-1.5, -2)"
+            fill="none" stroke="#e0f2fe" stroke-width="4" stroke-linecap="butt" opacity="0.75" />
+    </g>
+
+    <!-- 3. 삼질 아이덴티티 중앙 듀얼 구체 (S 내부 상·하단 포인트) -->
+    <g filter="url(#sphereShadow)">
+      <!-- 상단 메인 코어 구체 -->
+      <circle cx="256" cy="214" r="23" fill="url(#pearlSphere)" />
+      <circle cx="256" cy="214" r="23" fill="url(#sphereSubGlow)" />
+      <ellipse cx="248" cy="204" rx="7" ry="4.5" transform="rotate(-25 248 204)" fill="#ffffff" opacity="0.85" />
+
+      <!-- 하단 서브 코어 구체 -->
+      <circle cx="255" cy="296" r="15.5" fill="url(#pearlSphere)" />
+      <circle cx="255" cy="296" r="15.5" fill="url(#sphereSubGlow)" />
+      <ellipse cx="250" cy="290" rx="5" ry="3" transform="rotate(-25 250 290)" fill="#ffffff" opacity="0.85" />
+    </g>
+
+    <!-- 4. 전면(Front) 반중력 유리 궤도 (S 앞쪽을 가로지르는 입체 글래스 링) -->
+    <g opacity="0.95">
+      <!-- 궤도 2 (+26도) 전면 유리 튜브 -->
+      <path d="M 212 0 A 212 92 0 0 1 -212 0" transform="translate(256 256) rotate(26)" fill="none" stroke="url(#glassRingB)" stroke-width="28" stroke-linecap="round" />
+      <path d="M 212 0 A 212 92 0 0 1 -212 0" transform="translate(256 252) rotate(26)" fill="none" stroke="url(#rimHighlight)" stroke-width="4.5" opacity="0.9" />
+      <path d="M 212 0 A 212 92 0 0 1 -212 0" transform="translate(256 262) rotate(26)" fill="none" stroke="#f472b6" stroke-width="2.5" opacity="0.65" />
+
+      <!-- 궤도 1 (-32도) 전면 유리 튜브 -->
+      <path d="M 210 0 A 210 84 0 0 1 -210 0" transform="translate(256 256) rotate(-32)" fill="none" stroke="url(#glassRingA)" stroke-width="20" stroke-linecap="round" />
+      <path d="M 210 0 A 210 84 0 0 1 -210 0" transform="translate(256 252) rotate(-32)" fill="none" stroke="#ffffff" stroke-width="4" opacity="0.9" />
+      <path d="M 210 0 A 210 84 0 0 1 -210 0" transform="translate(256 260) rotate(-32)" fill="none" stroke="#22d3ee" stroke-width="3" opacity="0.8" />
+
+      <!-- 궤도 3 (-68도) 전면 유리 튜브 -->
+      <path d="M 204 0 A 204 78 0 0 1 -204 0" transform="translate(256 256) rotate(-68)" fill="none" stroke="url(#glassRingA)" stroke-width="16" stroke-linecap="round" />
+      <path d="M 204 0 A 204 78 0 0 1 -204 0" transform="translate(254 256) rotate(-68)" fill="none" stroke="url(#rimHighlight)" stroke-width="3.5" opacity="0.85" />
+    </g>
+
+    <!-- 5. 외곽 Antigravity(반중력) 부유 구체 6개 -->
+    <g filter="url(#sphereShadow)">
+      <!-- 좌하단 대형 구체 -->
+      <circle cx="182" cy="396" r="24" fill="url(#pearlSphere)" />
+      <circle cx="182" cy="396" r="24" fill="url(#sphereSubGlow)" />
+      <ellipse cx="174" cy="386" rx="7.5" ry="4.5" transform="rotate(-28 174 386)" fill="#ffffff" opacity="0.9" />
+
+      <!-- 우하단 중형 구체 -->
+      <circle cx="372" cy="330" r="18" fill="url(#pearlSphere)" />
+      <circle cx="372" cy="330" r="18" fill="url(#sphereSubGlow)" />
+      <ellipse cx="366" cy="322" rx="5.5" ry="3.2" transform="rotate(-28 366 322)" fill="#ffffff" opacity="0.9" />
+
+      <!-- 상단 소형 구체 -->
+      <circle cx="210" cy="112" r="10.5" fill="url(#pearlSphere)" />
+      <circle cx="207" cy="108" r="3" fill="#ffffff" opacity="0.9" />
+
+      <!-- 좌측 소형 구체 -->
+      <circle cx="94" cy="248" r="11.5" fill="url(#pearlSphere)" />
+      <circle cx="90" cy="244" r="3.2" fill="#ffffff" opacity="0.9" />
+
+      <!-- 우측 소형 구체 -->
+      <circle cx="412" cy="260" r="12" fill="url(#pearlSphere)" />
+      <circle cx="408" cy="256" r="3.5" fill="#ffffff" opacity="0.9" />
+
+      <!-- 하단 미니 구체 -->
+      <circle cx="330" cy="408" r="9.5" fill="url(#pearlSphere)" />
+      <circle cx="327" cy="405" r="2.8" fill="#ffffff" opacity="0.9" />
+    </g>
+  </g>
+</svg>
