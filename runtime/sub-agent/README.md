@@ -73,9 +73,10 @@ python sub-agent.py --check
 - 기존 `samjil-delegate-agy` 스킬(오래 걸리는 작업·파일 수정 위임)과 겹치지 않는다: 읽기·분석은 sub-agent, 쓰기·장시간 작업은 delegate-agy.
 ```
 
-## 아직 실제 CLI 로 확인하지 못한 것
+## 실제 CLI 로 확인한 것 / 아직 못 한 것
 
-시험(`tests/sub-agent/sub-agent.tests.py`, 34개)은 **가짜 agy·opencode** 로 돌렸습니다. 아래는 로컬에서 한 번 확인해야 합니다.
-- agy 가 임시 폴더의 `request.md` 를 읽을 때 권한 확인에서 멈추지 않는지(멈추면 타임아웃 후 opencode 로 넘어갑니다. 해결하려면 `SUB_AGENT_AGY_SKIP_PERMISSIONS=1`).
-- `opencode run --model ... --file ...` 의 기본 출력이 답변 텍스트만인지(도구 호출 로그가 섞이면 알려 주세요).
-- `openrouter/qwen/qwen3-coder:free` 모델 이름이 지금도 유효한지(`opencode models openrouter`).
+- 확인함: opencode 의 `--file` 은 값을 여러 개 받는 옵션이라 뒤에 오는 메시지를 파일로 삼킨다(`File not found`) -> 메시지를 맨 앞, `--file` 을 맨 끝에 둔다.
+- 확인함: agy 는 헤드리스에서 도구 권한(`command`)을 물을 수 없어 자동 거부한다 -> 파일을 읽게 시키지 않고 `-p @요청파일` 로 내용을 프롬프트에 직접 넣는다. **디렉터리 탐색(`-f 폴더`)은 agy 가 명령을 써야 해서 같은 거부가 날 수 있다**(그때는 `SUB_AGENT_AGY_SKIP_PERMISSIONS=1`).
+- 아직 못 함: `opencode run` 의 기본 출력이 답변 텍스트만인지(도구 호출 로그가 섞이는지), 고른 무료 모델이 실제로 형식을 지키는지.
+
+시험(`tests/sub-agent/sub-agent.tests.py`, 34개)은 가짜 agy·opencode 로 돌립니다.
