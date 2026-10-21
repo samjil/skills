@@ -39,7 +39,8 @@ st = %r
 args = sys.argv[1:]
 open(os.path.join(st, "agy.args"), "a", encoding="utf-8").write(json.dumps(args, ensure_ascii=False) + "\\n")
 prompt = args[args.index("-p") + 1]
-path = re.search(r"file (\\S+) and", prompt).group(1)
+assert prompt.startswith("@"), prompt
+path = prompt[1:]
 open(os.path.join(st, "agy.bundle"), "w", encoding="utf-8").write(open(path, encoding="utf-8").read())
 mode = open(os.path.join(st, "agy.mode")).read().strip()
 model = args[args.index("--model") + 1] if "--model" in args else ""
@@ -65,6 +66,8 @@ args = sys.argv[1:]
 open(os.path.join(st, "oc.args"), "a", encoding="utf-8").write(json.dumps(args, ensure_ascii=False) + "\\n")
 if args[:2] == ["auth", "list"]:
     print("openrouter  api"); sys.exit(0)
+# 실제 opencode 처럼 --file 은 뒤따르는 인자를 모두 파일로 삼킨다: 맨 끝에 있어야 한다.
+assert args.index("--file") == len(args) - 2, args
 f = args[args.index("--file") + 1]
 open(os.path.join(st, "oc.bundle"), "w", encoding="utf-8").write(open(f, encoding="utf-8").read())
 mode = open(os.path.join(st, "oc.mode")).read().strip()
@@ -118,9 +121,9 @@ ok("stdout 에는 답만(엔진 표시는 stderr)", "[agy/gemini-3.8-flash-high]
 b = rd("agy.bundle")
 ok("요청 파일에 100~102 줄만 줄번호와 함께 들어간다", "0100|line 100 내용" in b and "0102|line 102 내용" in b and "0099|" not in b and "0103|" not in b, b[-300:])
 ok("요청 파일에 질문과 압축 규칙이 있다", "롤백 원인" in b and "인사말" in b and "개조식" in b)
-ok("agy 에 --add-dir(요청 폴더)과 --output-format json 을 준다", "--add-dir" in rd("agy.args") and "--output-format" in rd("agy.args"))
+ok("agy 에 '-p @요청파일' 로 내용을 직접 넘긴다(도구·권한 불필요)", '"-p", "@' in rd("agy.args") and "--output-format" in rd("agy.args"))
 ok("--dangerously-skip-permissions 는 기본으로 주지 않는다", "dangerously" not in rd("agy.args"))
-ok("요청 임시 폴더는 끝나면 지운다", not os.path.exists(json.loads(rd("agy.args").splitlines()[0])[json.loads(rd("agy.args").splitlines()[0]).index("--add-dir") + 1]))
+ok("요청 임시 폴더는 끝나면 지운다", not os.path.exists(json.loads(rd("agy.args").splitlines()[0])[1][1:]))
 
 print("파일 주입 방식")
 setmode("ok", "ok")
@@ -155,7 +158,7 @@ code, out, err = run("-q", "파일 없이 탐색")
 ok("자동: 파일 없음 -> agy 먼저", "[agy/" in err, err)
 code, out, err = run("--engine", "opencode", "-f", log, "-q", "q")
 ok("--engine opencode 강제", "[opencode/" in err)
-ok("opencode: --model, --file, ASCII 고정 문장을 넘긴다", all(x in rd("oc.args") for x in ["--model", "openrouter/qwen/qwen3-coder:free", "--file", "Follow the instructions"]))
+ok("opencode: 메시지가 맨 앞, --file 이 맨 끝", all(x in rd("oc.args") for x in ["--model", "openrouter/qwen/qwen3-coder:free", "--file", "Follow the instructions"]))
 ok("opencode 출력의 ANSI 색 코드가 걷힌다", "\x1b" not in out and out.strip() == "결론: opencode 가 답함", repr(out))
 
 print("폴백")

@@ -198,10 +198,11 @@ def engine_agy(bundle_path, meta, args, env):
     models = [m.strip() for m in os.environ.get("SUB_AGENT_AGY_MODELS", DEFAULT_AGY_MODELS).split(",") if m.strip()]
     if args.agy_model:
         models = [args.agy_model]
-    prompt = "Read the file %s and follow the instructions in it exactly. Output only the final answer." % bundle_path
+    # "@파일" 은 agy 가 파일 내용을 프롬프트로 직접 읽어 들이는 방식(워처가 긴 지시문에 쓰는 것과 같다). 도구·권한이 필요 없다.
+    prompt = "@" + bundle_path
     last = None
     for model in models or [None]:
-        cmd = [exe, "-p", prompt, "--output-format", "json", "--add-dir", os.path.dirname(bundle_path)]
+        cmd = [exe, "-p", prompt, "--output-format", "json"]
         for d in meta["dirs"]:
             cmd += ["--add-dir", d]
         if model:
@@ -246,7 +247,8 @@ def engine_opencode(bundle_path, meta, args, env):
         raise EngineError("opencode 가 설치돼 있지 않습니다(npm install -g opencode-ai)")
     model = args.opencode_model or os.environ.get("SUB_AGENT_OPENCODE_MODEL", DEFAULT_OPENCODE_MODEL)
     # 지시·질문·파일 본문은 모두 첨부 파일에 있다. 명령줄 인자는 ASCII 고정 문장만 쓴다(.cmd 셸 따옴표·코드페이지 문제 회피).
-    cmd = [exe, "run", "--model", model, "--file", bundle_path, "Follow the instructions in the attached file exactly. Output only the final answer."]
+    # --file 은 값을 여러 개 받는 옵션이라 뒤에 오는 인자를 파일로 삼킨다. 메시지를 맨 앞에 두고 --file 을 맨 끝에 둔다.
+    cmd = [exe, "run", "Follow the instructions in the attached file exactly. Output only the final answer.", "--model", model, "--file", bundle_path]
     code, out, err = run_cli(cmd, meta["dirs"][0] if meta["dirs"] else args.cwd, args.timeout, env)
     text = ANSI_RE.sub("", out).strip()
     if code != 0 or not text:
