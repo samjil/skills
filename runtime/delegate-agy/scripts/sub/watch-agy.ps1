@@ -889,6 +889,22 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
         $call = Invoke-AgyOnce $agyArgs $errFile $RuntimeDir $marker
         if ($call.StdErr) { $result.StdErr = [string]$call.StdErr }
 
+        # 멈춤·마감으로 끊았는데 agy 가 이미 최종 응답을 대화 기록에 남겼다면(응답을 마친 뒤 프로세스만 안 끝난 경우, 실측 2건) 실패가 아니라 그 응답을 답으로 회수한다.
+        # 'hard'(최대 대기 시간)는 일하는 중이었던 것이라 회수하지 않는다. 사용량(토큰)은 agy 의 JSON 응답에만 있어 이 경우 비워 둔다.
+        if ($call.TimedOut -and @('stall', 'cap') -contains [string]$call.Reason -and $call.ConversationId) {
+            $recovered = $null
+            try { $recovered = Get-AgyFinalResponse (Get-AgyHomeDir) ([string]$call.ConversationId) } catch { $recovered = $null }
+            if ($recovered) {
+                $result.Success        = $true
+                $result.Response       = [string]$recovered.Text
+                $result.ModelUsed      = if ($conversationId) { $knownModel } else { $candidate }
+                $result.ConversationId = [string]$call.ConversationId
+                $result.StdErr         = "agy 프로세스가 끝나지 않아 워처가 끊었지만(사유: $($call.Reason)), 대화 기록(단계 #$($recovered.Index))에 최종 응답이 이미 있어 그 내용을 답으로 회수했습니다. 토큰 사용량은 agy 의 JSON 응답이 없어 기록하지 못했습니다."
+                Log "  회수: agy 가 끝나지 않아 끊었지만 대화 $($call.ConversationId)의 최종 응답(단계 #$($recovered.Index), $($recovered.Text.Length)자)이 이미 있어 성공으로 처리합니다. (토큰 사용량은 기록하지 못함)"
+                break
+            }
+        }
+
         if ($call.TimedOut) {
 
             if ($call.Reason -eq 'stall') {
