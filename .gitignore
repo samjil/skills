@@ -3,3 +3,6 @@ Thumbs.db
 *.log
 *.tmp
 node_modules/
+
+# sub-agent 의 API 키
+runtime/sub-agent/.env
