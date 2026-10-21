@@ -84,6 +84,21 @@ try {
     Assert-Equal "세션 ID 로 못 찾으면 이름 규칙으로 되돌아간다" $proj (Resolve-HandoffChannelForCwd (Join-Path $work "code\my-app") "other-session")
     Assert-Equal "  세션 ID 가 맞아도 저장소가 다르면 이름 규칙을 쓴다" $proj (Resolve-HandoffChannelForCwd (Join-Path $work "code\my-app") $sid)
 
+    Write-Host "세션 ID 여러 개 (이어서 다시 연 세션은 ID 가 바뀐다)"
+    $sid2 = "ddf19b1b-92f4-4158-bc4f-4edb033e93c9"
+    Set-Content -LiteralPath (Join-Path $sess "BRIEF.md") -Value ("- **저장소 경로**: ``" + $repo + "```n- **세션 ID**: ``" + $sid + "``, ``" + $sid2 + "`` (이어 연 세션)`n- 본문에 나온 세션 ID 설명은 읽지 않는다: ``이건-아님``") -Encoding UTF8
+    Assert-Equal "한 줄의 백틱 값을 모두 읽는다" "$sid|$sid2" ((Get-HandoffBriefSessionIds $sess) -join "|")
+    Assert-Equal "  첫 번째 값은 예전 함수가 돌려준다" $sid (Get-HandoffBriefSessionId $sess)
+    Assert-Equal "  첫 번째 ID 로 찾는다" $sess (Resolve-HandoffChannelForCwd $repo $sid)
+    Assert-Equal "  두 번째 ID 로도 찾는다" $sess (Resolve-HandoffChannelForCwd $repoSub $sid2)
+    Assert-Equal "  적히지 않은 ID 는 못 찾는다" $true ($null -eq (Resolve-HandoffChannelForCwd $repo "이건-아님"))
+    Set-Content -LiteralPath (Join-Path $sess "BRIEF.md") -Value ("- **저장소 경로**: ``" + $repo + "```n- **세션 ID**: ``" + $sid + "``,``" + $sid + "``, ``<다음 세션 ID>``") -Encoding UTF8
+    Assert-Equal "같은 ID 가 겹치거나 자리표시자가 섞여도 한 번만 읽는다" $sid ((Get-HandoffBriefSessionIds $sess) -join "|")
+    Set-Content -LiteralPath (Join-Path $sess "BRIEF.md") -Value "세션 ID: ``<세션 ID>``" -Encoding UTF8
+    Assert-Equal "자리표시자뿐이면 빈 배열" 0 @(Get-HandoffBriefSessionIds $sess).Count
+    Assert-Equal "  BRIEF.md 가 없어도 빈 배열" 0 @(Get-HandoffBriefSessionIds (Join-Path $work "없는채널")).Count
+    Set-Content -LiteralPath (Join-Path $sess "BRIEF.md") -Value ("- **저장소 경로**: ``" + $repo + "```n- **세션 ID**: ``" + $sid + "``") -Encoding UTF8
+
     Write-Host "머리말 읽기 (Read-HandoffFrontMatter)"
     $fm = Join-Path $work "fm.md"
     [IO.File]::WriteAllText($fm, "---`n번호: `"0042`"`n방향: `"a2c`" # c2a 또는 a2c`n시각: 2026-10-16 10:12`n제목: [채널 개통] 제목: 콜론이 든 제목`n답장대상: 0041`n모델: Gemini 3.8 Flash`n자동: 예`n---`n`n본문: 이건 머리말이 아님`n", (New-Object Text.UTF8Encoding($false)))

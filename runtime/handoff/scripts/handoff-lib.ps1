@@ -54,19 +54,30 @@ function Get-HandoffChannelDirs {
     return @($out)
 }
 
-# 채널의 세션 ID: BRIEF.md 의 "세션 ID: `ID`" 줄. 세션 전용 채널(폴더 이름이 저장소와 달라도 되는 채널)이 이 줄로 자기 세션을 알린다.
-# 줄이 없거나 자리표시자(<...>)면 빈 문자열.
-function Get-HandoffBriefSessionId([string]$ChannelDir) {
+# 채널의 세션 ID들: BRIEF.md 의 "세션 ID: `ID1`, `ID2`" 줄에서 백틱으로 감싼 값을 모두 읽는다. 세션 전용 채널(폴더 이름이 저장소와 달라도 되는 채널)이
+# 이 줄로 자기 세션을 알린다. 세션을 이어서 다시 열면(resume) 세션 ID 가 바뀌므로 여러 개를 적을 수 있게 했다.
+# 줄이 없거나 자리표시자(<...>)뿐이면 빈 배열.
+function Get-HandoffBriefSessionIds([string]$ChannelDir) {
     $brief = Join-Path $ChannelDir "BRIEF.md"
-    if (-not (Test-Path -LiteralPath $brief -PathType Leaf)) { return "" }
+    if (-not (Test-Path -LiteralPath $brief -PathType Leaf)) { return @() }
+    $out = @()
     try {
         $text = [System.IO.File]::ReadAllText($brief, [System.Text.Encoding]::UTF8)
-        $m = [regex]::Match($text, '세션\s*ID\*{0,2}\s*[:：]\s*\*{0,2}\s*`([^`]+)`')
-        if ($m.Success) {
-            $id = $m.Groups[1].Value.Trim()
-            if ($id -and -not $id.StartsWith("<")) { return $id }
+        $line = [regex]::Match($text, '세션\s*ID\*{0,2}\s*[:：]([^\r\n]*)')
+        if ($line.Success) {
+            foreach ($m in [regex]::Matches($line.Groups[1].Value, '`([^`]+)`')) {
+                $id = $m.Groups[1].Value.Trim()
+                if ($id -and -not $id.StartsWith("<") -and ($out -notcontains $id)) { $out += $id }
+            }
         }
     } catch {}
+    return @($out)
+}
+
+# 첫 번째 세션 ID(없으면 빈 문자열). 예전 호출과의 호환용.
+function Get-HandoffBriefSessionId([string]$ChannelDir) {
+    $ids = @(Get-HandoffBriefSessionIds $ChannelDir)
+    if ($ids.Count -gt 0) { return [string]$ids[0] }
     return ""
 }
 
@@ -80,7 +91,7 @@ function Test-HandoffPathUnder([string]$Path, [string]$Base) {
 }
 
 # 작업 폴더(Claude 세션의 cwd)에서 채널을 찾는다.
-# 1) 세션 ID 를 받았으면 먼저: BRIEF.md 의 "세션 ID" 가 같고 "저장소 경로" 가 cwd 와 같거나 그 위인 채널. 둘 다 맞아야 한다 —
+# 1) 세션 ID 를 받았으면 먼저: BRIEF.md 의 "세션 ID"(여러 개 가능) 중 하나가 같고 "저장소 경로" 가 cwd 와 같거나 그 위인 채널. 둘 다 맞아야 한다 —
 #    세션 전용 채널은 폴더 이름이 저장소 이름과 달라도(예: skills--handoff-test) 그 세션에서만 찾아진다.
 # 2) 없으면 이름으로: 채널 폴더 이름은 작업 저장소 폴더 이름과 같게 둔다는 규약이라
 #    cwd 의 폴더 이름과 그 위 세 단계까지(워크트리·하위 폴더에서 열어도 찾도록) 본다.
@@ -88,8 +99,7 @@ function Resolve-HandoffChannelForCwd([string]$Cwd, [string]$SessionId = "") {
     if (-not $Cwd) { return $null }
     if ($SessionId) {
         foreach ($d in @(Get-HandoffChannelDirs)) {
-            $sid = Get-HandoffBriefSessionId $d
-            if (-not $sid -or $sid -ne $SessionId) { continue }
+            if (@(Get-HandoffBriefSessionIds $d) -notcontains $SessionId) { continue }
             $repo = Get-HandoffRepoPath $d
             if ($repo -and (Test-HandoffPathUnder $Cwd $repo)) { return $d }
         }
@@ -398,7 +408,7 @@ function Read-HandoffAutoState([string]$ChannelDir) {
         $o = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
         if ($o.dispatches) {
             $s.dispatches = @(@($o.dispatches) | Where-Object { $_ } | ForEach-Object {
-                @{ num = [string]$_.num; task_id = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done }
+                @{ num = [string]$_.num; task_id = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done; tier = [string]$_.tier }
             })
         }
         $s.halted = [bool]$o.halted
@@ -414,7 +424,7 @@ function Write-HandoffAutoState([string]$ChannelDir, $State) {
     $p = Join-Path $ChannelDir "AUTO.json"
     $tmp = $p + ".tmp"
     $disp = @(@($State.dispatches) | Where-Object { $_ } | ForEach-Object {
-        [ordered]@{ num = [string]$_.num; task_id = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done }
+        [ordered]@{ num = [string]$_.num; task_id = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done; tier = [string]$_.tier }
     })
     # 오래된 기록은 버린다(최근 40건만)
     if ($disp.Count -gt 40) { $disp = @($disp[($disp.Count - 40)..($disp.Count - 1)]) }
@@ -477,7 +487,10 @@ function Get-HandoffMessageMeta([string]$Path, [hashtable]$Cache = $null) {
 function Get-HandoffAutoSummary([string]$ChannelDir) {
     $s = Read-HandoffAutoState $ChannelDir
     $inFlight = @(@($s.dispatches) | Where-Object { $_ -and -not $_.done } | ForEach-Object { [pscustomobject]@{ num = [string]$_.num; taskId = [string]$_.task_id; at = [string]$_.at } })
+    # 메시지 번호 -> 위임 작업 ID. 화면이 보냄·읽음 메시지의 진행 과정을 그 위임에서 찾아 보여 주고, 끝난 메시지도 과정을 열 수 있게 한다(최근 30건).
+    $dispatches = @(@($s.dispatches) | Where-Object { $_ } | Select-Object -Last 30 | ForEach-Object { [pscustomobject]@{ num = [string]$_.num; taskId = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done } })
     return [pscustomobject]@{
+        dispatches    = $dispatches
         enabled       = (-not (Test-HandoffAutoDisabled $ChannelDir))
         halted        = [bool]$s.halted
         haltedReason  = [string]$s.halted_reason

@@ -109,14 +109,15 @@ if ($allChanged.Count -gt 0) { Write-Host ("복사했습니다: {0}개" -f $allC
 $watcherChanged = @($allChanged | Where-Object { ($_.Group -eq "delegate-agy 스크립트" -and $_.Rel -like "*.ps1") -or ($_.Group -eq "handoff 스크립트" -and $_.Rel -eq "handoff-lib.ps1") })
 $viewerMain = @("serve-viewer.ps1", "claude-sessions.ps1", "watcher-health.ps1")
 # 뷰어는 켜질 때 handoff-lib.ps1(메시지 머리말의 모델·자동 이어가기 상태를 읽는 함수)도 불러 오므로 그 파일이 바뀌어도 다시 켜야 한다
-$viewerChanged = @($allChanged | Where-Object { ($_.Group -eq "웹 뷰어" -and ($viewerMain -contains $_.Rel)) -or ($_.Group -eq "handoff 스크립트" -and $_.Rel -eq "handoff-lib.ps1") })
+# 뷰어는 위임 기록 API 를 위해 agy-db.ps1(delegate-agy\scripts\sub)도 불러 오므로 그 파일이 바뀌어도 다시 켜야 한다
+$viewerChanged = @($allChanged | Where-Object { ($_.Group -eq "웹 뷰어" -and ($viewerMain -contains $_.Rel)) -or ($_.Group -eq "handoff 스크립트" -and $_.Rel -eq "handoff-lib.ps1") -or ($_.Group -eq "delegate-agy 스크립트" -and $_.Rel -eq "sub\agy-db.ps1") })
 
 # 이번에 복사한 것이 없어도(이전에 복사만 하고 뷰어를 안 다시 켠 경우) 지금 떠 있는 뷰어가 설치된 본체 스크립트보다 먼저 켜졌으면 옛 코드로 돌고 있는 것이다.
 # 이 설치 위치의 뷰어만 본다(다른 위치·다른 포트의 뷰어는 건드리지 않는다).
 function Test-ViewerStale {
     $vs = Join-Path $InstallRoot "viewer\serve-viewer.ps1"
     if (-not (Test-Path -LiteralPath $vs)) { return $false }
-    $files = @($vs, (Join-Path $InstallRoot "viewer\claude-sessions.ps1"), (Join-Path $InstallRoot "handoff\scripts\handoff-lib.ps1")) | Where-Object { Test-Path -LiteralPath $_ }
+    $files = @($vs, (Join-Path $InstallRoot "viewer\claude-sessions.ps1"), (Join-Path $InstallRoot "handoff\scripts\handoff-lib.ps1"), (Join-Path $InstallRoot "delegate-agy\scripts\sub\agy-db.ps1")) | Where-Object { Test-Path -LiteralPath $_ }
     $newest = ($files | ForEach-Object { (Get-Item -LiteralPath $_).LastWriteTime } | Sort-Object -Descending | Select-Object -First 1)
     $procs = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($vs) })
     foreach ($pr in $procs) { if ($pr.CreationDate -and $pr.CreationDate -lt $newest) { return $true } }

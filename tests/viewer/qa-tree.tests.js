@@ -41,7 +41,11 @@ const names = [
   "qaItemMatchesAgy",
   "qaAgySessionsOf",
   "normalizeTreeSortMode",
-  "sortTreeNodes"
+  "sortTreeNodes",
+  "formatRelativeTime",
+  "qaIsRunning",
+  "qaDelegationValue",
+  "qaDelegationAbs"
 ];
 
 const api = new Function(
@@ -50,7 +54,7 @@ const api = new Function(
   "var TREE_SORT_MODES = " + JSON.stringify(TREE_SORT_MODES) + ";\n" +
   "var TREE_SORT_DEFAULT = " + JSON.stringify(TREE_SORT_DEFAULT) + ";\n" +
   names.map(extractFunction).join("\n") +
-  "\nreturn { qaNodeOf, buildQaTree, qaFilterTree, qaItemMatchesSelection, qaItemMatchesAgy, qaAgySessionsOf, normalizeTreeSortMode, sortTreeNodes, QA_UNGROUPED, QA_UNLINKED, TREE_SORT_MODES, TREE_SORT_DEFAULT };"
+  "\nreturn { qaNodeOf, buildQaTree, qaFilterTree, qaItemMatchesSelection, qaItemMatchesAgy, qaAgySessionsOf, normalizeTreeSortMode, sortTreeNodes, qaIsRunning, qaDelegationValue, qaDelegationAbs, QA_UNGROUPED, QA_UNLINKED, TREE_SORT_MODES, TREE_SORT_DEFAULT };"
 )();
 
 let passed = 0, failed = 0;
@@ -502,7 +506,7 @@ eq("빈 배열 정렬", [], api.sortTreeNodes([], "recent-desc"));
 eq("null 입력 정렬", [], api.sortTreeNodes(null, "recent-desc"));
 eq("배열 내 null 항목 안전 처리", [], api.sortTreeNodes([null], "recent-desc"));
 
-console.log("\nsortTreeNodes: dateSource=records (위임 실행 기록 화면: agy 작업 시각만 기준)");
+console.log("\nsortTreeNodes: dateSource=records (에이전트 위임 화면: agy 작업 시각만 기준)");
 const recNodes = [
   { id: "p-active", name: "활동만 있는 프로젝트", latestTime: "", sessions: [{ id: "s1", title: "진행중 세션", latestTime: "", lastActivity: "2026-10-14 20:00:00" }] },
   { id: "p-old", name: "예전 위임", latestTime: "2026-10-10 09:00:00", sessions: [{ id: "s2", title: "예전", latestTime: "2026-10-10 09:00:00", lastActivity: "2026-10-10 09:30:00" }] },
@@ -530,10 +534,52 @@ eq("세션 A: 완료 시각은 끝난 기록 중 가장 늦은 것(실패 기록
 eq("세션 B: 진행 중인 작업만 있으면 완료 시각이 없다(latestTime 에는 시작 시각)", "|2026-10-14 22:00:00", (sNodeB.latestDone || "") + "|" + sNodeB.latestTime);
 eq("프로젝트의 완료 시각은 세션들의 완료 시각 중 가장 늦은 것", "2026-10-14 12:00:00", gNode.latestDone);
 const doneSorted = api.sortTreeNodes([
-  { id: "p-run", name: "진행만", latestTime: "2026-10-14 22:00:00", latestDone: "", sessions: [] },
-  { id: "p-fin", name: "완료됨", latestTime: "2026-10-14 12:00:00", latestDone: "2026-10-14 12:00:00", sessions: [] }
+  { id: "p-run", name: "진행만", pending: 1, latestTime: "2026-10-14 22:00:00", latestDone: "", sessions: [] },
+  { id: "p-fin", name: "완료됨", pending: 0, latestTime: "2026-10-14 12:00:00", latestDone: "2026-10-14 12:00:00", sessions: [] }
 ], "recent-desc", { dateSource: "records" });
-eq("records 정렬은 완료 시각 기준: 진행 중이던 프로젝트도 완료 시각이 없으면 뒤", "p-fin,p-run", doneSorted.map((n) => n.id).join(","));
+eq("records 정렬: 지금 진행 중인 작업이 있으면 그 시작 시각이 최근이라 완료만 있는 프로젝트보다 앞", "p-run,p-fin", doneSorted.map((n) => n.id).join(","));
+
+console.log("\nsortTreeNodes: records 모드에서 진행·대기 중인 작업은 정렬 시각에 반영된다");
+const runNodes = [
+  { id: "p-recent-done", name: "방금 끝남", pending: 0, latestTime: "2026-10-16 15:10:00", latestDone: "2026-10-16 15:10:00", sessions: [] },
+  { id: "p-running-old", name: "오래된 완료 + 지금 진행", pending: 1, latestTime: "2026-10-16 15:21:54", latestDone: "2026-09-28 22:52:01", sessions: [] },
+  { id: "p-old", name: "예전 완료", pending: 0, latestTime: "2026-10-01 09:00:00", latestDone: "2026-10-01 09:00:00", sessions: [] }
+];
+eq("마지막 완료가 17일 전이어도 지금 진행 중이면 가장 앞(실제로 겪은 화면)", "p-running-old,p-recent-done,p-old", idsOf(api.sortTreeNodes(runNodes, "recent-desc", { dateSource: "records" })));
+eq("  오래된순에서는 반대로 가장 뒤", "p-old,p-recent-done,p-running-old", idsOf(api.sortTreeNodes(runNodes, "recent-asc", { dateSource: "records" })));
+const staleRun = [
+  { id: "p-a", name: "A", pending: 1, latestTime: "2026-10-16 09:00:00", latestDone: "2026-10-16 14:00:00", sessions: [] },
+  { id: "p-b", name: "B", pending: 0, latestTime: "2026-10-16 13:00:00", latestDone: "2026-10-16 13:00:00", sessions: [] }
+];
+eq("진행 중이어도 시작 시각이 완료 시각보다 이르면 완료 시각을 쓴다(더 늦은 쪽)", "p-a,p-b", idsOf(api.sortTreeNodes(staleRun, "recent-desc", { dateSource: "records" })));
+eq("진행 중인 작업이 없으면(pending 0) 시작 시각을 쓰지 않는다", "p-fin2,p-x", idsOf(api.sortTreeNodes([
+  { id: "p-x", name: "X", pending: 0, latestTime: "2026-10-16 20:00:00", latestDone: "2026-10-16 10:00:00", sessions: [] },
+  { id: "p-fin2", name: "F", pending: 0, latestTime: "2026-10-16 12:00:00", latestDone: "2026-10-16 12:00:00", sessions: [] }
+], "recent-desc", { dateSource: "records" })));
+const runSessions = [
+  { id: "s-done", title: "끝난 세션", pending: 0, total: 3, latestTime: "2026-10-16 10:00:00", latestDone: "2026-10-16 10:00:00", lastActivity: "2026-10-16 10:05:00" },
+  { id: "s-run", title: "도는 세션", pending: 1, total: 0, latestTime: "2026-10-16 15:21:54", latestDone: "", lastActivity: "2026-10-16 15:22:00" }
+];
+eq("세션도 같다: 진행 중인 세션이 앞", "s-run,s-done", api.sortTreeNodes([{ id: "p", name: "P", pending: 1, latestTime: "2026-10-16 15:21:54", latestDone: "2026-10-16 10:00:00", sessions: runSessions }], "recent-desc", { dateSource: "records" })[0].sessions.map((s) => s.id).join(","));
+eq("프로젝트의 정렬 시각은 세션의 진행 중 작업도 반영한다(프로젝트 합계에 pending 이 없어도 세션에 있으면)", "p-with-run,p-other", idsOf(api.sortTreeNodes([
+  { id: "p-other", name: "O", pending: 0, latestTime: "2026-10-16 12:00:00", latestDone: "2026-10-16 12:00:00", sessions: [] },
+  { id: "p-with-run", name: "R", pending: 0, latestTime: "", latestDone: "2026-10-01 00:00:00", sessions: [{ id: "s1", title: "S", pending: 1, latestTime: "2026-10-16 15:00:00", latestDone: "", lastActivity: "" }] }
+], "recent-desc", { dateSource: "records" })));
+
+console.log("\nqaDelegationValue: 사이드바의 위임 시각은 진행 중이면 진행 시간");
+const T0 = new Date("2026/10/16 15:21:54").getTime();
+const runningNode = { pending: 1, latestTime: "2026-10-16 15:21:54", latestDone: "2026-09-28 22:52:01" };
+eq("지금 진행 중이면 완료 시각(17일 전)이 아니라 진행 시간", "진행 6분", api.qaDelegationValue(runningNode, T0 + 6 * 60 * 1000 + 5000));
+eq("  1분 안이면 '진행 중'", "진행 중", api.qaDelegationValue(runningNode, T0 + 30 * 1000));
+eq("  1시간 넘으면 시간 단위, 하루 넘으면 일 단위", ["진행 2시간", "진행 3일"], [api.qaDelegationValue(runningNode, T0 + 2 * 3600 * 1000 + 1000), api.qaDelegationValue(runningNode, T0 + 3 * 86400 * 1000 + 1000)]);
+eq("  마우스 설명에는 시작 시각과 진행 중임이 나온다", "2026-10-16 15:21:54 부터 진행 중", api.qaDelegationAbs(runningNode));
+eq("진행 중인 작업이 없으면 예전처럼 완료 시각(상대 시간)", "17일 전", api.qaDelegationValue({ pending: 0, latestTime: "2026-09-28 22:52:01", latestDone: "2026-09-28 22:52:01" }, new Date("2026/10/16 15:30:00").getTime()));
+eq("  설명에는 완료 시각", "2026-09-28 22:52:01", api.qaDelegationAbs({ pending: 0, latestTime: "2026-09-28 22:52:01", latestDone: "2026-09-28 22:52:01" }));
+eq("진행 중이어도 시작이 마지막 완료보다 이르면(이미 끝난 쪽이 최근) 완료 시각", "false", String(api.qaIsRunning({ pending: 1, latestTime: "2026-10-16 09:00:00", latestDone: "2026-10-16 14:00:00" })));
+eq("완료 기록이 없고 진행 중인 작업만 있으면 진행 시간", "진행 10분", api.qaDelegationValue({ pending: 2, latestTime: "2026-10-16 15:21:54", latestDone: "" }, T0 + 10 * 60 * 1000));
+eq("진행 중인 작업도 완료도 없으면 '없음'", "없음", api.qaDelegationValue({ pending: 0, latestTime: "", latestDone: "" }));
+eq("시작 시각을 읽을 수 없으면 '진행 중'", "진행 중", api.qaDelegationValue({ pending: 1, latestTime: "엉뚱한 값", latestDone: "" }, T0));
+eq("노드가 없어도 오류 없이 '없음'", ["없음", ""], [api.qaDelegationValue(null), api.qaDelegationAbs(null)]);
 
 console.log("\nqaNodeOf: 대기·진행 중 작업은 작업 폴더로 세션을 짐작한다");
 const guessTree = {

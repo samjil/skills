@@ -1,7 +1,7 @@
 ﻿# 핸드오프 펌프(handoff-pump.ps1) 테스트. Pester 없이 돌아갑니다.
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\handoff\handoff-pump.tests.ps1
-# 임시 채널 루트(AGENT_HANDOFF_ROOT)와 임시 위임 런타임(inbox/outbox/usage.csv)만 씁니다. 실제 워처·agy·채널은 건드리지 않습니다. 몇 초 걸립니다.
-# 가짜 agy 는 "outbox 에 응답 파일과 usage.csv 행을 직접 써 주는 것"으로 흉내 냅니다.
+# 임시 채널 루트(AGENT_HANDOFF_ROOT)와 임시 위임 런타임(inbox/outbox/agy.db)만 씁니다. 실제 워처·agy·채널은 건드리지 않습니다. 몇 초 걸립니다.
+# 가짜 agy 는 "outbox 에 응답 파일과 사용량 행(agy.db)을 직접 써 주는 것"으로 흉내 냅니다.
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -32,14 +32,14 @@ $env:AGENT_HANDOFF_ROOT = $root
 $env:AGY_HANDOFF_MAX_ROUNDS = "50"      # 아래 본 시험은 한도에 걸리지 않게 넉넉히 두고, 한도 시험은 따로 값을 바꿔서 본다
 Remove-Item Env:\AGY_HANDOFF_MAX_AGE_HOURS -ErrorAction SilentlyContinue
 
-$ctx = @{ InboxDir = (Join-Path $rt "inbox"); OutboxDir = (Join-Path $rt "outbox"); UsageCsv = (Join-Path $rt "logs\usage.csv"); SessionsDir = (Join-Path $rt "logs\sessions") }
+$env:AGY_DB_CACHE_DIR = Join-Path $work "cache"
+$ctx = @{ InboxDir = (Join-Path $rt "inbox"); OutboxDir = (Join-Path $rt "outbox"); DbPath = (Join-Path $rt "logs\agy.db") }
 $script:LogLines = @()
 function Log($m) { $script:LogLines += $m }
 
-$usageHeader = "timestamp,computer_name,task_id,model,attempts,tried_models,input_tokens,output_tokens,thinking_tokens,total_tokens,elapsed_sec,status,session,session_id"
 function Add-UsageRow([string]$TaskId, [string]$Model, [string]$Status) {
-    if (-not (Test-Path $ctx.UsageCsv)) { Set-Content -LiteralPath $ctx.UsageCsv -Value $usageHeader -Encoding UTF8 }
-    Add-Content -LiteralPath $ctx.UsageCsv -Value ("2026-10-16 10:00:00,PC,{0},{1},1,{1},10,20,5,35,12.3,{2},handoff-my-app,conv1" -f $TaskId, $Model, $Status) -Encoding UTF8
+    [void](Write-QaRecordToDb $ctx.DbPath ([ordered]@{ timestamp = "2026-10-16 10:00:00"; computer_name = "PC"; task_id = $TaskId; model = $Model; attempts = 1; tried_models = $Model
+        input_tokens = 10; output_tokens = 20; thinking_tokens = 5; total_tokens = 35; elapsed_sec = "12.3"; status = $Status; session = "handoff-my-app"; session_id = "conv1" }) 'InsertOnly')
 }
 # 가짜 agy 가 끝낸 것처럼: 응답 파일 + usage 행
 function Finish-Task([string]$TaskId, [string]$Response, [string]$Model = "gemini-3.8-flash-high", [string]$Status = "OK") {
@@ -94,6 +94,14 @@ try {
     Assert-Equal "  다시 점검해도 회신이 늘지 않는다" 2 @(Read-HandoffIndex $ch).Count
     Assert-Equal "  로그에 위임과 회신이 남는다" $true ((@($script:LogLines | Where-Object { $_ -match "위임" }).Count -ge 1) -and (@($script:LogLines | Where-Object { $_ -match "회신 #0002" }).Count -ge 1))
 
+    Write-Host "Get-HandoffSessionModel: DB 의 세션 모델 (usage 행에 모델이 없을 때의 대비)"
+    $dbS = Open-AgyDb $ctx.DbPath
+    Invoke-AgyDbTransaction $dbS { Set-AgySessionRow $dbS "handoff-my-app" "conv1" @() "gemini-3.8-flash-low" "2026-10-16 09:00:00" "2026-10-16 09:00:00" 1 }
+    Invoke-AgyDbTransaction $dbS { Set-AgySessionRow $dbS "handoff-other" "conv2" @() "(session)" "2026-10-16 09:00:00" "2026-10-16 09:00:00" 1 }
+    $dbS.Dispose()
+    Assert-Equal "세션에 저장된 모델을 돌려준다" "gemini-3.8-flash-low" (Get-HandoffSessionModel $ctx.DbPath "handoff-my-app")
+    Assert-Equal "  자리표시자 (session) 는 모델로 쓰지 않는다" "" (Get-HandoffSessionModel $ctx.DbPath "handoff-other")
+    Assert-Equal "  없는 세션은 빈 글자" "" (Get-HandoffSessionModel $ctx.DbPath "handoff-nothing")
     Write-Host "답변 모양 정리 (ConvertTo-HandoffReplyBody)"
     Assert-Equal "요약 블록이 없으면 안내 요약을 붙인다" $true ((ConvertTo-HandoffReplyBody "그냥 한 줄 답") -match "(?s)^## 요약.*그냥 한 줄 답")
     Assert-Equal "agy 가 붙인 머리말(---)은 뗀다" $false ((ConvertTo-HandoffReplyBody "---`n번호: 9`n---`n## 요약`n- a") -match "번호: 9")

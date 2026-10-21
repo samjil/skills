@@ -30,11 +30,22 @@ function Get-HandoffMaxAgeHours {
     return 2.0
 }
 
+# 채널의 agy 대화(@session) 이름. agy 대화는 시작할 때의 모델을 유지하므로, 낮은 단계(low/medium)는 단계별로 대화를 따로 둔다.
+# high 는 예전과 같은 이름(handoff-<채널>)이라 이미 있는 대화를 그대로 이어 쓴다. 단계가 다르면 대화가 이어지지 않지만,
+# 이전 메시지는 채널 폴더(INDEX.md, msg\)에 있어 agy 가 읽을 수 있다.
+function Get-HandoffSessionName([string]$SafeChannel, $Auto = $null, [string]$Tier = "") {
+    if (-not $Tier -and $Auto) { $Tier = [string]$Auto.Tier }
+    if ($Tier -eq "low" -or $Tier -eq "medium") { return "handoff-$SafeChannel-$Tier" }
+    return "handoff-$SafeChannel"
+}
+
 # 지시파일 맨 위 @session/@cwd 지시어 + 본문. 본문에는 이번 메시지 전문을 담아 agy 가 파일을 못 읽어도 처리할 수 있게 한다.
-function New-HandoffDispatchText([string]$ChannelName, [string]$ChannelDir, [string]$RepoPath, $Row, [string]$MsgPath, [string]$MsgText) {
+function New-HandoffDispatchText([string]$ChannelName, [string]$ChannelDir, [string]$RepoPath, $Row, [string]$MsgPath, [string]$MsgText, $Auto = $null) {
     $safe = ConvertTo-HandoffSafeName $ChannelName
     $lines = New-Object System.Collections.ArrayList
-    [void]$lines.Add("@session: handoff-$safe")
+    [void]$lines.Add("@session: $(Get-HandoffSessionName $safe $Auto)")
+    # 낮은 단계(low/medium)로 자동 선택했으면 그 모델을 지정한다. high 는 지정하지 않아 기본 우선순위(쿼터 초과 때 폴백)를 그대로 쓴다.
+    if ($Auto -and [string]$Auto.Tier -ne "high" -and [string]$Auto.Model) { [void]$lines.Add("@model: $($Auto.Model)") }
     [void]$lines.Add("@cwd: $ChannelDir")
     if ($RepoPath) { [void]$lines.Add("@cwd: $RepoPath") }
     $body = [string]$MsgText
@@ -73,25 +84,17 @@ $body
     return (($lines.ToArray()) -join "`n")
 }
 
-# usage.csv 에서 이 작업의 행(가장 먼저 쓴 것). 없으면 $null.
-function Get-HandoffUsageRow([string]$UsageCsv, [string]$TaskId) {
-    if (-not $UsageCsv -or -not (Test-Path -LiteralPath $UsageCsv -PathType Leaf)) { return $null }
-    try {
-        $rows = @(Import-Csv -LiteralPath $UsageCsv -Encoding UTF8 | Where-Object { $_.task_id -eq $TaskId })
-        if ($rows.Count -gt 0) { return $rows[0] }
-    } catch {}
-    return $null
+# 위임 기록 DB(tasks 표)에서 이 작업의 사용량 행(가장 먼저 쓴 것). 없으면 $null.
+function Get-HandoffUsageRow([string]$DbPath, [string]$TaskId) {
+    if (-not $DbPath) { return $null }
+    try { return (Get-QaTaskRow $DbPath $TaskId) } catch { return $null }
 }
 
-function Get-HandoffSessionModel([string]$SessionsDir, [string]$SessionName) {
-    if (-not $SessionsDir -or -not $SessionName) { return "" }
+function Get-HandoffSessionModel([string]$DbPath, [string]$SessionName) {
+    if (-not $DbPath -or -not $SessionName) { return "" }
     try {
-        $safe = ($SessionName -replace '[\\/:*?"<>|]', '_').Trim()
-        $p = Join-Path $SessionsDir ("{0}.json" -f $safe)
-        if (Test-Path -LiteralPath $p -PathType Leaf) {
-            $o = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
-            if ($o.model -and [string]$o.model -ne "(session)") { return [string]$o.model }
-        }
+        $s = Get-AgySession $DbPath $SessionName
+        if ($s -and $s.model -and [string]$s.model -ne "(session)") { return [string]$s.model }
     } catch {}
     return ""
 }
@@ -139,7 +142,7 @@ function Complete-HandoffDispatch([string]$ChannelDir, $Disp, $Ctx) {
 
     $hasResp = (Test-Path -LiteralPath $respPath -PathType Leaf)
     $hasErr = (Test-Path -LiteralPath $errPath -PathType Leaf)
-    $usage = Get-HandoffUsageRow $Ctx.UsageCsv $taskId
+    $usage = Get-HandoffUsageRow $Ctx.DbPath $taskId
     $age = if ($started -ne [datetime]::MinValue) { ((Get-Date) - $started).TotalHours } else { 0 }
 
     if (-not $hasResp -and -not $hasErr) {
@@ -183,7 +186,7 @@ function Complete-HandoffDispatch([string]$ChannelDir, $Disp, $Ctx) {
 
     $model = ""
     if ($usage -and [string]$usage.model -and [string]$usage.model -ne "(session)") { $model = [string]$usage.model }
-    if (-not $model) { $model = Get-HandoffSessionModel $Ctx.SessionsDir ("handoff-" + (ConvertTo-HandoffSafeName (Split-Path -Leaf $ChannelDir))) }
+    if (-not $model) { $model = Get-HandoffSessionModel $Ctx.DbPath (Get-HandoffSessionName (ConvertTo-HandoffSafeName (Split-Path -Leaf $ChannelDir)) $null ([string]$Disp.tier)) }
     $newNum = Add-HandoffMessage $ChannelDir "a2c" ("Re: " + $replyTitleBase) (ConvertTo-HandoffReplyBody $respText) $num $model $true "보냄"
     if (-not $newNum) {
         Write-HandoffLog "핸드오프 [$(Split-Path -Leaf $ChannelDir)] #$num 회신 메시지를 쓰지 못했습니다(다음 점검 때 다시 시도)"
@@ -249,7 +252,12 @@ function Invoke-HandoffPumpChannel([string]$ChannelDir, $Ctx) {
         $msgText = if ($msgFile) { try { [System.IO.File]::ReadAllText($msgFile.FullName, [System.Text.Encoding]::UTF8) } catch { "" } } else { "" }
         if (-not $msgText) { $msgText = "(메시지 파일 msg\$($row.Num)-*.md 를 읽지 못했습니다. 제목만 보고 판단하지 말고 파일을 직접 읽으세요.)" }
         $repo = Get-HandoffRepoPath $ChannelDir
-        $text = New-HandoffDispatchText $name $ChannelDir $repo $row $(if ($msgFile) { $msgFile.FullName } else { "" }) $msgText
+        # 메시지 내용(제목 + 본문)으로 노력 단계를 자동 선택한다. 채널은 늘 폴더를 열므로 폴더 있음으로 본다(파일을 바꾸는 일이면 high).
+        $auto = $null
+        if ((Get-Command Test-AgyAutoTierEnabled -ErrorAction SilentlyContinue) -and (Test-AgyAutoTierEnabled)) {
+            try { $auto = Get-AgyAutoTier ("$($row.Title)`n$msgText") $true } catch { $auto = $null }
+        }
+        $text = New-HandoffDispatchText $name $ChannelDir $repo $row $(if ($msgFile) { $msgFile.FullName } else { "" }) $msgText $auto
 
         $taskId = "handoff_{0}_{1}_{2}" -f (ConvertTo-HandoffSafeName $name), $row.Num, (Get-Date -Format "HHmmss")
         $taskPath = Join-Path $Ctx.InboxDir "$taskId.md"
@@ -260,13 +268,13 @@ function Invoke-HandoffPumpChannel([string]$ChannelDir, $Ctx) {
             Write-HandoffLog "핸드오프 [$name] #$($row.Num) 위임 지시파일을 쓰지 못했습니다: $($_.Exception.Message)"
             return
         }
-        $script:__hpNum = [string]$row.Num; $script:__hpTask = $taskId
+        $script:__hpNum = [string]$row.Num; $script:__hpTask = $taskId; $script:__hpTier = if ($auto) { [string]$auto.Tier } else { "" }
         Update-HandoffAutoState $ChannelDir {
             param($s)
-            $s.dispatches = @(@($s.dispatches) + @(@{ num = $script:__hpNum; task_id = $script:__hpTask; at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"); done = $false }))
+            $s.dispatches = @(@($s.dispatches) + @(@{ num = $script:__hpNum; task_id = $script:__hpTask; at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"); done = $false; tier = $script:__hpTier }))
         }
         [void](Set-HandoffStatus $ChannelDir $row.Num "읽음")
-        Write-HandoffLog "핸드오프 [$name] #$($row.Num) '$($row.Title)' -> agy 에게 위임 ($taskId)$(if ($repo) { '' } else { ' [저장소 경로를 몰라 채널 폴더만 엽니다]' })"
+        Write-HandoffLog "핸드오프 [$name] #$($row.Num) '$($row.Title)' -> agy 에게 위임 ($taskId)$(if ($repo) { '' } else { ' [저장소 경로를 몰라 채널 폴더만 엽니다]' })$(if ($auto) { " [모델 자동 선택: $($auto.Tier) - $($auto.Reason)]" })"
         return    # 한 번에 하나
     }
 }

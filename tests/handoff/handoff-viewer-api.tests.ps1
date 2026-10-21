@@ -103,6 +103,8 @@ try {
     Update-HandoffAutoState $ch { param($s) $s.halted = $true; $s.halted_reason = "한도 도달"; $s.dispatches = @(@{ num = "0001"; task_id = "t"; at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"); done = $true }) }
     $data = (Invoke-Http "GET" "$base/api/handoff/project?name=my-app").Body | ConvertFrom-Json
     Assert-Equal "멈춘 채널: halted·사유·왕복 1" "True|한도 도달|1" ("{0}|{1}|{2}" -f $data.auto.halted, $data.auto.haltedReason, $data.auto.rounds)
+    $disp = @($data.auto.dispatches)
+    Assert-Equal "auto.dispatches: 메시지 번호 -> 위임 작업 ID 와 끝남 여부(화면이 진행 과정을 찾는 데 쓴다)" "1|0001|t|True" ("{0}|{1}|{2}|{3}" -f $disp.Count, $disp[0].num, $disp[0].taskId, $disp[0].done)
     $r = Invoke-Http "POST" "$base/api/handoff/auto?name=my-app&action=reset" $h
     Assert-Equal "reset -> halted False, 왕복 0" "False|0" ("{0}|{1}" -f ($r.Body | ConvertFrom-Json).halted, ($r.Body | ConvertFrom-Json).rounds)
     Assert-Equal "알 수 없는 action 은 400" 400 (Invoke-Http "POST" "$base/api/handoff/auto?name=my-app&action=explode" $h).Code

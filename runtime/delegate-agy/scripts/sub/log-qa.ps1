@@ -1,5 +1,5 @@
 ﻿# log-qa.ps1
-# watch-agy.ps1가 관리하는 것과 같은 기록 저장소(runtime\logs\data\qa-*.jsonl)에
+# watch-agy.ps1가 관리하는 것과 같은 기록 저장소(runtime\logs\agy.db 의 tasks 표)에
 # Q&A 한 건을 추가로 남깁니다. 워처(inbox 파일 위임) 경로를 거치지 않고
 # 다른 통로(예: antigravity MCP 직접 호출)로 주고받은 질문/답변을 같은 웹 뷰어에서
 # 함께 볼 수 있게 하기 위한 것입니다.
@@ -8,8 +8,8 @@
 #   - "bridge" : inbox 파일 위임 -> watch-agy.ps1이 agy CLI를 호출한 기록
 #   - "mcp"    : Claude가 antigravity MCP(ask_antigravity 등)를 직접 호출한 기록
 #
-# usage.csv/usage_summary.csv는 건드리지 않습니다 (그건 watch-agy.ps1이 실제 agy CLI
-# 호출의 토큰/비용을 집계하는 원장이라, 성격이 다른 MCP 호출을 섞으면 집계가 왜곡됩니다).
+# 이 기록은 토큰·소요시간 칸이 비어 있고 source 칸이 채워져 있습니다. 모델별 사용량 집계(tools\export-usage-csv.ps1 -Summary)는
+# source 가 빈 행(워처가 실제 agy CLI 를 부른 작업)만 세므로, 성격이 다른 MCP 호출이 섞여 집계가 왜곡되지 않습니다.
 #
 # 사용법:
 #   .\log-qa.ps1 -Source mcp -QuestionFile q.txt -AnswerFile a.txt -Model "Gemini 3.1 Pro High"
@@ -52,21 +52,18 @@ if (-not $RuntimeDir) {
         $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime"
     }
 }
-$DataDir     = Join-Path $RuntimeDir "logs\data"
-$QaIndexFile = Join-Path $DataDir "index.json"
-$QaShardMaxBytes = 5MB
+$AgyDbPath = Join-Path $RuntimeDir "logs\agy.db"
 
 if (-not (Test-Path $QuestionFile)) { throw "QuestionFile을 찾을 수 없습니다: $QuestionFile" }
 if (-not (Test-Path $AnswerFile))   { throw "AnswerFile을 찾을 수 없습니다: $AnswerFile" }
 
-New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 
 if (-not $TaskId) {
     $rand = -join ((48..57 + 97..102) | Get-Random -Count 6 | ForEach-Object { [char]$_ })
     $TaskId = "{0}_{1}_{2}" -f $Source, (Get-Date -Format "yyyyMMdd_HHmmss"), $rand
 }
 
-# ConvertTo-ReadableJson / Get-QaShardFiles / Get-QaShardPath는 watch-agy.ps1과 공유합니다
+# New-QaRecord / Truncate-Text 등은 watch-agy.ps1과 공유합니다
 # (common.ps1 참고 - 두 곳에 복사해두면 한쪽만 고치고 놓치는 사고가 나기 쉽습니다).
 $commonFile = Join-Path $PSScriptRoot "common.ps1"
 if (-not (Test-Path $commonFile)) {
@@ -92,13 +89,9 @@ $rec = New-QaRecord ([ordered]@{
     answer        = $aText
 })
 
-$shardPath = Invoke-WithRuntimeLock {
-    $written = Add-QaRecordUnlocked $rec $QaIndexFile 12
-    if (-not $written) {
-        throw "레코드를 JSON으로 변환하지 못했거나 이미 존재하는 task_id입니다."
-    }
-    return $written
-}
-
-Write-Host "기록 저장: task_id=$TaskId source=$Source -> $shardPath"
+# 같은 작업 ID 가 이미 있으면 덮어쓰지 않고 오류로 알린다(InsertOnly). DB 를 잠깐 못 쓰면 pending 폴더에 두었다가 다음 기록 때 가져온다.
+$result = Write-QaRecordToDb $AgyDbPath $rec 'InsertOnly'
+if ($result -eq 'skipped') { throw "이미 존재하는 task_id입니다: $TaskId" }
+$note = if ($result -eq 'pending') { " (DB 가 잠겨 있어 pending 폴더에 두었습니다. 다음 기록 때 가져옵니다)" } else { "" }
+Write-Host "기록 저장: task_id=$TaskId source=$Source -> $AgyDbPath$note"
 

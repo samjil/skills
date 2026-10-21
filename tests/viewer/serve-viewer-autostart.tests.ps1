@@ -20,7 +20,7 @@ $runtime = Join-Path $work "runtime"
 $scripts = Join-Path $work "scripts"
 $handoff = Join-Path $work "handoff"
 New-Item -ItemType Directory -Force -Path (Join-Path $runtime "logs\data"), (Join-Path $runtime "logs\heartbeat"), (Join-Path $runtime "inbox"), (Join-Path $scripts "sub"), $handoff | Out-Null
-Set-Content -Path (Join-Path $runtime "logs\data\index.json") -Value "[]" -Encoding UTF8
+Set-Content -Path (Join-Path $runtime "logs\agy.db") -Value "" -NoNewline -Encoding ASCII    # 뷰어가 데이터 폴더를 고르는 표지(빈 파일도 빈 SQLite DB 로 읽힌다)
 
 $ensureLog = Join-Path $work "ensure-calls.txt"
 $startLog  = Join-Path $work "start-calls.txt"

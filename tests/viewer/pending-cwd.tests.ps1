@@ -15,10 +15,16 @@ function Assert-Equal($name, $expected, $actual) {
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("pending-cwd-test-" + [Guid]::NewGuid().ToString("N"))
 $rt = Join-Path $work "runtime"
-foreach ($d in @("inbox", "outbox", "processed", "logs", "logs\data", "logs\heartbeat", "logs\sessions")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("inbox", "outbox", "processed", "logs", "logs\data", "logs\heartbeat")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
 New-Item -ItemType Directory -Force -Path (Join-Path $work "handoff") | Out-Null
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 function Put-Inbox([string]$name, [string]$text) { [System.IO.File]::WriteAllText((Join-Path $rt "inbox\$name.md"), $text, $utf8) }
+# 세션 s1 은 DB 에 모델·대화 id 가 있다(뷰어가 대기 작업에 세션의 모델과 대화 id 를 붙이는지 본다)
+$env:AGY_DB_CACHE_DIR = Join-Path $work "cache"
+. (Join-Path $repoRoot "runtime\delegate-agy\scripts\sub\agy-db.ps1")
+$dbSeed = Open-AgyDb (Join-Path $rt "logs\agy.db")
+Invoke-AgyDbTransaction $dbSeed { Set-AgySessionRow $dbSeed "s1" "conv-s1" @() "gemini-3.8-flash-low" "2026-10-16 09:00:00" "2026-10-16 09:00:00" 1 }
+$dbSeed.Dispose()
 
 Put-Inbox "t_two"   "@cwd: D:\a\repo`n@cwd: D:\b\docs`n@model: gemini-3.8-flash-low`n두 폴더 질문"
 Put-Inbox "t_one"   "@cwd: D:\only`n한 폴더 질문"
@@ -56,6 +62,7 @@ try {
     Assert-Equal "@cwd 없음: 빈 배열" 0 @($byId["t_none"].cwd).Count
     Assert-Equal "중복(대소문자·끝의 \)은 한 번만, 사이에 다른 지시어가 껴 있어도 순서대로" "D:\Repo|D:\other" (@($byId["t_dup"].cwd) -join "|")
     Assert-Equal "  세션 이름도 읽힌다" "s1" $byId["t_dup"].session
+    Assert-Equal "  DB 의 세션 모델과 대화 id 가 붙는다" "gemini-3.8-flash-low|conv-s1" ("{0}|{1}" -f $byId["t_dup"].model, $byId["t_dup"].session_id)
     Assert-Equal "본문이 시작된 뒤의 @cwd 는 폴더가 아니다" 0 @($byId["t_late"].cwd).Count
 
     Write-Host "JSON 모양(예전 화면 코드도 읽을 수 있어야 한다)"
