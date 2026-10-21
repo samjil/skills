@@ -24,7 +24,7 @@ $assigns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Languag
         ($wantedVars -contains $n.Left.VariablePath.UserPath) }, $false)
 foreach ($a in ($assigns | Sort-Object { $_.Extent.StartOffset })) { Invoke-Expression $a.Extent.Text }
 $fnTexts = @{}
-foreach ($name in @("Get-JsonField", "Invoke-AgyOnce", "Invoke-AgyWithFallback", "ConvertFrom-TaskDirectives", "Resolve-RequestedModel")) {
+foreach ($name in @("Get-JsonField", "Invoke-AgyOnce", "Get-AgyPromptMarker", "Invoke-AgyWithFallback", "ConvertFrom-TaskDirectives", "Resolve-RequestedModel")) {
     $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
     if (-not $fn) { throw "$name 를 watch-agy.ps1 에서 찾지 못했습니다." }
     $fnTexts[$name] = $fn.Extent.Text

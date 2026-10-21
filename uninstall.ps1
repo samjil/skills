@@ -224,7 +224,8 @@ if (Test-Path -LiteralPath $samjilDir) {
     foreach ($dd in $delegateDirs) {
         if (Test-Path -LiteralPath $dd) {
             $qaFiles = @(Get-ChildItem -LiteralPath (Join-Path $dd "runtime\logs\data") -Filter "qa-*.jsonl" -File -ErrorAction SilentlyContinue)
-            if ($qaFiles.Count -gt 0) {
+            $qaDb = Join-Path $dd "runtime\logs\agy.db"
+            if ($qaFiles.Count -gt 0 -or (Test-Path -LiteralPath $qaDb)) {
                 # scripts 및 inbox/outbox/processed 등 실행 도구만 지우고 logs 데이터는 보존
                 foreach ($sub in @("scripts", "runtime\inbox", "runtime\outbox", "runtime\processed", "runtime\_stuck", "runtime\logs\running", "runtime\logs\prompts")) {
                     $subPath = Join-Path $dd $sub
@@ -232,7 +233,7 @@ if (Test-Path -LiteralPath $samjilDir) {
                         Remove-Item -Recurse -Force -LiteralPath $subPath -ErrorAction SilentlyContinue
                     }
                 }
-                Write-Host "[i] 위임 실행 기록($($qaFiles.Count)개 샤드)이 존재하여 로그를 안전하게 보존합니다: $(Join-Path $dd 'runtime\logs')" -ForegroundColor Cyan
+                Write-Host "[i] 위임 실행 기록(DB 또는 $($qaFiles.Count)개 샤드)이 존재하여 로그를 안전하게 보존합니다: $(Join-Path $dd 'runtime\logs')" -ForegroundColor Cyan
             } else {
                 Remove-Item -Recurse -Force -LiteralPath $dd -ErrorAction SilentlyContinue
                 Write-Host "[+] Delegate 도구 및 런타임 삭제 완료: $dd" -ForegroundColor Green

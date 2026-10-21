@@ -37,6 +37,8 @@
   --ok-soft: rgba(127, 191, 127, 0.14);
   --err: #e5707a;
   --err-soft: rgba(229, 112, 122, 0.13);
+  --warn: #e0b25c;        /* 조용함: 아직 멈춘 건 아니지만 눈여겨볼 때 */
+  --warn-soft: rgba(224, 178, 92, 0.14);
 
   --focus: #a9e2de;
 
@@ -193,7 +195,11 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   border-radius: 6px;
 }
 .sidebar-brand:hover .brand-logo {
-  transform: scale(1.08);
+  /* 원형 로고(정사각): 높이·너비를 같게 */
+  width: 32px;
+  height: 32px;
+  display: block;
+  transition: transform 0.2s ease;
 }
 .sidebar-brand:hover .brand-title {
   color: #ffffff;
@@ -206,10 +212,10 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .brand-mark i { width: 10px; height: 10px; }
 .brand-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  object-fit: cover;
+  /* 가로형 로고(비율 1.414:1, 모서리가 이미 둥글다): 높이를 맞추고 너비는 비율대로 */
+  width: auto;
+  height: 32px;
+  border-radius: 8px;
   display: block;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
   transition: transform 0.2s ease;
@@ -1025,9 +1031,9 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .qa-chip-err { color: var(--err); }
 
 /* ==========================================================================
-   위임 실행 기록 카드
+   에이전트 위임 카드
    ========================================================================== */
-#cards, .handoff-chat-stream, .handoff-content-wrap { max-width: 960px; }
+#cards, .handoff-chat-stream, .handoff-content-wrap, .auto-bars { max-width: 960px; }
 
 .card {
   border: 1px solid var(--line);
@@ -1069,6 +1075,15 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .meta-item.copyable { cursor: pointer; text-decoration: underline dotted var(--line-strong); text-underline-offset: 3px; }
 .meta-item.copyable:hover { color: var(--ink); }
+/* 위임 경로 표시: inbox 파일 위임(bridge)은 표시하지 않고, Claude 가 antigravity MCP 로 직접 부른 기록만 이 칩을 단다 */
+.meta-item.src-mcp {
+  padding: 0 6px;
+  border: 1px solid var(--claude);
+  border-radius: var(--r-sm);
+  color: var(--claude);
+  font-weight: 600;
+  line-height: 1.5;
+}
 
 /* 상태 표시: 색을 쓰는 유일한 메타 */
 .badge {
@@ -1089,6 +1104,8 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .badge.status-unknown { font-weight: 400; font-style: italic; }
 .badge.status-pending-processing { background: var(--agy-soft); color: var(--agy); }
 .badge.status-pending-queued { background: var(--raised); color: var(--ink-2); font-weight: 500; }
+.badge.status-pending-quiet { background: var(--warn-soft); color: var(--warn); }
+.badge.status-pending-stalled { background: var(--err-soft); color: var(--err); }
 
 .empty, .empty-hint {
   color: var(--ink-3);
@@ -1130,6 +1147,11 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   transition: transform 0.15s ease;
 }
 .qa[open] > summary::after { transform: rotate(45deg); }
+/* 펼치면 질문·답변 머리줄 아래에 얇은 실선(--line)을 긋고 글씨를 굵게 한다. 배경색으로 가르지 않는다(에이전트 인수인계의 .handoff-card 와 같은 방식). */
+.qa[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+.qa[open] > summary .qa-preview-keyword { font-weight: 600; }
 
 .qa-type-badge {
   font-size: var(--fs-xs);
@@ -1150,7 +1172,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .qa.q:not([open]) .qa-preview-keyword { color: var(--ink-2); }
 
-.qa > .body { padding: 6px 12px 10px; }
+.qa > .body { padding: 12px 14px 14px; }
 
 .qa .body > pre,
 .qa-content > pre {
@@ -1191,7 +1213,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .pending-progress { margin-top: 8px; padding-left: 24px; font-size: var(--fs-sm); color: var(--ink-2); }
 .pending-progress .pg-line { display: flex; flex-wrap: wrap; gap: 6px; font-variant-numeric: tabular-nums; }
 .pending-progress .pg-sep { color: var(--ink-3); }
-.pending-progress .pg-idle.quiet { color: #e0b25c; }
+.pending-progress .pg-idle.quiet { color: var(--warn); }
 .pending-progress .pg-action { margin-top: 2px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pending-progress .pg-tool { color: var(--ink); font-weight: 600; }
 .pending-progress .pg-detail { font-family: var(--font-mono); font-size: 0.92em; color: var(--ink); }
@@ -1416,7 +1438,11 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   user-select: none;
 }
 .handoff-card-header:hover { background: var(--surface); }
-.handoff-card.is-open > .handoff-card-header { background: var(--surface); }
+/* 펼치면 제목 줄 아래에 얇은 실선(--line)을 긋고 제목을 굵게 한다. 배경색으로 가르지 않는다(에이전트 위임의 .qa 와 같은 방식). */
+.handoff-card.is-open > .handoff-card-header {
+  border-bottom: 1px solid var(--line);
+}
+.handoff-card.is-open .handoff-title { font-weight: 600; }
 
 .handoff-num {
   font-family: var(--font-mono);
@@ -1453,10 +1479,38 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 
 .handoff-card-body {
-  padding: 4px 16px 18px 79px;
-  background: var(--surface);
+  padding: 12px 16px 18px 79px;
 }
 .handoff-card-body-loading { color: var(--ink-3); font-size: var(--fs-sm); padding: 8px 0; }
+
+/* agy 사용량: 머리줄의 토큰 칩(회신 카드에만)과, 펼쳤을 때 제목 줄 바로 아래의 항목별 줄 */
+.handoff-tokens {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: help;
+}
+.handoff-usage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 16px;
+  padding: 10px 16px 0 79px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.handoff-card:not(.is-open) > .handoff-usage { display: none; }
+.handoff-usage-head { color: var(--agy); font-family: var(--font-sans); font-weight: 600; }
+.handoff-usage.is-claude .handoff-usage-head { color: var(--claude); }
+.handoff-usage-ctx { margin-left: auto; }   /* 맥락 크기는 앞의 "한 일의 크기" 값들과 떨어뜨려 오른쪽에 둔다 */
+.handoff-usage-k { color: var(--ink-3); }
+/* 본문은 .md 의 글줄 길이 제한(100ch)을 블록이 아니라 안쪽 내용에만 건다. 블록은 헤더·자동 이어가기 줄과 같은 폭(카드 폭)을 쓴다. */
+.handoff-card-body.md { max-width: none; }
+.handoff-card-body.md > * { max-width: 100ch; }
 
 /* 상태 진행 표시: 보냄 → 읽음 → 처리됨 → 확인함 (실제 순서가 있는 흐름) */
 .steps {
@@ -1472,13 +1526,16 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   border-radius: 1px;
   background: var(--line-strong);
 }
-.steps[data-step="1"] .steps-track i:nth-child(-n+1),
-.steps[data-step="2"] .steps-track i:nth-child(-n+2),
-.steps[data-step="3"] .steps-track i:nth-child(-n+3),
-.steps[data-step="4"] .steps-track i:nth-child(-n+4) { background: var(--ink-2); }
+/* 색은 흐름을 따른다: 보냄 회색(아직 아무도 손대지 않음) → 읽음 청록(작업 중, 진행 중 배지와 같은 색) →
+   처리됨 호박색(반영했지만 아직 검증 전) → 확인함 초록(검증까지 끝남). 막대 칸 수(1~4)와 확인함의 굵은 글씨도 같은 흐름을 말한다. */
+.steps[data-step="1"] .steps-track i:nth-child(-n+1) { background: var(--ink-2); }
+.steps[data-step="2"] .steps-track i:nth-child(-n+2) { background: var(--agy); }
+.steps[data-step="3"] .steps-track i:nth-child(-n+3) { background: var(--claude); }
 .steps[data-step="4"] .steps-track i { background: var(--ok); }
 .steps-label { font-size: var(--fs-xs); color: var(--ink-2); min-width: 3.2em; }
-.steps[data-step="4"] .steps-label { color: var(--ok); }
+.steps[data-step="2"] .steps-label { color: var(--agy); }
+.steps[data-step="3"] .steps-label { color: var(--claude); }
+.steps[data-step="4"] .steps-label { color: var(--ok); font-weight: 600; }
 .steps.on-hold .steps-track i { background: transparent; outline: 1px dashed var(--ink-3); outline-offset: -1px; }
 .steps.on-hold .steps-label { color: var(--ink-3); font-style: italic; }
 
@@ -1937,3 +1994,49 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
 }
 .tree-time-legend .tt-dot.tt-session { background: var(--claude); }
 .tree-time-legend .tt-dot.tt-agy { background: var(--agy); }
+
+/* 진행 상태 표시(진행 중 / 조용함 / 멈춘 것으로 보임 / 대기 / 끝남 / 실패): 위임 카드 본문, 핸드오프 카드의 진행 줄, 과정 창 맨 위에서 같은 모양을 쓴다.
+   색이 뜻을 가른다 - 진행 중은 agy 색(점이 숨 쉼), 조용함은 노랑, 멈춘 것으로 보임·실패는 빨강(점이 멈춤), 끝남은 초록, 대기는 회색. 글자도 함께 적어 색만으로 가르지 않는다. */
+.live-health {
+  --live-color: var(--agy);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.live-health[data-kind="quiet"] { --live-color: var(--warn); }
+.live-health[data-kind="stalled"], .live-health[data-kind="failed"] { --live-color: var(--err); }
+.live-health[data-kind="done"] { --live-color: var(--ok); }
+.live-health[data-kind="queued"] { --live-color: var(--ink-3); }
+.live-dot {
+  align-self: center;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live-color);
+}
+.live-health[data-kind="running"] .live-dot { animation: live-breathe 1.6s ease-in-out infinite; }
+@keyframes live-breathe { 50% { opacity: 0.3; } }
+.live-label { font-weight: 600; color: var(--live-color); }
+.live-detail { min-width: 0; color: var(--ink-3); overflow-wrap: anywhere; }
+.pending-body > .live-health { margin-bottom: 8px; }
+.card.pending-card[data-health="stalled"] { border-color: rgba(229, 112, 122, 0.5); }
+.card.pending-card[data-health="quiet"] { border-color: rgba(224, 178, 92, 0.5); }
+.card.pending-card.interrupted { border-style: dashed; }
+.proc-dlg-health { margin-top: 10px; }
+
+/* 핸드오프 카드 머리 바로 아래의 진행 줄(보냄·읽음 상태의 Claude 메시지). 카드를 펼치지 않아도 보인다 */
+.handoff-live {
+  padding: 6px 14px 10px 78px;   /* 번호 칸(52px) + 간격 뒤, 제목 글자와 왼쪽을 맞춘다 */
+  border-top: 1px dashed var(--line);
+}
+.handoff-live-top { display: flex; align-items: center; gap: 12px; }
+.handoff-live-top .live-health { flex: 1 1 auto; }
+.handoff-live .pending-progress { margin-top: 6px; padding-left: 0; }
+@media (max-width: 720px) {
+  .handoff-live { padding-left: 14px; }
+}

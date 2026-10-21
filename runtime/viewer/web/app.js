@@ -1,6 +1,6 @@
 // app.js
 // samjil 에이전트 통합 대시보드 & 뷰어
-// 2단 사이드바 레이아웃: 대시보드(Home), 세션별 위임 실행 기록(QA), 프로젝트별 인수인계(Handoff)
+// 2단 사이드바 레이아웃: 대시보드(Home), 세션별 에이전트 위임(QA), 프로젝트별 인수인계(Handoff)
 (function () {
   "use strict";
 
@@ -123,7 +123,7 @@
   var filteredQa = [];          // 필터 적용된 완료 QA
   var filteredPending = [];     // 필터 적용된 pending
   var shownQaCount = 0;         // 현재 렌더링된 카드 수
-  var knownShardKey = "";       // QA 데이터 변경 감지 키
+  var qaSeq = 0;                // 위임 기록 API 에서 마지막으로 받은 갱신 번호
   var lastPendingKey = "";      // pending 변경 감지 키
   var refreshTimer = null;
   var watcherStarting = false;   // 켜기 요청 후 켜질 때까지 true
@@ -150,17 +150,6 @@
     });
   }
 
-  function parseJsonl(text) {
-    if (text && text.charCodeAt(0) === 0xFEFF) { text = text.slice(1); }
-    var out = [];
-    var lines = text.split(/\r?\n/);
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].trim();
-      if (!line) { continue; }
-      try { out.push(JSON.parse(line)); } catch (e) { /* skip */ }
-    }
-    return out;
-  }
 
   function escapeHtml(str) {
     if (!str) return "";
@@ -229,10 +218,6 @@
     return String(r.status).trim() === "OK";
   }
 
-  function shardKeyOf(index) {
-    if (!index || !index.shards) { return ""; }
-    return index.shards.map(function (s) { return s.file + ":" + s.bytes; }).join(",");
-  }
 
   function pendingKeyOf(list) {
     if (!list || !list.length) { return ""; }
@@ -251,13 +236,14 @@
     }).join(",");
   }
 
-  function formatRelativeTime(dateStr) {
+  // nowMs 는 시험에서 기준 시각을 고정하려는 선택 인자다(없으면 지금).
+  function formatRelativeTime(dateStr, nowMs) {
     if (!dateStr) return "-";
     try {
       var d = new Date(dateStr.replace(/-/g, "/"));
       if (isNaN(d.getTime())) return dateStr;
-      var now = new Date();
-      var diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+      var nowTime = (nowMs == null) ? Date.now() : nowMs;
+      var diffSec = Math.floor((nowTime - d.getTime()) / 1000);
       if (diffSec < 60) return "방금 전";
       if (diffSec < 3600) return Math.floor(diffSec / 60) + "분 전";
       if (diffSec < 86400) return Math.floor(diffSec / 3600) + "시간 전";
@@ -394,7 +380,7 @@
       els.topbarCategory.textContent = "홈";
       els.topbarCurrent.textContent = "대시보드";
     } else if (currentNav === "qa") {
-      els.topbarCategory.textContent = "위임 실행 기록";
+      els.topbarCategory.textContent = "에이전트 위임";
       if (!currentQaProject) {
         els.topbarCurrent.textContent = "전체 프로젝트 피드";
       } else {
@@ -407,7 +393,7 @@
         }
       }
     } else if (currentNav === "handoff") {
-      els.topbarCategory.textContent = "에이전트 인수인계";
+      els.topbarCategory.textContent = "에이전트 협의";
       if (!currentHandoffProject) {
         els.topbarCurrent.textContent = "전체 프로젝트";
       } else {
@@ -560,53 +546,43 @@
       });
   }
 
-  // 위임 완료 레코드 전체 로드
-  var shardDataCache = {};
+  // 위임 완료 레코드 로드: 뷰어 API(/api/qa/records)에서 마지막으로 받은 갱신 번호(qaSeq) 이후의 기록만 받아 합친다.
+  // 처음(또는 강제 새로고침)에는 since=0 으로 전부 받는다. 받은 건수가 서버의 전체 건수와 어긋나면(오래된 기록이 지워짐 등) 처음부터 다시 받는다.
+  // task_id 가 같은 기록은 새것으로 바꿔 합친 새 배열을 돌려준다(원본은 바꾸지 않는다).
+  function mergeQaRecords(base, incoming) {
+    var byId = {};
+    var order = [];
+    base.forEach(function (r) {
+      if (!Object.prototype.hasOwnProperty.call(byId, r.task_id)) { order.push(r.task_id); }
+      byId[r.task_id] = r;
+    });
+    incoming.forEach(function (r) {
+      if (!Object.prototype.hasOwnProperty.call(byId, r.task_id)) { order.push(r.task_id); }
+      byId[r.task_id] = r;
+    });
+    return order.map(function (id) { return byId[id]; });
+  }
 
   function loadAllQa(force) {
-    if (force) {
-      knownShardKey = "";
-      shardDataCache = {};
-    }
-    return fetchJson("/data/index.json").then(function (index) {
-      var key = shardKeyOf(index);
-      var changed = (key !== knownShardKey);
-      knownShardKey = key;
+    var since = (force || allItems.length === 0) ? 0 : qaSeq;
+    return fetchJson("/api/qa/records?since=" + since).then(function (res) {
+      var recs = (res && Array.isArray(res.records)) ? res.records : [];
+      var total = (res && typeof res.total === "number") ? res.total : recs.length;
+      var items = (since === 0) ? recs : mergeQaRecords(allItems, recs);
 
-      if (!changed && !force && allItems.length > 0) {
-        return { changed: false, index: index };
+      if (since > 0 && items.length !== total) {
+        qaSeq = 0;
+        return loadAllQa(true);
       }
+      var changed = Boolean(force) || recs.length > 0 || items.length !== allItems.length;
+      if (!changed) { return { changed: false }; }
 
-      var shards = (index && index.shards) ? index.shards : [];
-      var activeFiles = {};
-      var loaders = shards.map(function (s) {
-        activeFiles[s.file] = true;
-        var cached = shardDataCache[s.file];
-        if (!force && cached && cached.bytes === s.bytes) {
-          return Promise.resolve(cached.items);
-        }
-        return fetchText("/data/" + encodeURIComponent(s.file))
-          .then(parseJsonl)
-          .then(function (parsed) {
-            shardDataCache[s.file] = { bytes: s.bytes, items: parsed };
-            return parsed;
-          })
-          .catch(function () { return cached ? cached.items : []; });
+      items.sort(function (a, b) {
+        return String((b && b.timestamp) || "").localeCompare(String((a && a.timestamp) || ""));
       });
-
-      Object.keys(shardDataCache).forEach(function (f) {
-        if (!activeFiles[f]) { delete shardDataCache[f]; }
-      });
-
-      return Promise.all(loaders).then(function (chunks) {
-        var items = [];
-        chunks.forEach(function (c) { items = items.concat(c); });
-        items.sort(function (a, b) {
-          return String((b && b.timestamp) || "").localeCompare(String((a && a.timestamp) || ""));
-        });
-        allItems = items;
-        return { changed: true, index: index };
-      });
+      allItems = items;
+      qaSeq = (res && typeof res.seq === "number") ? res.seq : qaSeq;
+      return { changed: true };
     });
   }
 
@@ -1183,10 +1159,14 @@
       return s1 > s2 ? s1 : s2;
     }
 
-    // records 모드의 기록 시각: 완료 시각(latestDone)이 있으면 그것, 없으면(옛 데이터) latestTime
+    // records 모드의 기록 시각: 완료 시각(latestDone)이 있으면 그것, 없으면(옛 데이터) latestTime.
+    // 단 진행·대기 중인 작업이 있으면(pending > 0) 그 작업의 시작 시각(latestTime 에 들어 있다)이 더 늦을 때 그것을 쓴다 —
+    // 지금 도는 작업이 있는 프로젝트·세션이 마지막 완료가 오래전이라고 아래로 밀리지 않게 한다. 사이드바 행에 보이는 위임 시각은 그대로 완료 시각이다.
     function recordTimeOf(x) {
       if (!x) return "";
-      return (x.latestDone != null ? x.latestDone : x.latestTime) || "";
+      var done = (x.latestDone != null ? x.latestDone : x.latestTime) || "";
+      if (x.pending > 0 && x.latestTime && String(x.latestTime) > String(done)) { return String(x.latestTime); }
+      return done;
     }
 
     function sessionDateKey(s) {
@@ -1435,42 +1415,123 @@
     return links[file];
   }
 
-  function handoffNodeOf(channelName, msg, channelData, tree) {
-    var file = handoffMsgFileOf(msg, channelData);
-    var link = handoffLinkOf(tree, channelName, file);
-    if (link) {
-      if (tree && Array.isArray(tree.projects)) {
-        for (var i = 0; i < tree.projects.length; i++) {
-          var p = tree.projects[i];
-          if (p && Array.isArray(p.sessions)) {
-            for (var j = 0; j < p.sessions.length; j++) {
-              var s = p.sessions[j];
-              if (s && s.id === link) {
-                return {
-                  projectId: p.id,
-                  projectName: p.name,
-                  sessionId: link,
-                  sessionTitle: s.title ? s.title : link.slice(0, 8)
-                };
-              }
+  // 세션 id 를 트리에서 찾아 노드로. 세션이 사라졌으면 null.
+  function handoffSessionNodeOf(tree, link) {
+    if (!link) { return null; }
+    if (tree && Array.isArray(tree.projects)) {
+      for (var i = 0; i < tree.projects.length; i++) {
+        var p = tree.projects[i];
+        if (p && Array.isArray(p.sessions)) {
+          for (var j = 0; j < p.sessions.length; j++) {
+            var s = p.sessions[j];
+            if (s && s.id === link) {
+              return {
+                projectId: p.id,
+                projectName: p.name,
+                sessionId: link,
+                sessionTitle: s.title ? s.title : link.slice(0, 8)
+              };
             }
           }
         }
       }
-      if (tree && Array.isArray(tree.ungrouped)) {
-        for (var k = 0; k < tree.ungrouped.length; k++) {
-          var us = tree.ungrouped[k];
-          if (us && us.id === link) {
-            return {
-              projectId: QA_UNGROUPED,
-              projectName: "그룹 없음",
-              sessionId: link,
-              sessionTitle: us.title ? us.title : link.slice(0, 8)
-            };
-          }
+    }
+    if (tree && Array.isArray(tree.ungrouped)) {
+      for (var k = 0; k < tree.ungrouped.length; k++) {
+        var us = tree.ungrouped[k];
+        if (us && us.id === link) {
+          return {
+            projectId: QA_UNGROUPED,
+            projectName: "그룹 없음",
+            sessionId: link,
+            sessionTitle: us.title ? us.title : link.slice(0, 8)
+          };
         }
       }
     }
+    return null;
+  }
+
+  // 파일 이름이 기록에 안 남아 연결이 없는 메시지(Claude 가 번호만 출력한 c2a 등)는 머리말의 답장대상으로 이어진 메시지(자기가 답한 쪽, 자기에게 답한 쪽)를
+  // 따라가 가장 가까운(홉이 적은, 같으면 번호가 작은) 연결된 메시지의 세션을 쓴다. 파일 이름 근거의 직접 연결은 호출하는 쪽에서 먼저 쓴다.
+  // 같은 채널 안의 번호끼리만 잇는다(다른 채널의 같은 번호가 섞이지 않게 handoffLinkOf 에 채널 이름을 넘긴다).
+  function handoffChainNodeOf(channelName, msg, channelData, tree) {
+    if (!msg || msg.num == null || !channelData || !Array.isArray(channelData.messages)) { return null; }
+    var neighbors = {};
+    function addEdge(a, b) {
+      if (!a || !b || a === b) { return; }
+      (neighbors[a] = neighbors[a] || []).push(b);
+      (neighbors[b] = neighbors[b] || []).push(a);
+    }
+    var byNum = {};
+    var msgs = channelData.messages;
+    for (var i = 0; i < msgs.length; i++) {
+      var m = msgs[i];
+      if (!m || m.num == null) { continue; }
+      byNum[String(m.num)] = m;
+      if (m.replyTo) { addEdge(String(m.num), String(m.replyTo)); }
+    }
+    var start = String(msg.num);
+    var seen = {};
+    seen[start] = true;
+    var level = [start];
+    while (level.length) {
+      var found = [];
+      var next = [];
+      level.sort();
+      for (var l = 0; l < level.length; l++) {
+        var nbs = neighbors[level[l]] || [];
+        for (var n = 0; n < nbs.length; n++) {
+          var nn = nbs[n];
+          if (seen[nn] || !byNum[nn]) { continue; }
+          seen[nn] = true;
+          next.push(nn);
+          var node = handoffSessionNodeOf(tree, handoffLinkOf(tree, channelName, handoffMsgFileOf(byNum[nn], channelData)));
+          if (node) { found.push({ num: nn, node: node }); }
+        }
+      }
+      if (found.length) {
+        found.sort(function (a, b) { return a.num < b.num ? -1 : (a.num > b.num ? 1 : 0); });
+        return found[0].node;
+      }
+      level = next;
+    }
+    return null;
+  }
+
+  // BRIEF.md 의 "세션 ID: `ID1`, `ID2`" 줄에서 세션 ID 를 모두 꺼낸다(자리표시자 <...> 는 뺀다). handoff-lib.ps1 의 Get-HandoffBriefSessionIds 와 같은 규칙이다.
+  function handoffBriefSessionIds(brief) {
+    var line = /세션\s*ID\*{0,2}\s*[:：]([^\r\n]*)/.exec(String(brief == null ? "" : brief));
+    var ids = [];
+    if (!line) { return ids; }
+    var re = /`([^`]+)`/g, m;
+    while ((m = re.exec(line[1])) !== null) {
+      var id = m[1].trim();
+      if (id && id.charAt(0) !== "<" && ids.indexOf(id) < 0) { ids.push(id); }
+    }
+    return ids;
+  }
+
+  // 세션 전용 채널(BRIEF 에 세션 ID 가 적힌 채널)의 메시지는 그 세션에 붙인다. 세션 기록에 파일 이름이 안 찍혀 연결이 없고 답장대상 이웃도 연결이 없을 때의 마지막 근거다.
+  // 이어서 다시 열어 ID 가 여럿이면 목록의 뒤쪽(최근) 것부터 보고, 트리에 있는 세션만 쓴다.
+  function handoffBriefNodeOf(channelData, tree) {
+    var ids = handoffBriefSessionIds(channelData && channelData.brief);
+    for (var i = ids.length - 1; i >= 0; i--) {
+      var node = handoffSessionNodeOf(tree, ids[i]);
+      if (node) { return node; }
+    }
+    return null;
+  }
+
+  function handoffNodeOf(channelName, msg, channelData, tree) {
+    var file = handoffMsgFileOf(msg, channelData);
+    var link = handoffLinkOf(tree, channelName, file);
+    var direct = handoffSessionNodeOf(tree, link);
+    if (direct) { return direct; }
+    var chained = handoffChainNodeOf(channelName, msg, channelData, tree);
+    if (chained) { return chained; }
+    var bound = handoffBriefNodeOf(channelData, tree);
+    if (bound) { return bound; }
     var cName = (channelName != null && String(channelName).trim() !== "") ? String(channelName) : "";
     return {
       projectId: QA_UNLINKED,
@@ -1826,7 +1887,7 @@
 
   // 사이드바 행(프로젝트·세션)에는 시각을 두 개 보인다.
   //   세션: Claude Desktop 세션의 마지막 활동. 프로젝트 행은 그 안의 세션들 중 가장 최근 활동.
-  //   위임(위임 실행 기록) / 인수인계(에이전트 인수인계): agy 쪽 기록의 시각.
+  //   위임(에이전트 위임) / 인수인계(에이전트 협의): agy 쪽 기록의 시각.
   function treeSessionTime(node) {
     if (!node) return "";
     if (node.lastActivity) return String(node.lastActivity);
@@ -1839,11 +1900,32 @@
     return best;
   }
 
-  // 위임 쪽 값: 마지막으로 끝난 agy 작업의 완료 시각. 끝난 것이 없으면 진행 중인지, 위임이 아예 없는지 보인다.
-  function qaDelegationValue(node) {
-    if (node && node.latestDone) return formatRelativeTime(node.latestDone);
+  // 지금 도는(또는 대기 중인) 작업이 있고 그 시작이 마지막 완료보다 늦은가. 정렬(sortTreeNodes 의 recordTimeOf)과 같은 기준이다.
+  function qaIsRunning(node) {
+    return Boolean(node) && node.pending > 0 && Boolean(node.latestTime) && String(node.latestTime) > String(node.latestDone || "");
+  }
+
+  // 위임 쪽 값: 지금 진행 중인 작업이 있으면 "진행 N분"(시작한 뒤 흐른 시간), 아니면 마지막으로 끝난 agy 작업의 완료 시각.
+  // 끝난 것이 없으면 진행 중인지, 위임이 아예 없는지 보인다. nowMs 는 시험에서 현재 시각을 고정하려는 값이다.
+  function qaDelegationValue(node, nowMs) {
+    if (qaIsRunning(node)) {
+      var started = new Date(String(node.latestTime).replace(/-/g, "/"));
+      if (isNaN(started.getTime())) return "진행 중";
+      var sec = Math.floor(((nowMs == null ? Date.now() : nowMs) - started.getTime()) / 1000);
+      if (sec < 60) return "진행 중";
+      if (sec < 3600) return "진행 " + Math.floor(sec / 60) + "분";
+      if (sec < 86400) return "진행 " + Math.floor(sec / 3600) + "시간";
+      return "진행 " + Math.floor(sec / 86400) + "일";
+    }
+    if (node && node.latestDone) return formatRelativeTime(node.latestDone, nowMs);
     if (node && node.pending > 0) return "진행 중";
     return "없음";
+  }
+
+  // 위임 쪽 값의 정확한 시각(마우스를 올릴 때 보이는 설명). 진행 중이면 시작 시각을 그렇게 밝힌다.
+  function qaDelegationAbs(node) {
+    if (qaIsRunning(node)) return node.latestTime + " 부터 진행 중";
+    return (node && node.latestDone) || "";
   }
 
   // 시각 두 개를 한 줄에 보인다: "세션 시각 / agy 쪽 시각". 색으로 구분한다 - 세션은 Claude 색, 위임·인수인계는 agy 색.
@@ -1860,7 +1942,7 @@
       (extraHtml || "") + '</span>';
   }
 
-  // 위임 실행 기록 화면의 날짜 정렬은 agy 작업(위임 기록) 시각 기준이라 라벨도 그렇게 보인다
+  // 에이전트 위임 화면의 날짜 정렬은 agy 작업(위임 기록) 시각 기준이라 라벨도 그렇게 보인다
   function qaSortLabel(m) {
     if (m.value === "recent-desc") return "agy 최근 작업순";
     if (m.value === "recent-asc") return "agy 오래된 작업순";
@@ -1976,7 +2058,7 @@
 
       var sessCount = p.sessions ? p.sessions.length : 0;
       // 시각 두 줄: 세션(Desktop 세션의 마지막 활동, 세션 개수 포함) / 위임(agy 작업의 완료 시각)
-      var subHtml = treeTimePairHtml("project-sub session-sub", p, "위임", qaDelegationValue(p), p.latestDone, '<span class="tree-time-count">' + sessCount + '개</span>');
+      var subHtml = treeTimePairHtml("project-sub session-sub", p, "위임", qaDelegationValue(p), qaDelegationAbs(p), '<span class="tree-time-count">' + sessCount + '개</span>');
 
       var badgeHtml = '<span class="project-badge">' + (p.total + p.pending) + '</span>';
       if (p.pending > 0) {
@@ -2034,7 +2116,7 @@
           sItem.dataset.session = s.id;
           sItem.setAttribute("role", "treeitem");
 
-          var sSubHtml = treeTimePairHtml("session-sub", s, "위임", qaDelegationValue(s), s.latestDone, "");
+          var sSubHtml = treeTimePairHtml("session-sub", s, "위임", qaDelegationValue(s), qaDelegationAbs(s), "");
 
           var sBadgeHtml = '<span class="session-badge">' + (s.total + s.pending) + '</span>';
           if (s.pending > 0) {
@@ -2217,7 +2299,7 @@
       '<span class="project-icon">' + icon("feed") + '</span>',
       '<div class="project-info">',
       '  <span class="project-name">전체 프로젝트</span>',
-      '  <span class="project-sub session-sub">모든 인수인계를 시간순으로</span>',
+      '  <span class="project-sub session-sub">모든 협의를 시간순으로</span>',
       '</div>',
       '<span class="project-badge">' + totalAllMsgs + '</span>'
     ].join("");
@@ -2240,7 +2322,7 @@
       var sessCount = p.sessions ? p.sessions.length : 0;
       var waitHtml = p.waiting > 0 ? '<span class="tree-time-count who-agy">대기 중 ' + p.waiting + '</span>' : '';
       // 시각 두 줄: 세션(Desktop 세션의 마지막 활동, 세션 개수 포함) / 인수인계(마지막 메시지 시각)
-      var subHtml = treeTimePairHtml("project-sub session-sub", p, "인수인계", p.latestTime ? formatRelativeTime(p.latestTime) : "없음", p.latestTime, '<span class="tree-time-count">' + sessCount + '개</span>' + waitHtml);
+      var subHtml = treeTimePairHtml("project-sub session-sub", p, "협의", p.latestTime ? formatRelativeTime(p.latestTime) : "없음", p.latestTime, '<span class="tree-time-count">' + sessCount + '개</span>' + waitHtml);
 
       var badgeHtml = '<span class="project-badge">' + p.total + '</span>';
       if (p.waiting > 0) {
@@ -2299,7 +2381,7 @@
           sItem.setAttribute("role", "treeitem");
 
           var sWaitHtml = s.waiting > 0 ? '<span class="tree-time-count who-agy">대기 중 ' + s.waiting + '</span>' : '';
-          var sSubHtml = treeTimePairHtml("session-sub", s, "인수인계", s.latestTime ? formatRelativeTime(s.latestTime) : "없음", s.latestTime, sWaitHtml);
+          var sSubHtml = treeTimePairHtml("session-sub", s, "협의", s.latestTime ? formatRelativeTime(s.latestTime) : "없음", s.latestTime, sWaitHtml);
 
           var sBadgeHtml = '<span class="session-badge">' + s.total + '</span>';
           if (s.waiting > 0) {
@@ -2435,6 +2517,7 @@
       idles[j].textContent = formatDuration(idleSec) + " 전 활동";
       idles[j].classList.toggle("quiet", idleSec >= PROGRESS_QUIET_SEC);
     }
+    tickHealthElements();
   }, 1000);
 
   function stopNowTicker() {
@@ -2566,6 +2649,169 @@
     return '<span class="steps' + (hold ? " on-hold" : "") + '" data-step="' + step + '" title="보냄 → 읽음 → 처리됨 → 확인함">' +
       '<span class="steps-track" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' +
       '<span class="steps-label">' + escapeHtml(status || "상태 없음") + '</span></span>';
+  }
+
+  // 핸드오프 채널 이름 -> 워처가 위임 작업 이름(handoff_<이름>_<번호>_<시각>)에 쓰는 이름.
+  // handoff-pump.ps1 의 ConvertTo-HandoffSafeName 와 같은 규칙이다(영문·숫자·한글·_· - 만 남기고 40자까지).
+  function handoffSafeName(name) {
+    var s = String(name == null ? "" : name).replace(/[^A-Za-z0-9가-힣_-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!s) s = "channel";
+    if (s.length > 40) s = s.substring(0, 40).replace(/-+$/g, "");
+    return s;
+  }
+
+  // 토큰 수를 짧게: 1만 이상은 "2.4만", 그 밖에는 천 단위 쉼표.
+  function tokenShort(n) {
+    n = Number(n) || 0;
+    return n >= 10000 ? (n / 10000).toFixed(1) + "만" : n.toLocaleString();
+  }
+
+  // 한 채널의 핸드오프 위임 기록(위임 완료 레코드)에서 "메시지 번호 -> 그 호출이 쓴 토큰"을 만든다.
+  // 레코드의 task_id 는 handoff_<채널>_<c2a 번호>_<시각> 이다. agy 는 채널마다 대화 하나를 이어 쓰고 usage 는 그 대화의 누적값이라,
+  // 같은 대화(session_id)의 앞 호출과의 차이를 "이번 호출이 쓴 양"으로 본다. 앞 호출보다 줄었거나 앞 호출이 없으면(새 대화) 그 값이 곧 이번 호출이다.
+  function handoffUsageIndex(channel, records) {
+    var prefix = "handoff_" + handoffSafeName(channel) + "_";
+    var num = function (v) { var n = parseInt(v, 10); return isNaN(n) ? 0 : n; };
+    var list = [];
+    (Array.isArray(records) ? records : []).forEach(function (r) {
+      var id = r && r.task_id ? String(r.task_id) : "";
+      if (id.indexOf(prefix) !== 0) { return; }
+      var mm = /^(\d{4})_\d+$/.exec(id.slice(prefix.length));
+      if (!mm) { return; }
+      var total = num(r.total_tokens);
+      if (total <= 0) { return; }
+      list.push({
+        num: mm[1], ts: String(r.timestamp || ""), sid: String(r.session_id || r.session || ""), model: String(r.model || ""),
+        input: num(r.input_tokens), output: num(r.output_tokens), thinking: num(r.thinking_tokens), total: total
+      });
+    });
+    list.sort(function (a, b) { return a.ts < b.ts ? -1 : (a.ts > b.ts ? 1 : 0); });
+    var prev = {};
+    var out = {};
+    list.forEach(function (c) {
+      var p = prev[c.sid];
+      var baseline = true;
+      var d = { input: c.input, output: c.output, thinking: c.thinking, total: c.total };
+      if (p && c.total >= p.total && c.input >= p.input && c.output >= p.output && c.thinking >= p.thinking) {
+        baseline = false;
+        d = { input: c.input - p.input, output: c.output - p.output, thinking: c.thinking - p.thinking, total: c.total - p.total };
+      }
+      prev[c.sid] = c;
+      out[c.num] = { num: c.num, model: c.model, ts: c.ts, delta: d, cumulative: { input: c.input, output: c.output, thinking: c.thinking, total: c.total }, baseline: baseline };
+    });
+    return out;
+  }
+
+  // 머리줄 칩 글자와 설명(title). 설명은 이 숫자가 대화 누적에서 뺀 증가분이라는 것과 세부 값을 알려 준다.
+  function handoffUsageText(u) {
+    if (!u || !u.delta) { return null; }
+    var d = u.delta, c = u.cumulative;
+    var sign = u.baseline ? "" : "+";
+    var tip = [
+      u.baseline ? "이 대화의 첫 호출(누적값이 곧 이번 호출)" : "이번 호출이 쓴 양 (agy 대화 누적값의 증가분)",
+      "총 " + sign + d.total.toLocaleString() + " · 입력 " + sign + d.input.toLocaleString() + " · 출력 " + sign + d.output.toLocaleString() + " · 사고 " + sign + d.thinking.toLocaleString(),
+      "대화 누적 총 " + c.total.toLocaleString() + " 토큰" + (u.model ? " · " + u.model : "")
+    ].join("\n");
+    return { chip: sign + tokenShort(d.total) + " 토큰", title: tip, delta: d, cumulative: c, baseline: u.baseline };
+  }
+
+  // Claude 가 보낸 c2a 카드의 사용량(근사). u 는 서버(/api/handoff/claude-usage)가 돌려준 호출 하나의 값:
+  //   front = 출력 + 새 입력(이 호출이 한 일의 크기), context = 그 호출이 본 대화 맥락의 크기(캐시에서 다시 읽은 입력 포함).
+  // 맥락은 호출마다 대화 전체가 거의 그대로 다시 읽혀 "이 메시지에 든 양"이 아니라서 앞에 두지 않고 따로 보인다.
+  function claudeUsageText(u) {
+    if (!u || typeof u.front !== "number") { return null; }
+    var n = function (v) { return Number(v || 0).toLocaleString(); };
+    var tip = [
+      "이 메시지를 만든 Claude 호출 한 번의 사용량 (근사치)",
+      "출력 " + n(u.output) + " + 새 입력 " + n(u.newInput) + " = " + n(u.front) + " 토큰",
+      "새 입력 = 이 호출에서 처음 들어간 맥락(일반 입력 + 캐시에 새로 쓴 입력)",
+      "대화 맥락 " + n(u.context) + " 토큰 = 새 입력 + 캐시에서 다시 읽은 " + n(u.cacheRead) + " (맥락 크기이지 이 메시지에 든 양이 아닙니다)",
+      "근사치인 이유: 어느 호출이 메시지를 만들었는지는 기록에 없어 파일이 생긴 시각 바로 앞의 호출로 짐작했고, 그 호출 안의 다른 일도 함께 들어 있으며, 메시지를 만들기까지 이어진 다른 호출은 빠졌습니다." + (u.model ? "\n모델 " + u.model : "")
+    ].join("\n");
+    return { chip: "≈" + tokenShort(u.front) + " 토큰", title: tip, output: u.output, newInput: u.newInput, front: u.front, context: u.context };
+  }
+
+  // 펼친 c2a 카드의 Claude 사용량 줄(agy 쪽 줄과 같은 모양, 앞에는 한 일의 크기, 맥락은 따로).
+  function buildClaudeUsageEl(t) {
+    var el = document.createElement("div");
+    el.className = "handoff-usage is-claude";
+    el.title = t.title;
+    var items = [["출력", t.output.toLocaleString()], ["새 입력", t.newInput.toLocaleString()], ["합계", "≈" + t.front.toLocaleString()]];
+    el.innerHTML = '<span class="handoff-usage-head">Claude 사용량 · 근사</span>' + items.map(function (it) {
+      return '<span class="handoff-usage-item"><span class="handoff-usage-k">' + escapeHtml(it[0]) + '</span> ' + escapeHtml(it[1]) + '</span>';
+    }).join("") + '<span class="handoff-usage-item handoff-usage-ctx"><span class="handoff-usage-k">대화 맥락</span> ' + escapeHtml(t.context.toLocaleString()) + '</span>';
+    return el;
+  }
+
+  // c2a 메시지가 붙은 세션의 기록에서 읽은 값을 세션|생성시각 키로 모아 둔다. 값이 없으면(못 찾음) false 로 두어 다시 묻지 않는다.
+  var claudeUsageStore = {};
+  var claudeUsageAsked = {};
+  var claudeUsageQueue = {};
+  var claudeUsageTimer = null;
+
+  function claudeUsageFor(channel, m) {
+    if (!m || m.dir !== "c2a" || !m.created) { return null; }
+    var node = handoffNodeOf(channel, m, handoffChannels[channel], claudeTree);
+    if (!node || node.projectId === QA_UNLINKED || String(node.sessionId).indexOf("c:") === 0) { return null; }
+    var key = node.sessionId + "|" + m.created;
+    if (Object.prototype.hasOwnProperty.call(claudeUsageStore, key)) { return claudeUsageStore[key] || null; }
+    if (!claudeUsageAsked[key]) {
+      claudeUsageAsked[key] = true;
+      (claudeUsageQueue[node.sessionId] = claudeUsageQueue[node.sessionId] || []).push(m.created);
+      if (!claudeUsageTimer) { claudeUsageTimer = setTimeout(flushClaudeUsage, 0); }
+    }
+    return null;
+  }
+
+  // 모아 둔 요청을 세션별로 한 번에 보내고, 새 값이 있으면 카드를 다시 그린다.
+  function flushClaudeUsage() {
+    claudeUsageTimer = null;
+    var queue = claudeUsageQueue;
+    claudeUsageQueue = {};
+    var sids = Object.keys(queue);
+    if (!sids.length) { return; }
+    Promise.all(sids.map(function (sid) {
+      var all = queue[sid];
+      var batches = [];
+      for (var i = 0; i < all.length; i += 100) { batches.push(all.slice(i, i + 100)); }
+      return Promise.all(batches.map(function (ts) {
+        return fetchJson("/api/handoff/claude-usage?session=" + encodeURIComponent(sid) + "&ts=" + encodeURIComponent(ts.join(","))).then(function (res) {
+          ts.forEach(function (t) { claudeUsageStore[sid + "|" + t] = (res && res.items && res.items[t]) ? res.items[t] : false; });
+        }).catch(function () {
+          ts.forEach(function (t) { claudeUsageStore[sid + "|" + t] = false; });
+        });
+      }));
+    })).then(function () {
+      if (currentNav === "handoff") { renderHandoffMessages(); }
+    });
+  }
+
+  var handoffUsageCache = { key: "", maps: {} };
+  // 렌더마다 채널별로 한 번만 만든다. 위임 기록이 바뀌면(개수나 가장 최근 시각) 다시 만든다.
+  function handoffUsageFor(channel) {
+    var key = allItems.length + "|" + (allItems[0] && allItems[0].timestamp || "");
+    if (handoffUsageCache.key !== key) { handoffUsageCache = { key: key, maps: {} }; }
+    if (!handoffUsageCache.maps[channel]) { handoffUsageCache.maps[channel] = handoffUsageIndex(channel, allItems); }
+    return handoffUsageCache.maps[channel];
+  }
+
+  // 펼친 카드의 사용량 줄(에이전트 위임 카드의 토큰 줄과 같은 항목).
+  function buildHandoffUsageEl(t) {
+    var el = document.createElement("div");
+    el.className = "handoff-usage";
+    var s = t.baseline ? "" : "+";
+    var items = [
+      ["총 토큰", s + t.delta.total.toLocaleString()],
+      ["입력", s + t.delta.input.toLocaleString()],
+      ["출력", s + t.delta.output.toLocaleString()],
+      ["사고", s + t.delta.thinking.toLocaleString()],
+      ["대화 누적", t.cumulative.total.toLocaleString()]
+    ];
+    el.title = t.title;
+    el.innerHTML = '<span class="handoff-usage-head">agy 사용량 · ' + (t.baseline ? "첫 호출" : "이번 호출") + '</span>' + items.map(function (it) {
+      return '<span class="handoff-usage-item"><span class="handoff-usage-k">' + escapeHtml(it[0]) + '</span> ' + escapeHtml(it[1]) + '</span>';
+    }).join("");
+    return el;
   }
 
   function dirParty(dir) {
@@ -2777,7 +3023,7 @@
 
     els.dashAttention.innerHTML = "";
     if (items.length === 0) {
-      els.dashAttention.innerHTML = '<li class="row-empty">확인할 항목이 없습니다. 처리를 기다리는 인수인계 메시지나 최근 24시간 안에 실패한 위임이 생기면 여기에 나옵니다.</li>';
+      els.dashAttention.innerHTML = '<li class="row-empty">확인할 항목이 없습니다. 처리를 기다리는 협의 메시지나 최근 24시간 안에 실패한 위임이 생기면 여기에 나옵니다.</li>';
       return;
     }
     var frag = document.createDocumentFragment();
@@ -2830,7 +3076,7 @@
     handoffProjects.forEach(function (p) {
       var m = p.latestMsg;
       if (!m) return;
-      entries.push({ time: m.time || p.updated || "", node: function () { return handoffRow(p.name, m, "인수인계"); } });
+      entries.push({ time: m.time || p.updated || "", node: function () { return handoffRow(p.name, m, "협의"); } });
     });
 
     entries.sort(function (a, b) { return String(b.time).localeCompare(String(a.time)); });
@@ -2838,7 +3084,7 @@
 
     els.dashTimeline.innerHTML = "";
     if (entries.length === 0) {
-      els.dashTimeline.innerHTML = '<li class="row-empty">아직 기록이 없습니다. Claude가 agy에 작업을 위임하거나 인수인계 메시지를 보내면 여기에 쌓입니다.</li>';
+      els.dashTimeline.innerHTML = '<li class="row-empty">아직 기록이 없습니다. Claude가 agy에 작업을 위임하거나 협의 메시지를 보내면 여기에 쌓입니다.</li>';
       return;
     }
     var frag = document.createDocumentFragment();
@@ -2880,7 +3126,7 @@
         ["오늘", todayCount + "건"],
         ["성공률", successRate],
         ["평균 소요", avgSec],
-        ["인수인계 채널", handoffProjects.length + "개"],
+        ["협의 채널", handoffProjects.length + "개"],
         ["메시지", totalHandoffMsgs.toLocaleString() + "개"]
       ];
       els.dashStats.innerHTML = stats.map(function (s) {
@@ -2951,7 +3197,7 @@
   }
 
   // ==========================================================================
-  // 2. 위임 실행 기록 메인 뷰 (QA Cards & Session Thread Rendering)
+  // 2. 에이전트 위임 메인 뷰 (QA Cards & Session Thread Rendering)
   // ==========================================================================
 
   function uniqueModels() {
@@ -3759,6 +4005,11 @@
   }
 
   // 색 없는 메타 항목. 색은 상태 배지에만 쓴다.
+  // 기록이 antigravity MCP 직접 호출로 남은 것인가(source 필드). 필드가 없는 옛 기록은 bridge 로 본다.
+  function viaMcp(r) {
+    return Boolean(r) && String(r.source || "").trim().toLowerCase() === "mcp";
+  }
+
   function metaItem(text, cls, title) {
     var s = document.createElement("span");
     s.className = "meta-item" + (cls ? " " + cls : "");
@@ -4036,11 +4287,17 @@
   }
   function pendingProcessOpts(p, cwd) {
     var isProcessing = (p.state === "processing");
+    var active = isProcessing || Boolean(p.interrupted);
+    var convId = (active && (p.conversation_id || (p.progress && p.progress.conversation_id))) ? String(p.conversation_id || p.progress.conversation_id) : "";
+    // 단계 목록은 목록 응답에 싣지 않고(가볍게), 대화 id 로 /api/delegate/process?since= 를 따라가 모은 것(liveProc)을 쓴다.
+    // 옛 서버가 progress.steps 를 주면 그것을 쓴다.
+    var lp = convId ? liveProc[convId] : null;
+    var legacy = (active && p.progress && Array.isArray(p.progress.steps)) ? p.progress.steps : null;
     return {
-      steps: (isProcessing && p.progress && Array.isArray(p.progress.steps)) ? p.progress.steps : null,
+      steps: active ? (lp ? lp.steps : (legacy || [])) : null,
       live: isProcessing,
-      waiting: !isProcessing,
-      convId: (isProcessing && p.progress && p.progress.conversation_id) ? String(p.progress.conversation_id) : "",
+      waiting: !active,
+      convId: convId,
       cwd: cwd != null ? cwd : (cwdListOf(p.cwd).length ? cwdListOf(p.cwd) : extractImagesFromText(p.question).cwds)
     };
   }
@@ -4051,15 +4308,74 @@
     if (key.indexOf("p:") === 0) {
       id = key.slice(2);
       for (i = 0; i < pendingItems.length; i++) {
-        if (pendingItems[i] && pendingItems[i].task_id === id) return { key: key, taskId: id, opts: pendingProcessOpts(pendingItems[i]) };
+        if (pendingItems[i] && pendingItems[i].task_id === id) return { key: key, taskId: id, opts: pendingProcessOpts(pendingItems[i]), pending: pendingItems[i], record: null };
       }
       key = "r:" + id;   // 끝났으면 완료 기록에서
     }
     for (i = 0; i < allItems.length; i++) {
       var r = allItems[i];
-      if (r && ("r:" + (r.task_id || r.timestamp || "")) === key) return { key: key, taskId: r.task_id || "", opts: recordProcessOpts(r) };
+      if (r && ("r:" + (r.task_id || r.timestamp || "")) === key) return { key: key, taskId: r.task_id || "", opts: recordProcessOpts(r), pending: null, record: r };
     }
     return null;
+  }
+
+  // ---- 진행 중인 작업의 과정을 따라가기. 목록 응답(/api/delegate/pending)은 단계 수(progress.step_count)만 알려 주고,
+  // 단계 자체는 단계 수가 늘었을 때만 /api/delegate/process?since=<마지막 단계 번호> 로 새 것만 받아 이어 붙인다.
+  // 기록 파일이 안 바뀌었으면 서버가 파일을 다시 읽지 않고(읽은 위치를 기억), 화면도 요청하지 않는다. 작업이 끝나 목록에서 빠지면 기억을 비운다.
+  var liveProc = {};   // 대화 id -> { steps, lastN, busy }
+
+  function syncLiveProcess(list) {
+    var keep = {};
+    (list || []).forEach(function (p) {
+      if (!p || !(p.state === "processing" || p.interrupted)) { return; }
+      var id = p.conversation_id || (p.progress && p.progress.conversation_id);
+      if (!id) { return; }
+      id = String(id);
+      keep[id] = true;
+      var lp = liveProc[id];
+      var want = p.progress && p.progress.step_count != null ? Number(p.progress.step_count) : null;
+      if (!lp || (want != null && want > lp.steps.length)) { fetchLiveProcess(id); }
+    });
+    Object.keys(liveProc).forEach(function (id) { if (!keep[id]) { delete liveProc[id]; } });
+  }
+
+  function fetchLiveProcess(id) {
+    var lp = liveProc[id];
+    if (!lp) { lp = liveProc[id] = { steps: [], lastN: -1, busy: false }; }
+    if (lp.busy) { return; }
+    lp.busy = true;
+    fetchJson("/api/delegate/process?id=" + encodeURIComponent(id) + (lp.lastN >= 0 ? "&since=" + lp.lastN : ""))
+      .then(function (res) {
+        if (!liveProc[id]) { return; }   // 그 사이 작업이 끝났다
+        var got = (res && Array.isArray(res.steps)) ? res.steps : [];
+        var before = lp.steps.length;
+        lp.steps = (res && res.reset) ? got.slice() : lp.steps.concat(got);
+        lp.lastN = lp.steps.length ? lp.steps[lp.steps.length - 1].n : -1;
+        if (lp.steps.length !== before || (res && res.reset)) {
+          renderProcessDialog();
+          updateProcessButtons();
+        }
+      })
+      .catch(function () {})
+      .then(function () { lp.busy = false; });
+  }
+
+  // 카드·핸드오프 줄의 "과정" 버튼에 단계 수를 제자리에서 갱신한다(카드를 다시 그리지 않는다).
+  function updateProcessButtons() {
+    var btns = document.querySelectorAll('.proc-open[data-proc-key^="p:"]');
+    for (var i = 0; i < btns.length; i++) {
+      var src = findProcessSource(btns[i].getAttribute("data-proc-key"));
+      if (!src) { continue; }
+      var st = resolveProcessState(src.opts);
+      btns[i].title = st.summary;
+      btns[i].setAttribute("aria-label", "과정 보기: " + st.summary);
+      btns[i].disabled = !st.openable;
+      var cnt = btns[i].querySelector(".proc-open-count");
+      if (st.count != null) {
+        if (!cnt) { cnt = document.createElement("span"); cnt.className = "proc-open-count"; btns[i].appendChild(cnt); }
+        cnt.textContent = String(st.count);
+      }
+    }
   }
 
   // 카드 맨 윗줄 오른쪽의 "과정" 버튼. 질문/답변 줄과 달리 카드 안에 내용을 펼치지 않고, 누르면 창에서 단계 목록을 그린다.
@@ -4486,6 +4802,7 @@
       '    </div>',
       '    <button type="button" class="proc-dlg-close" title="닫기 (Esc)">닫기</button>',
       '  </header>',
+      '  <div class="proc-dlg-health live-health" hidden></div>',
       '  <p class="proc-dlg-sum"></p>',
       '  <p class="proc-dlg-cwd"></p>',
       '  <div class="proc-dlg-tools" hidden></div>',
@@ -4535,13 +4852,33 @@
       html = '<p class="proc-empty">' + escapeHtml(st.message) + '.</p>' +
         (st.error ? '<button type="button" class="proc-retry" data-conv="' + escapeHtml(st.fetchId) + '">다시 시도</button>' : "");
     }
+    // 창 맨 위의 상태: 진행 중인 작업은 1초마다 tickHealthElements 가 고치고, 끝난 작업은 기록의 결과를 보인다.
+    var healthEl = dlg.querySelector(".proc-dlg-health");
+    var dlgHealth = null;
+    if (src.pending) {
+      dlgHealth = delegateRunHealth(src.pending, Date.now(), watcherAliveNow());
+      healthEl.setAttribute("data-health-task", src.taskId);
+    } else {
+      healthEl.removeAttribute("data-health-task");
+      if (src.record) {
+        var recOk = String(src.record.status == null ? "" : src.record.status).trim() === "OK";
+        dlgHealth = { kind: recOk ? "done" : "failed", label: recOk ? "끝남" : "실패", detail: recOk ? "" : String(src.record.status || "") };
+      }
+    }
+    if (dlgHealth) {
+      healthEl.setAttribute("data-kind", dlgHealth.kind);
+      healthEl.setAttribute("data-sig", dlgHealth.label + "|" + dlgHealth.detail);
+      healthEl.innerHTML = healthInnerHtml(dlgHealth);
+    }
+    healthEl.hidden = !dlgHealth;
+
     var toolsHtml = buildTranslateToolsHtml(convId, st.steps);
     var head = [src.taskId, st.summary, src.opts.live ? "live" : "", cwdListOf(src.opts.cwd).join("|"), toolsHtml].join("\u0001");
     if (procDialogLast === head + "\u0002" + html) return;
     procDialogLast = head + "\u0002" + html;
 
     dlg.querySelector(".proc-dlg-task").textContent = src.taskId;
-    dlg.querySelector(".proc-dlg-sum").textContent = st.summary + (src.opts.live && st.steps ? " · 진행 중이라 새 단계가 생기면 자동으로 이어 붙습니다" : "");
+    dlg.querySelector(".proc-dlg-sum").textContent = st.summary + (src.opts.live && st.steps ? " · 새 단계가 생기면 자동으로 이어 붙습니다" : "");
     var cwdEl = dlg.querySelector(".proc-dlg-cwd");
     var dlgCwds = cwdListOf(src.opts.cwd);
     cwdEl.textContent = (dlgCwds.length && st.steps && st.steps.length)
@@ -4555,8 +4892,10 @@
     toolsEl.hidden = !toolsHtml;
     var body = dlg.querySelector(".proc-dlg-body");
     var top = body.scrollTop;
+    // 진행 중인 작업을 맨 아래까지 보고 있었으면 새 단계가 붙을 때 따라 내려간다. 위쪽을 읽고 있었으면 그 자리를 지킨다.
+    var atBottom = body.scrollHeight - top - body.clientHeight < 24;
     body.innerHTML = html;
-    body.scrollTop = top;
+    body.scrollTop = (src.opts.live && atBottom) ? body.scrollHeight : top;
   }
 
   function openProcessDialog(key) {
@@ -4612,7 +4951,8 @@
       meta.appendChild(metaItem(elText, "elapsed", tip));
     }
     if (r.attempts && Number(r.attempts) > 1) { meta.appendChild(metaItem("시도 " + r.attempts + "회")); }
-    meta.appendChild(metaItem((r.source || "bridge") === "mcp" ? "MCP" : "bridge", "", "위임 경로"));
+    // 위임 경로: 대부분은 inbox 파일 위임(bridge)이라 따로 표시하지 않고, Claude 가 antigravity MCP 로 직접 부른 기록만 "MCP" 로 표시한다.
+    if (viaMcp(r)) { meta.appendChild(metaItem("MCP", "src-mcp", "위임 경로: Claude 가 antigravity MCP 로 직접 호출한 기록")); }
     if (r.task_id) { meta.appendChild(metaItem(r.task_id, "mono", "작업 ID")); }
     card.appendChild(meta);
 
@@ -4757,11 +5097,148 @@
     return '<div class="pending-progress">' + (parts.length ? '<div class="pg-line">' + parts.join('<span class="pg-sep">·</span>') + '</div>' : "") + action + '</div>';
   }
 
+  // ==========================================================================
+  // 진행 상태: 위임·핸드오프 작업이 지금 "진행 중인지, 조용한지, 멈춘 것으로 보이는지, 끝났는지"를 한 곳에서 판정해 같은 모양으로 보인다.
+  // 판정은 서버가 준 값(마지막 활동 시각, 멈춤 기준 stall_seconds, 백그라운드 대기 waiting_background, 실행 표시만 남은 interrupted)과
+  // 워처가 떠 있는지로 한다. 시각은 화면이 1초마다 다시 계산해서, 서버 응답이 없는 사이에도 "조용함"이 "멈춘 것으로 보임"으로 넘어간다.
+  // ==========================================================================
+
+  var HEALTH_STALL_DEFAULT_SEC = 300;   // 서버가 기준을 안 주면 워처의 기본값(AGY_STALL_SECONDS)
+
+  function watcherAliveNow() {
+    return systemStatus ? Boolean(systemStatus.watcherAlive) : null;   // 아직 모르면 null
+  }
+
+  function healthStallMinutes(sec) {
+    var m = Math.round(sec / 6) / 10;   // 소수 한 자리
+    return (m === Math.floor(m) ? String(m) : m.toFixed(1)) + "분";
+  }
+
+  // 위임 작업 하나(/api/delegate/pending 의 항목)의 상태. 반환 { kind: running|quiet|stalled|queued, label, detail, idleSec }
+  function delegateRunHealth(p, nowMs, watcherAlive) {
+    var pg = (p && p.progress) || {};
+    var startedMs = p && p.started_at ? Date.parse(String(p.started_at).replace(" ", "T")) : NaN;
+    var lastMs = pg.last_activity_ms ? Number(pg.last_activity_ms) : (isNaN(startedMs) ? 0 : startedMs);
+    var idle = lastMs ? Math.max(0, (nowMs - lastMs) / 1000) : 0;
+    var idleText = lastMs ? "마지막 활동 " + formatDuration(idle) + " 전" : "";
+    var stall = Number(pg.stall_seconds) > 0 ? Number(pg.stall_seconds) : HEALTH_STALL_DEFAULT_SEC;
+    var join = function (parts) { return parts.filter(Boolean).join(" · "); };
+
+    if (p && p.interrupted) {
+      return { kind: "stalled", label: "중단된 것으로 보임", idleSec: idle,
+        detail: join(["작업자 프로세스가 사라졌습니다", idleText, watcherAlive === false ? "워처도 꺼져 있습니다" : ""]) };
+    }
+    if (!p || p.state !== "processing") {
+      return { kind: "queued", label: "대기 중", idleSec: 0,
+        detail: watcherAlive === false ? "워처가 꺼져 있어 시작하지 못하고 있습니다" : "" };
+    }
+    if (watcherAlive === false && idle >= 60) {
+      return { kind: "stalled", label: "멈춘 것으로 보임", idleSec: idle, detail: join(["워처가 꺼져 있습니다", idleText]) };
+    }
+    if (idle >= stall && !pg.waiting_background) {
+      return { kind: "stalled", label: "멈춘 것으로 보임", idleSec: idle, detail: join([idleText, healthStallMinutes(stall) + " 넘게 새 단계가 없습니다"]) };
+    }
+    if (pg.waiting_background && idle >= PROGRESS_QUIET_SEC) {
+      return { kind: "running", label: "진행 중", idleSec: idle, detail: join(["오래 걸리는 명령이 끝나기를 기다리는 중", idleText]) };
+    }
+    if (idle >= PROGRESS_QUIET_SEC) {
+      return { kind: "quiet", label: "조용함", idleSec: idle, detail: join([idleText, healthStallMinutes(stall) + " 넘게 조용하면 멈춘 것으로 봅니다"]) };
+    }
+    return { kind: "running", label: "진행 중", idleSec: idle, detail: "" };   // 단계 수·마지막 활동은 바로 아래 진행 줄(pg-line)에 있어 되풀이하지 않는다
+  }
+
+  // 핸드오프 메시지가 위임된 작업 번호. 같은 메시지를 다시 위임한 적이 있으면 아직 안 끝난 것, 없으면 가장 마지막 것.
+  function handoffDispatchOf(channelData, num) {
+    var list = channelData && channelData.auto && Array.isArray(channelData.auto.dispatches) ? channelData.auto.dispatches : [];
+    var pick = null;
+    for (var i = 0; i < list.length; i++) {
+      var d = list[i];
+      if (!d || String(d.num) !== String(num) || !d.taskId) { continue; }
+      if (!pick || !d.done || pick.done) { pick = d; }   // 안 끝난 것을 우선하고, 같으면 나중 것
+    }
+    return pick;
+  }
+
+  // 핸드오프 메시지 한 건의 진행 표시. Claude 가 보낸(c2a) 메시지가 보냄·읽음(또는 자동 처리 실패로 보류)일 때만 있다. 없으면 null.
+  //   보냄: agy 가 아직 가져가지 않음(워처가 꺼져 있거나 자동 이어가기가 꺼져 있으면 그렇게 알린다)
+  //   읽음: 위임됨 -> 위임 작업(pending)의 상태를 그대로. 작업이 끝났으면 "회신을 정리하는 중", 위임 기록이 없으면 확인 중
+  //   반환 { kind, label, detail, taskId, pending(진행 중인 위임 항목 또는 null), canOpen(과정 창을 열 수 있는가) }
+  function handoffLiveOf(channelData, msg, pendingList, records, watcherAlive, nowMs) {
+    if (!msg || msg.dir !== "c2a") { return null; }
+    var status = msg.status;
+    if (status !== "보냄" && status !== "읽음") { return null; }
+    var auto = channelData && channelData.auto;
+    var disp = handoffDispatchOf(channelData, msg.num);
+
+    if (status === "보냄" && !disp) {
+      if (auto && auto.enabled === false) { return { kind: "queued", label: "아직 안 넘어감", detail: "이 채널은 자동 이어가기가 꺼져 있어 agy 가 가져가지 않습니다", taskId: "", pending: null, canOpen: false }; }
+      if (auto && auto.halted) { return { kind: "stalled", label: "멈춤", detail: "자동 이어가기가 멈춰 있어 agy 에게 넘어가지 않았습니다", taskId: "", pending: null, canOpen: false }; }
+      if (watcherAlive === false) { return { kind: "stalled", label: "가져가지 못함", detail: "워처가 꺼져 있습니다. 워처를 켜면 자동으로 이어집니다", taskId: "", pending: null, canOpen: false }; }
+      return { kind: "queued", label: "agy 가 가져가기를 기다림", detail: "자동 이어가기가 켜져 있으면 몇 초 안에 agy 에게 넘어갑니다", taskId: "", pending: null, canOpen: false };
+    }
+    if (!disp) { return null; }   // 읽음인데 위임 기록이 없는 메시지(손으로 읽음으로 바꾼 것)
+
+    var p = null;
+    for (var i = 0; i < (pendingList || []).length; i++) { if (pendingList[i] && pendingList[i].task_id === disp.taskId) { p = pendingList[i]; break; } }
+    if (p) {
+      var h = delegateRunHealth(p, nowMs, watcherAlive);
+      return { kind: h.kind, label: h.label, detail: h.detail, taskId: disp.taskId, pending: p, canOpen: true };
+    }
+    var rec = null;
+    for (var j = 0; j < (records || []).length; j++) { if (records[j] && records[j].task_id === disp.taskId) { rec = records[j]; break; } }
+    if (rec) {
+      var ok = String(rec.status == null ? "" : rec.status).trim() === "OK";
+      return { kind: ok ? "done" : "failed", label: ok ? "agy 작업 끝남" : "agy 작업 실패", detail: ok ? "회신 메시지를 정리하는 중입니다" : "회신 메시지에 실패 사유가 남습니다", taskId: disp.taskId, pending: null, canOpen: true };
+    }
+    if (watcherAlive === false) { return { kind: "stalled", label: "멈춘 것으로 보임", detail: "워처가 꺼져 있습니다", taskId: disp.taskId, pending: null, canOpen: false }; }
+    return { kind: "queued", label: "상태 확인 중", detail: "위임한 작업이 대기열에도 기록에도 아직 보이지 않습니다", taskId: disp.taskId, pending: null, canOpen: false };
+  }
+
+  // 상태 표시 한 덩어리의 안쪽: 점 · 이름 · 설명. 카드 머리 배지와 별개로 설명까지 보이는 곳(진행 중 카드 본문, 핸드오프 줄, 과정 창)에서 쓴다.
+  function healthInnerHtml(h) {
+    return '<span class="live-dot" aria-hidden="true"></span><b class="live-label">' + escapeHtml(h.label) + '</b>' +
+      (h.detail ? '<span class="live-detail">' + escapeHtml(h.detail) + '</span>' : '');
+  }
+
+  // 위임 작업 하나를 가리키는 상태 표시(배지·덩어리)를 1초마다 새로 계산해 고친다. 서버 응답이 없는 사이에도 시간이 흐르면 상태가 바뀌어야 해서다.
+  function tickHealthElements() {
+    var nodes = document.querySelectorAll("[data-health-task]");
+    if (!nodes.length) { return; }
+    var now = Date.now();
+    var alive = watcherAliveNow();
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var tid = el.getAttribute("data-health-task");
+      var p = null;
+      for (var k = 0; k < pendingItems.length; k++) { if (pendingItems[k] && pendingItems[k].task_id === tid) { p = pendingItems[k]; break; } }
+      if (!p) { continue; }
+      var h = delegateRunHealth(p, now, alive);
+      if (el.classList.contains("badge")) {
+        el.className = "badge " + healthBadgeClass(h.kind);
+        el.textContent = h.label;
+        el.title = h.detail;
+      } else {
+        el.setAttribute("data-kind", h.kind);
+        var sig = h.label + "|" + h.detail;
+        if (el.getAttribute("data-sig") !== sig) { el.innerHTML = healthInnerHtml(h); el.setAttribute("data-sig", sig); }
+      }
+    }
+  }
+
+  function healthBadgeClass(kind) {
+    if (kind === "stalled") { return "status-pending-stalled"; }
+    if (kind === "quiet") { return "status-pending-quiet"; }
+    if (kind === "queued") { return "status-pending-queued"; }
+    return "status-pending-processing";
+  }
+
   function buildPendingCard(p, queueIndex) {
     var isProcessing = (p.state === "processing");
+    var health = delegateRunHealth(p, Date.now(), watcherAliveNow());
     var card = document.createElement("div");
-    card.className = "card pending-card" + (isProcessing ? " processing" : " queued");
+    card.className = "card pending-card" + (isProcessing ? " processing" : " queued") + (p.interrupted ? " interrupted" : "");
     card.setAttribute("data-key", "p:" + (p.task_id || ""));
+    card.setAttribute("data-health", health.kind);
 
     var meta = document.createElement("div");
     meta.className = "meta";
@@ -4770,11 +5247,11 @@
     ts.textContent = p.created || "";
     meta.appendChild(ts);
 
-    if (isProcessing) {
-      meta.appendChild(badge("status-pending-processing", "진행 중"));
-    } else {
-      meta.appendChild(badge("status-pending-queued", "대기 중"));
-    }
+    // 상태 배지는 진행 중 / 조용함 / 멈춘 것으로 보임 / 중단된 것으로 보임 / 대기 중 중 하나. 1초마다 tickHealthElements 가 다시 판정한다.
+    var stateBadge = badge(healthBadgeClass(health.kind), health.label);
+    stateBadge.title = health.detail;
+    if (p.task_id && (isProcessing || p.interrupted)) { stateBadge.setAttribute("data-health-task", p.task_id); }
+    meta.appendChild(stateBadge);
 
     if (p.model) { meta.appendChild(metaItem(String(p.model), "model")); }
 
@@ -4810,7 +5287,7 @@
         var tokLabel = "⚡ " + (pTot >= 10000 ? (pTot / 10000).toFixed(1) + "만 토큰" : pTot.toLocaleString() + " 토큰");
         meta.appendChild(metaItem(tokLabel, "live-tokens", "실시간 누적 토큰: " + pTot.toLocaleString() + " (입력 " + pIn.toLocaleString() + " / 출력 " + pOut.toLocaleString() + ")"));
       }
-    } else {
+    } else if (!p.interrupted) {
       // 대기 중인 카드는 대기 경과 시간 표시
       var cTime = parseLocalTime(p.created);
       if (cTime) {
@@ -4822,7 +5299,7 @@
       }
     }
 
-    meta.appendChild(metaItem("bridge", "", "위임 경로"));
+    // 대기·진행 중인 작업은 모두 inbox 파일 위임(bridge)이라 경로를 따로 표시하지 않는다(MCP 호출은 끝난 뒤에 기록으로만 남는다).
     if (p.task_id) { meta.appendChild(metaItem(p.task_id, "mono", "작업 ID")); }
     card.appendChild(meta);
 
@@ -4875,7 +5352,9 @@
     var aKwSpan = document.createElement("span");
     aKwSpan.className = "qa-preview-keyword";
     if (isProcessing) {
-      aKwSpan.textContent = "응답을 만드는 중";
+      aKwSpan.textContent = health.kind === "stalled" ? "멈춘 것으로 보임" : "응답을 만드는 중";
+    } else if (p.interrupted) {
+      aKwSpan.textContent = "중단된 것으로 보임";
     } else {
       aKwSpan.textContent = "차례를 기다리는 중";
     }
@@ -4885,12 +5364,15 @@
     var ab = document.createElement("div");
     ab.className = "body pending-body";
     var modelText = p.model ? " " + escapeHtml(p.model) + " 모델로" : "";
+    var liveTask = (isProcessing || p.interrupted) && p.task_id ? ' data-health-task="' + escapeHtml(p.task_id) + '"' : '';
     ab.innerHTML = [
+      (isProcessing || p.interrupted ? '<div class="live-health" data-kind="' + health.kind + '"' + liveTask + ' data-sig="' + escapeHtml(health.label + "|" + health.detail) + '">' + healthInnerHtml(health) + '</div>' : ''),
       '<div class="pending-status-wrap ' + escapeHtml(p.state) + '">',
       (isProcessing ? '  <span class="pending-spinner" aria-hidden="true"></span><span>agy가' + modelText + ' 응답을 만들고 있습니다. 끝나면 이 자리에 답변이 나옵니다.</span>' :
+       p.interrupted ? '  <span>이 작업은 실행 중이라는 표시 파일만 남아 있고 작업자 프로세스는 없습니다. 아래는 마지막으로 확인된 진행 상황입니다.</span>' :
                       '  <span>동시에 돌릴 수 있는 수(기본 3개)를 넘었거나, 같은 세션·폴더의 앞 작업이 있어 기다리고 있습니다. 조건이 풀리면' + modelText + ' 자동으로 실행됩니다.</span>'),
       '</div>',
-      (isProcessing ? buildProgressHtml(p.progress, effCwds) : "")
+      ((isProcessing || p.interrupted) ? buildProgressHtml(p.progress, effCwds) : "")
     ].join("");
     da.appendChild(ab);
     card.appendChild(da);
@@ -4899,7 +5381,7 @@
   }
 
   // ==========================================================================
-  // 3. 에이전트 인수인계 메인 뷰 (Handoff Messages Thread Rendering)
+  // 3. 에이전트 협의 메인 뷰 (Handoff Messages Thread Rendering)
   // ==========================================================================
 
   function renderHandoffView() {
@@ -5080,6 +5562,73 @@
       });
   }
 
+  // 핸드오프 메시지 카드 머리 아래의 진행 줄: 보냄·읽음 상태의 c2a 가 지금 어디쯤인지(상태 · 지금 하는 일 · 과정 버튼). 해당 없으면 null.
+  function handoffLiveFor(channel, m) {
+    var live = handoffLiveOf(handoffChannels[channel], m, pendingItems, allItems, watcherAliveNow(), Date.now());
+    return live;
+  }
+
+  function handoffLiveSig(live) {
+    if (!live) { return ""; }
+    var pg = (live.pending && live.pending.progress) || {};
+    return JSON.stringify([live.kind, live.label, live.taskId, live.canOpen, pg.step, pg.last_activity_ms, pg.tool, pg.detail, pg.say, pg.thinking, live.pending ? live.pending.state : ""]);
+  }
+
+  function buildHandoffLiveEl(channel, m, live) {
+    var el = document.createElement("div");
+    el.className = "handoff-live";
+    el.setAttribute("data-channel", channel);
+    el.setAttribute("data-num", m.num);
+    el.setAttribute("data-sig", handoffLiveSig(live));
+
+    var top = document.createElement("div");
+    top.className = "handoff-live-top";
+    var h = document.createElement("div");
+    h.className = "live-health";
+    h.setAttribute("data-kind", live.kind);
+    h.setAttribute("data-sig", live.label + "|" + live.detail);
+    if (live.pending && live.taskId) { h.setAttribute("data-health-task", live.taskId); }
+    h.innerHTML = healthInnerHtml(live);
+    top.appendChild(h);
+    if (live.canOpen && live.taskId) {
+      var key = "p:" + live.taskId;
+      var src = findProcessSource(key);
+      top.appendChild(buildProcessButton(key, src ? src.opts : { steps: null, waiting: true }));
+    }
+    el.appendChild(top);
+
+    if (live.pending && live.pending.progress) {
+      var wrap = document.createElement("div");
+      wrap.innerHTML = buildProgressHtml(live.pending.progress, cwdListOf(live.pending.cwd));
+      while (wrap.firstChild) { el.appendChild(wrap.firstChild); }
+    }
+    return el;
+  }
+
+  // 새로 불러온 대기열로 진행 줄을 제자리에서 고친다(카드 전체를 다시 그리지 않아 펼친 본문과 스크롤이 그대로다). 줄이 새로 생기거나 사라져야 하면 다시 그린다.
+  function refreshHandoffLive() {
+    if (currentNav !== "handoff" || !els.handoffCards) { return; }
+    var cards = els.handoffCards.querySelectorAll(".handoff-card");
+    var needRender = false;
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      var ch = card.dataset.channel, num = card.dataset.num;
+      var data = handoffChannels[ch];
+      var msg = null;
+      if (data && Array.isArray(data.messages)) {
+        for (var k = 0; k < data.messages.length; k++) { if (String(data.messages[k].num) === String(num)) { msg = data.messages[k]; break; } }
+      }
+      var live = msg ? handoffLiveFor(ch, msg) : null;
+      var cur = card.querySelector(":scope > .handoff-live");
+      if (!live && !cur) { continue; }
+      if (!live || !cur) { needRender = true; break; }
+      if (cur.getAttribute("data-sig") !== handoffLiveSig(live)) {
+        card.replaceChild(buildHandoffLiveEl(ch, msg, live), cur);
+      }
+    }
+    if (needRender) { renderHandoffMessages(); }
+  }
+
   function renderHandoffMessages() {
     if (!els.handoffCards) return;
 
@@ -5135,7 +5684,12 @@
       card.dataset.num = m.num;
       card.dataset.channel = channel;
 
-      // [#번호][제목 / 보낸 쪽 → 받는 쪽][시각, 상태 진행 표시]
+      // agy 가 쓴 회신(a2c)에는 그 회신을 만든 호출(답장대상 c2a)이 쓴 토큰을 보인다. Claude 쪽 사용량은 채널에 기록이 없어 보이지 않는다.
+      var usageText = (m.dir === "a2c" && m.replyTo) ? handoffUsageText(handoffUsageFor(channel)[m.replyTo]) : null;
+      // Claude 가 보낸 c2a 에는 그 메시지를 만든 Claude 호출의 사용량(근사)을 보인다. 값은 세션 기록에서 서버가 읽어 오고, 오기 전에는 칩이 없다가 도착하면 다시 그린다.
+      var claudeText = claudeUsageText(claudeUsageFor(channel, m));
+
+      // [#번호][제목 / 보낸 쪽 → 받는 쪽][토큰, 시각, 상태 진행 표시]
       var header = document.createElement("div");
       header.className = "handoff-card-header";
       header.innerHTML = [
@@ -5145,6 +5699,8 @@
         '  <span class="handoff-dir">' + dirLabelHtml(m.dir, m, channel) + '</span>',
         '</div>',
         '<div class="handoff-card-header-right">',
+        (usageText ? '  <span class="handoff-tokens" title="' + escapeHtml(usageText.title) + '">' + escapeHtml(usageText.chip) + '</span>' : ''),
+        (claudeText ? '  <span class="handoff-tokens is-claude" title="' + escapeHtml(claudeText.title) + '">' + escapeHtml(claudeText.chip) + '</span>' : ''),
         '  <span class="handoff-time">' + escapeHtml(m.time || "") + '</span>',
         '  ' + stepsHtml(m.status),
         '</div>'
@@ -5190,6 +5746,10 @@
       });
 
       card.appendChild(header);
+      if (claudeText) { card.appendChild(buildClaudeUsageEl(claudeText)); }
+      if (usageText) { card.appendChild(buildHandoffUsageEl(usageText)); }   // 닫힌 카드에서는 CSS 로 숨긴다(펼칠 때 다시 그리지 않으므로 늘 넣어 둔다)
+      var liveInfo = handoffLiveFor(channel, m);
+      if (liveInfo) { card.appendChild(buildHandoffLiveEl(channel, m, liveInfo)); }
       card.appendChild(body);
       frag.appendChild(card);
     });
@@ -5269,6 +5829,7 @@
       var pChanged = (pKey !== lastPendingKey);
       lastPendingKey = pKey;
       pendingItems = pList;
+      syncLiveProcess(pList);
 
       var qaNeedsRender = Boolean(force || qaRes.changed || pChanged || treeRes.changed);
 
@@ -5289,9 +5850,11 @@
           renderProcessDialog();
         }
       } else if (currentNav === "handoff") {
-        if (force || treeRes.changed) {
+        if (force || treeRes.changed || qaRes.changed) {   // qaRes: 새 위임 기록이 들어오면 회신 카드의 토큰 칩도 갱신
           renderHandoffView();
         }
+        refreshHandoffLive();
+        renderProcessDialog();
       }
       updateTopbarMeta();
     }).catch(function (err) {
@@ -5387,6 +5950,12 @@
 
     // 푸터 새로고침 & 자동 갱신
     if (els.refreshBtn) els.refreshBtn.addEventListener("click", function () { refresh(true); });
+    if (els.handoffCards) {
+      els.handoffCards.addEventListener("click", function (e) {
+        var procBtn = e.target && e.target.closest ? e.target.closest(".proc-open") : null;
+        if (procBtn) { openProcessDialog(procBtn.getAttribute("data-proc-key")); }
+      });
+    }
     if (els.cards) {
       els.cards.addEventListener("click", function (e) {
         var procBtn = e.target && e.target.closest ? e.target.closest(".proc-open") : null;

@@ -390,8 +390,9 @@ function Update-ClaudeLinkIndex([string]$IndexFile, [string]$DesktopDir, [string
             $rawIndex = [System.IO.File]::ReadAllText($IndexFile, [System.Text.Encoding]::UTF8)
             $parsed = ConvertFrom-Json -InputObject $rawIndex
             if ($null -ne $parsed -and $parsed.version -eq 1 -and $null -ne $parsed.files -and $null -ne $parsed.tasks -and $null -ne $parsed.msgs) {
-                # 메시지 키 형식이 바뀌기 전(msgKeyVer 없음)의 색인은 메시지 연결과 읽은 위치를 버리고 다시 훑는다.
-                $keepMsgs = ($parsed.msgKeyVer -eq 2)
+                # 메시지 키 형식이 바뀌기 전(msgKeyVer 없음)이나 작업 ID 규칙이 넓어지기 전(taskKeyVer 없음)의 색인은
+                # 메시지 연결과 읽은 위치를 버리고 다시 훑는다(읽은 위치부터 이어 훑기만 하면 이미 읽은 기록의 새 모양 ID 는 영영 못 찾는다). 작업 연결은 그대로 둔다.
+                $keepMsgs = ($parsed.msgKeyVer -eq 2 -and $parsed.taskKeyVer -eq 2)
                 foreach ($prop in $parsed.files.PSObject.Properties) {
                     if (-not $keepMsgs) { continue }
                     $filesMap[$prop.Name] = @{
@@ -441,6 +442,12 @@ function Update-ClaudeLinkIndex([string]$IndexFile, [string]$DesktopDir, [string
     foreach ($k in $staleMsgKeys) { $msgsMap.Remove($k) }
 
     $taskRegex = [regex]::new('claude_\d{9,11}_\d+(?:_[a-z])?')
+    # claude_ 로 시작하지 않는 작업 ID(dbtest_<초>_<번호>_easy, claude_sqlitecheck_<초>_solo 처럼 이름을 붙인 것)도 세션에 붙인다.
+    # 모양: <이름>_<초 단위 시각 9~11자리>_<번호>[_<꼬리>]. 이름은 영문자로 시작하는 단어를 _ 로 최대 3개 이은 것이다.
+    # 성능: 이름·꼬리를 길이로 막고 단어 시작(앞이 영숫자·_ 가 아닌 자리)에서만 시도해서, 수 MB 짜리 한 줄에서도 시작 위치마다 되돌아가 보지 않는다.
+    # 줄을 이 정규식으로 바로 훑지 않고 먼저 "_<9~11자리 숫자>_" 가 있는 줄만 거른다(아래 taskHintRegex) — claude_ 가 없는 대부분의 줄은 이 검사 하나로 끝난다.
+    $taskRegexAny  = [regex]::new('(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9-]{0,30}(?:_[A-Za-z][A-Za-z0-9-]{0,30}){0,2}_\d{9,11}_[A-Za-z0-9]{1,16}(?:_[A-Za-z0-9]{1,16})?')
+    $taskHintRegex = [regex]::new('_\d{9,11}_', [System.Text.RegularExpressions.RegexOptions]::Compiled)
     # 채널 이름이 붙은 경로(<채널>/msg/<파일>)는 "채널/파일" 키로, 파일 이름만 나온 경우는 파일 이름 키로 모은다.
     # 서로 다른 채널의 0001-c2a-채널-개통... 처럼 이름이 같은 메시지가 섞여 붙는 것을 막기 위함이다.
     # 채널 이름 앞의 (?<!...) 와 {1,64} 는 성능 때문에 꼭 필요하다: 없으면 수 MB 짜리 한 줄에서 시작 위치마다 줄 끝까지 되돌아가 보느라 시간이 줄 길이의 제곱으로 늘어
@@ -514,16 +521,26 @@ function Update-ClaudeLinkIndex([string]$IndexFile, [string]$DesktopDir, [string
                         $ms.SetLength(0)
                         $lineStr = [System.Text.Encoding]::UTF8.GetString($lineBytes)
 
-                        if ($lineStr.Contains('claude_') -or $lineStr.Contains('-c2a-') -or $lineStr.Contains('-a2c-')) {
+                        $hasClaude = $lineStr.Contains('claude_')
+                        $hasTaskHint = $taskHintRegex.IsMatch($lineStr)
+                        if ($hasClaude -or $hasTaskHint -or $lineStr.Contains('-c2a-') -or $lineStr.Contains('-a2c-')) {
                             $tsVal = ''
                             $tsM = $tsRegex.Match($lineStr)
                             if ($tsM.Success) {
                                 $tsVal = $tsM.Groups[1].Value
                             }
 
-                            if ($lineStr.Contains('claude_')) {
-                                $tMatches = $taskRegex.Matches($lineStr)
-                                foreach ($tm in $tMatches) {
+                            # 예전 모양(claude_<초>_<번호>[_a])은 그대로 먼저 잡고, 이름이 다른 ID 는 새 정규식으로 더 잡는다
+                            if ($hasClaude) {
+                                foreach ($tm in $taskRegex.Matches($lineStr)) {
+                                    $tid = $tm.Value
+                                    if (-not $foundTasks.ContainsKey($tid)) {
+                                        $foundTasks[$tid] = $tsVal
+                                    }
+                                }
+                            }
+                            if ($hasTaskHint) {
+                                foreach ($tm in $taskRegexAny.Matches($lineStr)) {
                                     $tid = $tm.Value
                                     if (-not $foundTasks.ContainsKey($tid)) {
                                         $foundTasks[$tid] = $tsVal
@@ -605,6 +622,7 @@ function Update-ClaudeLinkIndex([string]$IndexFile, [string]$DesktopDir, [string
     $outObj = @{
         version = 1
         msgKeyVer = 2
+        taskKeyVer = 2
         updated = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
         files   = $filesMap
         tasks   = $tasksMap

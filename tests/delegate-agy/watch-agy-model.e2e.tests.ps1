@@ -6,6 +6,7 @@
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $watcher  = Join-Path $repoRoot "runtime\delegate-agy\scripts\sub\watch-agy.ps1"
+. (Join-Path $repoRoot "runtime\delegate-agy\scripts\sub\agy-db.ps1")
 
 $script:Failed = 0
 $script:Passed = 0
@@ -26,6 +27,17 @@ $i = [Array]::IndexOf([string[]]$a, '--model'); $model = if ($i -ge 0) { $a[$i +
 Add-Content -Path $env:FAKE_ARGS_LOG -Value ("model=" + $model)
 $dirs = @(); for ($k = 0; $k -lt ($a.Count - 1); $k++) { if ($a[$k] -eq '--add-dir') { $dirs += $a[$k + 1] } }
 Add-Content -Path $env:FAKE_DIRS_LOG -Value ("dirs=" + ($dirs -join '|'))
+if (($a -join ' ') -match 'FINALHANG') {
+    $cid = "conv-finalhang"
+    $d2 = Join-Path $env:AGY_HOME "brain\$cid\.system_generated\logs"
+    New-Item -ItemType Directory -Force -Path $d2 | Out-Null
+    Set-Content -LiteralPath (Join-Path $env:AGY_HOME "conversations\$cid.db") -Value "x"
+    $u0 = '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","content":"question"}'
+    $f1 = '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","content":"FINALHANG recovered final answer"}'
+    Set-Content -Path (Join-Path $d2 "transcript_full.jsonl") -Value @($u0, $f1) -Encoding UTF8
+    Start-Sleep -Seconds 600
+    exit 0
+}
 $quota = @($env:FAKE_QUOTA_MODELS -split ',' | Where-Object { $_ })
 if ($quota -contains $model) { '{"status":"ERROR","error":"quota exceeded for model ' + $model + '"}' }
 else {
@@ -45,6 +57,7 @@ $env:AGY_HOME = Join-Path $work "agyhome"
 $env:FAKE_ARGS_LOG = Join-Path $work "args.log"
 $env:FAKE_DIRS_LOG = Join-Path $work "dirs.log"
 $env:FAKE_QUOTA_MODELS = "gemini-3.8-flash-medium"
+$env:AGY_STALL_SECONDS = "30"    # 멈춤 판정 기준(최솟값). 맨 끝의 "최종 응답 회수" 시험용
 
 function Send-Task([string]$name, [string]$text) {
     [System.IO.File]::WriteAllText((Join-Path $rt "inbox\$name.md"), $text, (New-Object System.Text.UTF8Encoding($false)))
@@ -64,17 +77,23 @@ try {
     Assert-Equal "  임시 런타임에서 워처가 시작됐다" $true $started
 
     Send-Task "e2e_low"     "@model: gemini-3.8-flash-low`n간단한 질문입니다."
-    Send-Task "e2e_default" "모델을 지정하지 않은 질문입니다."
+    Send-Task "e2e_default" "모델을 지정하지 않은 질문입니다. 이 구조를 설계해 주세요."   # 어려운 단어(설계) -> 자동 선택이 high(기본 우선순위)로 둔다
+    Send-Task "e2e_auto_low" "모델을 지정하지 않은 간단한 질문입니다."   # 분명히 쉬움 -> 자동으로 low
+    Send-Task "e2e_auto_fallback" "이 코드가 왜 느린지 분석해 주세요."   # 분석 -> 자동으로 medium. 쿼터 초과(FAKE_QUOTA_MODELS)면 지정이 아니라서 기본 우선순위로 폴백한다
+    Send-Task "e2e_auto_session" "@session: e2e-auto-session`n간단한 질문입니다."   # @session 이 있으면 자동 선택을 하지 않는다(대화는 시작할 때의 모델을 유지)
     Send-Task "e2e_bad"     "@model: claude-opus-4-6-thinking`n질문"
     Send-Task "e2e_quota"   "@model: gemini-3.8-flash-medium`n질문"
 
-    $names = @("e2e_low", "e2e_default", "e2e_bad", "e2e_quota")
+    $names = @("e2e_low", "e2e_default", "e2e_bad", "e2e_quota", "e2e_auto_low", "e2e_auto_fallback", "e2e_auto_session")
     $deadline = (Get-Date).AddSeconds(120)
     while ((Get-Date) -lt $deadline -and (@($names | Where-Object { $null -ne (Get-Response $_) }).Count -lt $names.Count)) { Start-Sleep -Seconds 2 }
 
     Write-Host "처리 결과 (outbox)"
     Assert-Equal "  @model 로 낮은 단계를 고르면 그 모델로 처리된다" "ok from gemini-3.8-flash-low" (Get-Response "e2e_low")
-    Assert-Equal "  모델을 안 고르면 우선순위 첫 모델로 처리된다" "ok from gemini-3.8-flash-high" (Get-Response "e2e_default")
+    Assert-Equal "  모델을 안 골라도 어려운 요청은 우선순위 첫 모델(high)로 처리된다" "ok from gemini-3.8-flash-high" (Get-Response "e2e_default")
+    Assert-Equal "  모델을 안 고르고 분명히 쉬운 요청은 자동으로 low 로 처리된다" "ok from gemini-3.8-flash-low" (Get-Response "e2e_auto_low")
+    Assert-Equal "  자동 선택(medium)이 쿼터 초과면 지정이 아니므로 기본 우선순위(high)로 폴백해 처리된다" "ok from gemini-3.8-flash-high" (Get-Response "e2e_auto_fallback")
+    Assert-Equal "  @session 이 있으면 쉬운 요청이어도 자동 선택을 하지 않는다(high)" "ok from gemini-3.8-flash-high" (Get-Response "e2e_auto_session")
     $bad = Get-Response "e2e_bad"
     Assert-Equal "  쓸 수 없는 모델(claude)은 agy 를 부르지 않고 실패 메시지를 준다" $true ($bad -like "*지정한 @model 을 쓸 수 없습니다*claude-opus-4-6-thinking*")
     Assert-Equal "    실패 메시지에 쓸 수 있는 모델 목록이 있다" $true ($bad -like "*gemini-3.8-flash-medium*")
@@ -85,17 +104,17 @@ try {
 
     Write-Host "agy 호출 기록 (가짜 agy)"
     $calls = @(if (Test-Path $env:FAKE_ARGS_LOG) { Get-Content $env:FAKE_ARGS_LOG })
-    Assert-Equal "  agy 는 정확히 3번만 불렸다 (low, 기본, 쿼터 초과 medium 1번 / 잘못된 모델은 호출 없음)" 3 $calls.Count
-    Assert-Equal "  low 요청 -> --model gemini-3.8-flash-low" 1 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-low" }).Count
-    Assert-Equal "  기본 요청 -> 첫 우선순위 모델" 1 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-high" }).Count
-    Assert-Equal "  쿼터 초과 요청 -> 다른 모델을 시도하지 않고 medium 1번만" 1 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-medium" }).Count
+    Assert-Equal "  agy 는 정확히 7번 불렸다 (low 2, high 3, 쿼터 초과 medium 2 / 잘못된 모델은 호출 없음)" 7 $calls.Count
+    Assert-Equal "  low: 지정한 요청 1번 + 자동 선택 1번" 2 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-low" }).Count
+    Assert-Equal "  high: 어려운 기본 요청 + 자동 medium 의 폴백 + @session 요청" 3 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-high" }).Count
+    Assert-Equal "  medium: 지정한 쿼터 초과 요청은 다른 모델을 시도하지 않고 1번 + 자동 선택 medium 1번(쿼터 초과 뒤 폴백)" 2 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-medium" }).Count
 
-    Write-Host "기록(qa jsonl)에 과정 저장"
-$qaFile = Join-Path $rt "logs\data"
+    Write-Host "기록(DB)에 과정 저장"
+$dbPath = Join-Path $rt "logs\agy.db"
 $deadline2 = (Get-Date).AddSeconds(40)
 $qaRows = @()
 while ((Get-Date) -lt $deadline2) {
-    $qaRows = @(Get-ChildItem $qaFile -Filter "qa-*.jsonl" -File -ErrorAction SilentlyContinue | ForEach-Object { Get-Content $_.FullName -Encoding UTF8 } | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+    $qaRows = @((ConvertFrom-Json -InputObject (Get-QaRecordsJson $dbPath 0)).records)
     if (@($qaRows | Where-Object { $_.task_id -like "e2e_*" }).Count -ge 4) { break }
     Start-Sleep -Seconds 2
 }
@@ -127,11 +146,11 @@ Assert-Equal "  모델을 안 고른 성공 작업도 process 가 저장된다" 
     }
     $watcherLog = Join-Path $rt "logs\watcher.log"
     # 응답 파일이 먼저 생기고 세션 파일은 그 직후에 쓰이므로, 기대한 내용이 될 때까지 잠깐 기다리며 읽는다
-    function Read-SessionUntil([string]$path, [scriptblock]$ok) {
+    function Read-SessionUntil([string]$name, [scriptblock]$ok) {
         $obj = $null
         $until = (Get-Date).AddSeconds(15)
         while ((Get-Date) -lt $until) {
-            try { $obj = (Get-Content -Raw -LiteralPath $path -Encoding UTF8) | ConvertFrom-Json } catch { $obj = $null }
+            try { $obj = Get-AgySession $dbPath $name } catch { $obj = $null }
             if ($obj -and (& $ok $obj)) { break }
             Start-Sleep -Milliseconds 300
         }
@@ -175,40 +194,54 @@ Assert-Equal "  모델을 안 고른 성공 작업도 process 가 저장된다" 
     Write-Host "@cwd 여러 폴더 + 세션(@session)"
     $r = Invoke-CwdTask "cwd_s1" "@session: 다폴더-세션`n@cwd: $dirA`n@cwd: $dirB`n@model: gemini-3.8-flash-low`n첫 호출"
     Assert-Equal "첫 호출: 두 폴더가 열린다" "dirs=$dirA|$dirB" $r.Dirs[0]
-    $sessFile = Join-Path $rt "logs\sessions\다폴더-세션.json"
-    $sess = Read-SessionUntil $sessFile { param($o) @($o.cwd).Count -eq 2 }
-    Assert-Equal "  세션 파일의 cwd 는 두 폴더 배열" "$dirA|$dirB" (@($sess.cwd) -join "|")
+    $sess = Read-SessionUntil "다폴더-세션" { param($o) @($o.cwd).Count -eq 2 }
+    Assert-Equal "  세션의 cwd 는 두 폴더 배열" "$dirA|$dirB" (@($sess.cwd) -join "|")
     $r = Invoke-CwdTask "cwd_s2" "@session: 다폴더-세션`n두 번째 호출(@cwd 없음)"
     Assert-Equal "두 번째 호출(@cwd 없음): 세션의 두 폴더가 그대로 열린다" "dirs=$dirA|$dirB" $r.Dirs[0]
     $r = Invoke-CwdTask "cwd_s3" "@session: 다폴더-세션`n@cwd: $dirC`n세 번째 호출(@cwd 하나)"
     Assert-Equal "이번 호출에 @cwd 가 하나라도 있으면 이번 목록만 쓴다(세션의 폴더와 합치지 않는다)" "dirs=$dirC" $r.Dirs[0]
-    $sess = Read-SessionUntil $sessFile { param($o) @($o.cwd).Count -eq 1 -and @($o.cwd)[0] -eq $dirC }
+    $sess = Read-SessionUntil "다폴더-세션" { param($o) @($o.cwd).Count -eq 1 -and @($o.cwd)[0] -eq $dirC }
     Assert-Equal "  세션에는 새 목록이 저장된다" "$dirC" (@($sess.cwd) -join "|")
     $r = Invoke-CwdTask "cwd_s4" "@session: 다폴더-세션`n네 번째 호출(@cwd 없음)"
     Assert-Equal "  그다음 @cwd 없는 호출은 바뀐 목록(C)을 이어서 쓴다" "dirs=$dirC" $r.Dirs[0]
 
-    Write-Host "예전 형식 세션 파일(cwd 가 문자열)"
-    $oldSess = '{ "name": "예전-세션", "conversation_id": "conv-old", "cwd": ' + (ConvertTo-Json -InputObject $dirB) + ', "model": "gemini-3.8-flash-low", "created_at": "2026-10-01 10:00:00", "last_used_at": "2026-10-01 10:00:00", "turn_count": 2 }'
-    [System.IO.File]::WriteAllText((Join-Path $rt "logs\sessions\예전-세션.json"), $oldSess, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host "이미 저장된 세션을 이어간다 (폴더 하나, 횟수 2)"
+    $dbSeed = Open-AgyDb $dbPath
+    Invoke-AgyDbTransaction $dbSeed { Set-AgySessionRow $dbSeed "예전-세션" "conv-old" @($dirB) "gemini-3.8-flash-low" "2026-10-01 10:00:00" "2026-10-01 10:00:00" 2 }
+    $dbSeed.Dispose()
     $r = Invoke-CwdTask "cwd_old" "@session: 예전-세션`n예전 세션을 이어갑니다"
-    Assert-Equal "문자열 cwd 가 든 세션을 이어가면 그 폴더 하나가 열린다" "dirs=$dirB" $r.Dirs[0]
-    # 응답 파일이 먼저 생기고 세션 파일은 그 직후에 쓰이므로, 다 쓰일 때까지(횟수가 3이 될 때까지) 잠깐 기다린다
-    $oldAfter = $null
-    $untilSess = (Get-Date).AddSeconds(15)
-    while ((Get-Date) -lt $untilSess) {
-        try { $oldAfter = (Get-Content -Raw -LiteralPath (Join-Path $rt "logs\sessions\예전-세션.json") -Encoding UTF8) | ConvertFrom-Json } catch { $oldAfter = $null }
-        if ($oldAfter -and $oldAfter.turn_count -eq 3) { break }
-        Start-Sleep -Milliseconds 300
-    }
-    Assert-Equal "  이어간 뒤 세션 파일은 배열 형식으로 바뀌고 폴더·횟수가 유지된다" "$dirB|1|3" ("{0}|{1}|{2}" -f (@($oldAfter.cwd) -join "|"), @($oldAfter.cwd).Count, $oldAfter.turn_count)
+    Assert-Equal "저장된 세션의 폴더 하나가 열린다" "dirs=$dirB" $r.Dirs[0]
+    # 응답 파일이 먼저 생기고 세션은 그 직후에 쓰이므로, 횟수가 3이 될 때까지 잠깐 기다린다
+    $oldAfter = Read-SessionUntil "예전-세션" { param($o) $o.turn_count -eq 3 }
+    Assert-Equal "  이어간 뒤 폴더·폴더 수·횟수가 유지된다" "$dirB|1|3" ("{0}|{1}|{2}" -f (@($oldAfter.cwd) -join "|"), @($oldAfter.cwd).Count, $oldAfter.turn_count)
 
-Write-Host "사용량 기록 (usage.csv)"
-    $usage = @(Import-Csv (Join-Path $rt "logs\usage.csv") -Encoding UTF8)
-    $row = { param($id) $usage | Where-Object { $_.task_id -eq $id } | Select-Object -First 1 }
+Write-Host "사용량 기록 (tasks 표)"
+    $row = { param($id) Get-QaTaskRow $dbPath $id }
     Assert-Equal "  low: 모델 칸에 그 모델, 상태 OK" "gemini-3.8-flash-low|OK" ("{0}|{1}" -f (& $row "e2e_low").model, (& $row "e2e_low").status)
-    Assert-Equal "  기본: 모델 칸에 첫 우선순위 모델" "gemini-3.8-flash-high|OK" ("{0}|{1}" -f (& $row "e2e_default").model, (& $row "e2e_default").status)
+    Assert-Equal "  기본(어려운 요청): 모델 칸에 첫 우선순위 모델" "gemini-3.8-flash-high|OK" ("{0}|{1}" -f (& $row "e2e_default").model, (& $row "e2e_default").status)
+    Assert-Equal "  자동 low: 모델 칸에 low, 상태 OK" "gemini-3.8-flash-low|OK" ("{0}|{1}" -f (& $row "e2e_auto_low").model, (& $row "e2e_auto_low").status)
+    Assert-Equal "  자동 medium 이 폴백: 모델 칸에 실제로 쓴 high, 시도한 모델에 medium 이 먼저 있다" $true (((& $row "e2e_auto_fallback").model -eq "gemini-3.8-flash-high") -and ((& $row "e2e_auto_fallback").tried_models -like "*gemini-3.8-flash-medium*gemini-3.8-flash-high*"))
+    $wlog = @(Get-Content (Join-Path $rt "logs\watcher.log") -Encoding UTF8)
+    Assert-Equal "  watcher.log 에 자동 선택 이유가 남는다(low)" 1 @($wlog | Where-Object { $_ -like "*e2e_auto_low*모델 자동 선택: low*" }).Count
+    Assert-Equal "  watcher.log: 분석 요청은 medium 으로 골랐다고 남는다" 1 @($wlog | Where-Object { $_ -like "*e2e_auto_fallback*모델 자동 선택: medium*" }).Count
+    Assert-Equal "  watcher.log: 어려운 요청은 high(기본 우선순위)" 1 @($wlog | Where-Object { $_ -like "*e2e_default*모델 자동 선택: high*" }).Count
+    Assert-Equal "  watcher.log: @session 요청과 @model 요청은 자동 선택 줄이 없다" 0 @($wlog | Where-Object { $_ -like "*e2e_auto_session*모델 자동 선택*" -or $_ -like "*e2e_low*모델 자동 선택*" }).Count
     Assert-Equal "  잘못된 모델: ERROR, 시도한 모델 칸에 요청값 (화면에서 어떤 모델을 요청했는지 보임)" "ERROR|claude-opus-4-6-thinking" ("{0}|{1}" -f (& $row "e2e_bad").status, (& $row "e2e_bad").tried_models)
     Assert-Equal "  쿼터 초과: ERROR, 시도한 모델은 하나" "ERROR|gemini-3.8-flash-medium" ("{0}|{1}" -f (& $row "e2e_quota").status, (& $row "e2e_quota").tried_models)
+    Write-Host "멈춤으로 끊기 직전에 최종 응답이 이미 대화 기록에 있으면 실패가 아니라 그 응답을 회수한다 (가짜 agy 는 응답을 남기고 안 끝남)"
+    Send-Task "e2e_finalhang" "@model: gemini-3.8-flash-low`nFINALHANG 시험입니다 최종 응답을 남기고 프로세스가 끝나지 않습니다"
+    $dlH = (Get-Date).AddSeconds(150)
+    while ((Get-Date) -lt $dlH -and $null -eq (Get-Response "e2e_finalhang")) { Start-Sleep -Seconds 2 }
+    Assert-Equal "  응답은 대화 기록의 최종 응답이다" "FINALHANG recovered final answer" (Get-Response "e2e_finalhang")
+    $rowH = $null
+    $dlH2 = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $dlH2) { $rowH = Get-QaTaskRow $dbPath "e2e_finalhang"; if ($rowH -and $null -ne $rowH.answer) { break }; Start-Sleep -Seconds 1 }
+    Assert-Equal "  기록의 상태는 OK(실패가 아니다)" "OK" $rowH.status
+    Assert-Equal "  기록의 답이 회수한 응답이다" "FINALHANG recovered final answer" ([string]$rowH.answer).Trim()
+    Assert-Equal "  대화 ID 도 기록된다" "conv-finalhang" $rowH.session_id
+    $errH = Join-Path $rt "outbox\e2e_finalhang.error.log"
+    Assert-Equal "  error.log 에 회수 안내가 남는다" $true ((Test-Path $errH) -and ((Get-Content -Raw -LiteralPath $errH -Encoding UTF8) -match "회수"))
+    Assert-Equal "  워처 로그에도 회수가 남는다" $true (@(Get-Content (Join-Path $rt "logs\watcher.log") -Encoding UTF8 | Where-Object { $_ -like "*회수*e2e_finalhang*" -or ($_ -like "*[e2e_finalhang]*" -and $_ -like "*회수*") }).Count -ge 1)
 }
 finally {
     if ($proc -and -not $proc.HasExited) {
