@@ -63,8 +63,7 @@ $mappings = @(
     @{ Name = "delegate-agy 스크립트"; Src = (Join-Path $SourceRoot "runtime\delegate-agy\scripts"); Dest = (Join-Path $InstallRoot "delegate-agy\scripts") },
     @{ Name = "웹 뷰어";               Src = (Join-Path $SourceRoot "runtime\viewer");               Dest = (Join-Path $InstallRoot "viewer") },
     @{ Name = "handoff 템플릿";        Src = (Join-Path $SourceRoot "runtime\handoff\templates");    Dest = (Join-Path $InstallRoot "handoff\templates") },
-    @{ Name = "handoff 스크립트";      Src = (Join-Path $SourceRoot "runtime\handoff\scripts");      Dest = (Join-Path $InstallRoot "handoff\scripts") },
-    @{ Name = "sub-agent";             Src = (Join-Path $SourceRoot "runtime\sub-agent");           Dest = (Join-Path $InstallRoot "sub-agent") }
+    @{ Name = "handoff 스크립트";      Src = (Join-Path $SourceRoot "runtime\handoff\scripts");      Dest = (Join-Path $InstallRoot "handoff\scripts") }
 )
 
 $allChanged = @()
