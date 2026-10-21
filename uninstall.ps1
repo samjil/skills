@@ -256,6 +256,14 @@ if (Test-Path -LiteralPath $samjilDir) {
         }
     }
 
+    # 4-3b. sub-agent 도구 제거. 사용자가 적어 둔 API 키(.env)는 남긴다.
+    $subAgentDir = Join-Path $samjilDir "sub-agent"
+    if (Test-Path -LiteralPath $subAgentDir) {
+        Get-ChildItem -LiteralPath $subAgentDir -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne ".env" } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path -LiteralPath (Join-Path $subAgentDir ".env"))) { Remove-Item -Recurse -Force -LiteralPath $subAgentDir -ErrorAction SilentlyContinue }
+        Write-Host "[+] sub-agent 도구 삭제 완료(.env 가 있으면 보존): $subAgentDir" -ForegroundColor Green
+    }
+
     # 4-4. Handoff 대화 저장소 처리 (~/.samjil/handoff/, ~/.samjil/samjil-handoff/, ~/.samjil/agent-handoff/)
     $handoffDirs = @(
         (Join-Path $samjilDir "handoff"),
