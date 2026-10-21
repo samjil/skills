@@ -27,6 +27,17 @@ $i = [Array]::IndexOf([string[]]$a, '--model'); $model = if ($i -ge 0) { $a[$i +
 Add-Content -Path $env:FAKE_ARGS_LOG -Value ("model=" + $model)
 $dirs = @(); for ($k = 0; $k -lt ($a.Count - 1); $k++) { if ($a[$k] -eq '--add-dir') { $dirs += $a[$k + 1] } }
 Add-Content -Path $env:FAKE_DIRS_LOG -Value ("dirs=" + ($dirs -join '|'))
+if (($a -join ' ') -match 'FINALHANG') {
+    $cid = "conv-finalhang"
+    $d2 = Join-Path $env:AGY_HOME "brain\$cid\.system_generated\logs"
+    New-Item -ItemType Directory -Force -Path $d2 | Out-Null
+    Set-Content -LiteralPath (Join-Path $env:AGY_HOME "conversations\$cid.db") -Value "x"
+    $u0 = '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","content":"question"}'
+    $f1 = '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","content":"FINALHANG recovered final answer"}'
+    Set-Content -Path (Join-Path $d2 "transcript_full.jsonl") -Value @($u0, $f1) -Encoding UTF8
+    Start-Sleep -Seconds 600
+    exit 0
+}
 $quota = @($env:FAKE_QUOTA_MODELS -split ',' | Where-Object { $_ })
 if ($quota -contains $model) { '{"status":"ERROR","error":"quota exceeded for model ' + $model + '"}' }
 else {
@@ -46,6 +57,7 @@ $env:AGY_HOME = Join-Path $work "agyhome"
 $env:FAKE_ARGS_LOG = Join-Path $work "args.log"
 $env:FAKE_DIRS_LOG = Join-Path $work "dirs.log"
 $env:FAKE_QUOTA_MODELS = "gemini-3.8-flash-medium"
+$env:AGY_STALL_SECONDS = "30"    # 멈춤 판정 기준(최솟값). 맨 끝의 "최종 응답 회수" 시험용
 
 function Send-Task([string]$name, [string]$text) {
     [System.IO.File]::WriteAllText((Join-Path $rt "inbox\$name.md"), $text, (New-Object System.Text.UTF8Encoding($false)))
@@ -216,6 +228,20 @@ Write-Host "사용량 기록 (tasks 표)"
     Assert-Equal "  watcher.log: @session 요청과 @model 요청은 자동 선택 줄이 없다" 0 @($wlog | Where-Object { $_ -like "*e2e_auto_session*모델 자동 선택*" -or $_ -like "*e2e_low*모델 자동 선택*" }).Count
     Assert-Equal "  잘못된 모델: ERROR, 시도한 모델 칸에 요청값 (화면에서 어떤 모델을 요청했는지 보임)" "ERROR|claude-opus-4-6-thinking" ("{0}|{1}" -f (& $row "e2e_bad").status, (& $row "e2e_bad").tried_models)
     Assert-Equal "  쿼터 초과: ERROR, 시도한 모델은 하나" "ERROR|gemini-3.8-flash-medium" ("{0}|{1}" -f (& $row "e2e_quota").status, (& $row "e2e_quota").tried_models)
+    Write-Host "멈춤으로 끊기 직전에 최종 응답이 이미 대화 기록에 있으면 실패가 아니라 그 응답을 회수한다 (가짜 agy 는 응답을 남기고 안 끝남)"
+    Send-Task "e2e_finalhang" "@model: gemini-3.8-flash-low`nFINALHANG 시험입니다 최종 응답을 남기고 프로세스가 끝나지 않습니다"
+    $dlH = (Get-Date).AddSeconds(150)
+    while ((Get-Date) -lt $dlH -and $null -eq (Get-Response "e2e_finalhang")) { Start-Sleep -Seconds 2 }
+    Assert-Equal "  응답은 대화 기록의 최종 응답이다" "FINALHANG recovered final answer" (Get-Response "e2e_finalhang")
+    $rowH = $null
+    $dlH2 = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $dlH2) { $rowH = Get-QaTaskRow $dbPath "e2e_finalhang"; if ($rowH -and $null -ne $rowH.answer) { break }; Start-Sleep -Seconds 1 }
+    Assert-Equal "  기록의 상태는 OK(실패가 아니다)" "OK" $rowH.status
+    Assert-Equal "  기록의 답이 회수한 응답이다" "FINALHANG recovered final answer" ([string]$rowH.answer).Trim()
+    Assert-Equal "  대화 ID 도 기록된다" "conv-finalhang" $rowH.session_id
+    $errH = Join-Path $rt "outbox\e2e_finalhang.error.log"
+    Assert-Equal "  error.log 에 회수 안내가 남는다" $true ((Test-Path $errH) -and ((Get-Content -Raw -LiteralPath $errH -Encoding UTF8) -match "회수"))
+    Assert-Equal "  워처 로그에도 회수가 남는다" $true (@(Get-Content (Join-Path $rt "logs\watcher.log") -Encoding UTF8 | Where-Object { $_ -like "*회수*e2e_finalhang*" -or ($_ -like "*[e2e_finalhang]*" -and $_ -like "*회수*") }).Count -ge 1)
 }
 finally {
     if ($proc -and -not $proc.HasExited) {

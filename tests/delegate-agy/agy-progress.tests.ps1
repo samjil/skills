@@ -166,6 +166,33 @@ $fmt = Format-AgyLastStep $s2
 Assert-Equal "로그 글에 단계 번호·종류·짐작이 든다" $true (($fmt -like "*#22*") -and ($fmt -like "*GENERIC*") -and ($fmt -like "*모델 응답을 기다리는 중이거나 agy 가 멈춘 것일 수 있음*"))
 Assert-Equal "도구가 도는 중이면 도구 이름과 짐작이 로그 글에 든다" $true ((Format-AgyLastStep $s1) -like "*run_command,view_file*도구가 아직 도는 중일 수 있음*")
 
+Write-Host "Get-AgyFinalResponse (멈춤으로 끊기 직전, 이미 끝난 최종 응답이 대화 기록에 있으면 회수한다)"
+$finStep  = '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","thinking":"","content":"최종 답입니다.\n\nFILE: a.py\n```python\nprint(\"hi\")\n```\n끝."}'
+$userStep = '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","content":"질문"}'
+Write-Transcript "fr-ok" @($userStep, $finStep)
+$fr = Get-AgyFinalResponse $home3 "fr-ok"
+Assert-Equal "도구 없이 끝난 최종 응답은 내용을 돌려준다(줄바꿈·따옴표·코드 블록 그대로)" "최종 답입니다.`n`nFILE: a.py`n``````python`nprint(`"hi`")`n```````n끝." $fr.Text
+Assert-Equal "  단계 번호" 1 $fr.Index
+$toolStep = '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","content":"파일을 만들겠습니다","tool_calls":[{"name":"write_to_file","args":{}}]}'
+Write-Transcript "fr-tool" @($userStep, $toolStep)
+Assert-Equal "도구 호출이 붙은 응답은 최종이 아니다" $true ($null -eq (Get-AgyFinalResponse $home3 "fr-tool"))
+Write-Transcript "fr-running" @($userStep, ($finStep -replace '"status":"DONE"', '"status":"RUNNING"'))
+Assert-Equal "아직 RUNNING 이면 회수하지 않는다" $true ($null -eq (Get-AgyFinalResponse $home3 "fr-running"))
+Write-Transcript "fr-result" @($userStep, $finStep, '{"step_index":2,"source":"MODEL","type":"GENERIC","status":"DONE","content":"도구 결과"}')
+Assert-Equal "마지막 단계가 최종 응답이 아니면(뒤에 다른 단계가 있으면) 회수하지 않는다" $true ($null -eq (Get-AgyFinalResponse $home3 "fr-result"))
+Write-Transcript "fr-user" @($userStep)
+Assert-Equal "사용자 입력만 있으면 없다" $true ($null -eq (Get-AgyFinalResponse $home3 "fr-user"))
+Write-Transcript "fr-empty" @($userStep, '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","content":"   "}')
+Assert-Equal "내용이 비어 있으면 없다" $true ($null -eq (Get-AgyFinalResponse $home3 "fr-empty"))
+Write-Transcript "fr-partial" @($userStep, '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","content":"끊긴')
+Assert-Equal "쓰는 중이라 끊긴 줄은 읽을 수 없으니 없다" $true ($null -eq (Get-AgyFinalResponse $home3 "fr-partial"))
+$bigFin = '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","content":"' + ("가" * 500000) + '"}'
+Write-Transcript "fr-big" @($userStep, $bigFin)
+Assert-Equal "아주 긴 최종 응답(50만 자)도 온전히 회수한다" 500000 (Get-AgyFinalResponse $home3 "fr-big").Text.Length
+Write-Transcript "fr-prev" @($userStep, $finStep, $bigFin)
+Assert-Equal "마지막 줄이 읽기 한도보다 길면 앞 단계의 응답을 최종으로 착각하지 않고 없다고 본다" $true ($null -eq (Get-AgyFinalResponse $home3 "fr-prev" 100000))
+Assert-Equal "대화 기록이 없으면 없다" $true ($null -eq (Get-AgyFinalResponse $home3 "fr-none"))
+Assert-Equal "경로 문자가 든 id 는 없다" $true ($null -eq (Get-AgyFinalResponse $home3 "..\x"))
 Write-Host "Get-AgyPendingBackgroundTasks (오래 걸리는 명령을 백그라운드로 돌려 두고 기다리는 중인가)"
 $bgId = "bg-conv"
 $bgRun4 = '{"step_index":4,"source":"MODEL","type":"GENERIC","status":"RUNNING","content":"Created At: x\nTool is running as a background task with task id: ' + $bgId + '/task-4\nTask Description: Start-Sleep -Seconds 420\nYOU MUST TAKE ONE OF THE FOLLOWING TWO ACTIONS"}'

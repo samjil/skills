@@ -192,6 +192,36 @@ function Format-AgyLastStep($Summary) {
     return ("마지막 단계 #{0} {1} {2}{3} ({4})" -f $Summary.Index, $Summary.Type, $Summary.Status, $toolText, $hintText).Trim()
 }
 
+# agy 가 최종 응답까지 대화 기록에 남겼는데 프로세스가 끝나지 않아(실측: 응답 완료 뒤 5분 넘게 안 끝남) 멈춤으로 끊게 되는 경우를 위해,
+# 대화 기록의 마지막 단계가 "도구 호출이 없는 모델 응답(PLANNER_RESPONSE, DONE)"이면 그 내용을 돌려준다. 그 응답이 곧 답이다.
+# 마지막 단계가 그게 아니거나(도구 호출이 붙음, 아직 RUNNING, 뒤에 다른 단계가 있음), 내용이 비었거나, 줄이 끊겨 읽을 수 없으면 $null.
+# 반환: @{ Text = <응답 전문>; Index = <단계 번호> } 또는 $null.
+function Get-AgyFinalResponse($AgyHome, $Id, [int]$MaxBytes = 8388608) {
+    $tp = Get-AgyTranscriptPath $AgyHome $Id
+    if (-not $tp -or -not (Test-Path -LiteralPath $tp)) { return $null }
+    $text = $null
+    try {
+        $fs = New-Object System.IO.FileStream($tp, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $len = $fs.Length
+            $take = [int][Math]::Min([long]$MaxBytes, $len)
+            [void]$fs.Seek($len - $take, [System.IO.SeekOrigin]::Begin)
+            $buf = New-Object byte[] $take
+            $got = 0
+            while ($got -lt $take) { $n = $fs.Read($buf, $got, $take - $got); if ($n -le 0) { break }; $got += $n }
+            $text = [System.Text.Encoding]::UTF8.GetString($buf, 0, $got)
+        } finally { $fs.Dispose() }
+    } catch { return $null }
+    # 마지막 줄만 본다. 요약 함수(Get-AgyLastStepSummary)는 파일 끝 1MB 만 읽어서 아주 긴 마지막 줄을 못 보고 앞 단계를 마지막으로 착각할 수 있다.
+    $lines = @($text -split "\r?\n" | Where-Object { $_.Trim() })
+    if ($lines.Count -eq 0) { return $null }
+    try { $o = $lines[$lines.Count - 1] | ConvertFrom-Json } catch { return $null }
+    if ($null -eq $o -or [string]$o.type -ne 'PLANNER_RESPONSE' -or [string]$o.status -ne 'DONE') { return $null }
+    if (@($o.tool_calls | Where-Object { $null -ne $_ }).Count -gt 0) { return $null }
+    $content = [string]$o.content
+    if ([string]::IsNullOrWhiteSpace($content)) { return $null }
+    return @{ Text = $content; Index = [int]$o.step_index }
+}
 # 환경변수에서 "초" 설정을 읽는다. 없거나 숫자가 아니거나 최솟값보다 작으면 기본값. (워처의 마감·멈춤 기준을 환경변수로 바꿀 수 있게 하는 곳이다.)
 function Get-AgySecondsSetting([string]$EnvName, [int]$Default, [int]$Min) {
     $v = [Environment]::GetEnvironmentVariable($EnvName)
