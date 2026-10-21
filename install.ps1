@@ -308,15 +308,6 @@ if (Test-Path $srcRuntime) {
         Write-Host "[+] delegate-agy 런타임 및 스크립트 배치 완료 (~/.samjil/delegate-agy)" -ForegroundColor Green
     }
 
-    # 서브 에이전트 호출기(agy·opencode 통합). 사용자가 만든 .env 는 소스에 없으므로 덮어쓰지 않는다.
-    $srcSubAgent = Join-Path $srcRuntime "sub-agent"
-    if (Test-Path $srcSubAgent) {
-        $destSubAgent = Join-Path $SamjilRoot "sub-agent"
-        New-Item -ItemType Directory -Force -Path $destSubAgent | Out-Null
-        Copy-Item -Recurse -Force -Path (Join-Path $srcSubAgent "*") -Destination $destSubAgent
-        Write-Host "[+] sub-agent 배치 완료 (~/.samjil/sub-agent): python ~/.samjil/sub-agent/sub-agent.py --check" -ForegroundColor Green
-    }
-
     $srcHandoff = Join-Path $srcRuntime "handoff"
     if (Test-Path $srcHandoff) {
         $destHandoff = Join-Path $SamjilRoot "handoff"
