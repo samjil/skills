@@ -3377,7 +3377,7 @@
   }
 
   // 질문/답변 구역의 펼침 상태(과정은 카드 맨 윗줄의 버튼으로 창을 연다).
-  //   기본: 맨 위(가장 최근) 카드의 답변만 펼치고, 나머지는 질문·과정·답변 모두 접은 채로 시작한다.
+  //   기본: 맨 위(가장 최근) 카드와 지금 실행 중인 카드의 답변을 펼치고, 나머지는 질문·과정·답변 모두 접은 채로 시작한다.
   //   사용자가 직접 열거나 닫은 구역만 qaOpenOverrides 에 기억해서, 5초마다 카드를 다시 그려도 그대로 유지한다.
   //   (예전에는 그리기 직전의 "현재 상태"를 통째로 저장했는데, 그러면 기본으로 펼쳐졌던 카드도 사용자가 연 것으로
   //   기억돼 새 카드가 생겨도 이전 카드가 계속 펼쳐 있었다.)
@@ -3386,6 +3386,13 @@
   function qaSectionKey(d) {
     var type = d.classList.contains("q") ? "q" : "a";
     return d.parentNode.getAttribute("data-key") + "|" + type;
+  }
+
+  // 사용자가 건드리지 않은 구역을 기본으로 펼칠지. 답변 구역만 펼치고, 맨 위 카드이거나 지금 실행 중인 카드(.processing)면 펼친다.
+  // 실행 중인 작업이 둘이면 둘 다 진행 화면(상태·단계·최근 동작)이 보이게 하려는 것이다. 대기 중·끝난 카드는 접는다.
+  function qaDefaultAnswerOpen(o) {
+    o = o || {};
+    return Boolean(o.isAnswer && (o.isFirst || o.isProcessing));
   }
 
   function applyQaOpenDefaults() {
@@ -3397,7 +3404,11 @@
       var k = qaSectionKey(d);
       d.open = Object.prototype.hasOwnProperty.call(qaOpenOverrides, k)
         ? qaOpenOverrides[k]
-        : (d.parentNode === first && d.classList.contains("a"));
+        : qaDefaultAnswerOpen({
+            isFirst: d.parentNode === first,
+            isAnswer: d.classList.contains("a"),
+            isProcessing: d.parentNode.classList.contains("processing")
+          });
     }
   }
 
