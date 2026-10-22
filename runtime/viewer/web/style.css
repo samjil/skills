@@ -1273,7 +1273,8 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .proc-open:disabled .proc-open-count { color: var(--ink-3); }
 
 /* 과정 창 */
-#process-dialog {
+#process-dialog,
+#source-dialog {
   width: min(960px, 94vw);
   max-height: 88vh;
   padding: 0;
@@ -1283,7 +1284,8 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   color: var(--ink);
   overflow: hidden;
 }
-#process-dialog::backdrop { background: rgba(8, 11, 14, 0.72); }
+#process-dialog::backdrop,
+#source-dialog::backdrop { background: rgba(8, 11, 14, 0.72); }
 .proc-dlg { display: flex; flex-direction: column; max-height: 88vh; padding: 16px 20px 6px; }
 .proc-dlg-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .proc-dlg-heading { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -1677,7 +1679,8 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
 
   /* 과정 목록: 좁은 화면에서는 시각을 빼고 도구 설명 아래에 대상을 둔다 */
   .proc-row { grid-template-columns: 2.2em minmax(0, 1fr); }
-  #process-dialog { width: calc(100vw - 16px); max-height: 92vh; }
+  #process-dialog,
+  #source-dialog { width: calc(100vw - 16px); max-height: 92vh; }
   .proc-dlg { max-height: 92vh; padding: 12px 12px 4px; }
   .proc-at { display: none; }
   .proc-tool { grid-column: 2; }
@@ -2039,4 +2042,71 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
 .handoff-live .pending-progress { margin-top: 6px; padding-left: 0; }
 @media (max-width: 720px) {
   .handoff-live { padding-left: 14px; }
+}
+
+/* 길어서 잘린 질문·답변 아래의 원본 파일 링크 줄. 잘림 안내를 본문 코드 블록 밖으로 빼서, 원본 전체를 새 탭에서 열 수 있게 한다 */
+.truncation-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.truncation-note .src-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--agy);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.truncation-note .src-open:hover { text-decoration-thickness: 2px; }
+.truncation-note .src-open:focus-visible { outline: 2px solid var(--agy); outline-offset: 2px; border-radius: 2px; }
+.src-notice { margin: 0 0 10px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: var(--r-md); color: var(--ink-3); font-size: var(--fs-xs); }
+
+/* 원본 창(길어서 잘린 질문·답변의 전체 원본): 위쪽 줄에 보기 토글(렌더링/Raw)·복사·새 탭 링크·글자 수, 아래는 답변과 같은 본문 스타일 */
+.src-dlg-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; }
+.src-toggle { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--r-md); overflow: hidden; }
+.src-toggle button {
+  padding: 5px 14px;
+  border: 0;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.src-toggle button + button { border-left: 1px solid var(--line-strong); }
+.src-toggle button:hover { background: var(--raised); }
+.src-toggle button[aria-pressed="true"] { background: var(--agy-soft); color: var(--agy); font-weight: 600; }
+.src-toggle button:focus-visible, .src-copy:focus-visible, .src-newtab:focus-visible { outline: 2px solid var(--agy); outline-offset: 2px; }
+.src-copy {
+  padding: 5px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.src-copy:hover { background: var(--raised); }
+.src-newtab { color: var(--agy); font-size: var(--fs-sm); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.src-info { margin-left: auto; color: var(--ink-3); font-size: var(--fs-xs); }
+.src-dlg-body { padding-top: 12px; }
+.src-raw {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--sunken);
+  border-radius: var(--r-md);
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--ink);
 }
