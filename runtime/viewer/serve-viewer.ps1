@@ -1256,6 +1256,39 @@ try {
                 }
                 $response.ContentLength64 = $bytes.Length
                 $response.OutputStream.Write($bytes, 0, $bytes.Length)
+            } elseif ($urlPath -eq "/api/qa/source") {
+
+                # 길어서 잘린 기록의 원본 파일(질문 = processed 의 지시파일, 답변 = outbox 의 응답 파일)을 그대로 내려 준다.
+                # 작업 ID 는 글자·숫자·_ . - 만 허용하고 ".." 는 막아서, 런타임의 processed·outbox 밖 파일은 읽지 못하게 한다.
+                $params = Get-Utf8QueryParams $request.Url
+                $srcTask = [string]$params["task"]
+                $srcKind = [string]$params["kind"]
+                $srcRuntime = Split-Path (Split-Path $DataDir -Parent) -Parent
+                $srcPath = $null
+                if ($srcTask -match '^[A-Za-z0-9가-힣_.\-]{1,200}$' -and -not $srcTask.Contains("..")) {
+                    if ($srcKind -eq "question") {
+                        foreach ($srcExt in @(".md", ".txt")) {
+                            $srcCand = Join-Path $srcRuntime ("processed\" + $srcTask + $srcExt)
+                            if (Test-Path -LiteralPath $srcCand -PathType Leaf) { $srcPath = $srcCand; break }
+                        }
+                    } elseif ($srcKind -eq "answer") {
+                        $srcCand = Join-Path $srcRuntime ("outbox\" + $srcTask + ".response.md")
+                        if (Test-Path -LiteralPath $srcCand -PathType Leaf) { $srcPath = $srcCand }
+                    }
+                }
+                if (-not $srcPath) {
+                    $response.StatusCode = 404
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes("원본 파일을 찾을 수 없습니다. 이미 정리됐거나 이 PC 에 없는 작업일 수 있습니다.")
+                    $response.ContentType = "text/plain; charset=utf-8"
+                } else {
+                    $bytes = [System.IO.File]::ReadAllBytes($srcPath)
+                    # UTF-8 BOM 은 브라우저에서 글자로 보일 수 있어 뺀다
+                    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $bytes = $bytes[3..($bytes.Length - 1)] }
+                    $response.ContentType = "text/plain; charset=utf-8"
+                    $response.Headers.Add("Cache-Control", "no-store")
+                }
+                $response.ContentLength64 = $bytes.Length
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
             } elseif ($urlPath -eq "/api/delegate/pending") {
 
                 $runtimeDir = Split-Path (Split-Path $DataDir -Parent) -Parent

@@ -4021,6 +4021,269 @@
     return Boolean(r) && String(r.source || "").trim().toLowerCase() === "mcp";
   }
 
+  // 기록의 질문·답변이 20000자에서 잘리면 끝에 안내 문구가 붙는다(common.ps1 의 Truncate-Text). 이 문구를 본문에서 떼어 내고
+  // 그 자리에 원본 파일을 여는 링크를 보인다(문구가 열린 코드 블록 안에 섞여 코드처럼 보이는 일도 막는다).
+  var TRUNCATION_NOTE_RE = /\n?\.\.\. \(내용이 길어 일부 생략됨[^)\r\n]*\)\s*$/;
+
+  function splitTruncationNote(text) {
+    var s = text == null ? "" : String(text);
+    var m = TRUNCATION_NOTE_RE.exec(s);
+    if (!m) return { text: s, truncated: false };
+    return { text: s.slice(0, m.index), truncated: true };
+  }
+
+  // 원본 파일을 내려 주는 뷰어 API. kind: "question"(processed 의 지시파일) | "answer"(outbox 의 응답 파일)
+  function qaSourceUrl(taskId, kind) {
+    return "/api/qa/source?task=" + encodeURIComponent(taskId) + "&kind=" + kind;
+  }
+
+  // 잘린 글에 붙일 원본 링크 정보. MCP 로 직접 부른 기록은 원본 파일이 런타임 폴더에 없고, 작업 ID 가 없어도 찾을 수 없어 null.
+  function qaTruncationLinkOf(r, kind) {
+    if (!r || !r.task_id || viaMcp(r)) return null;
+    return {
+      url: qaSourceUrl(r.task_id, kind),
+      label: kind === "question" ? "지시 원본 전체 보기" : "답변 원본 전체 보기",
+      hint: (kind === "question" ? "processed 폴더의 지시파일 " + r.task_id : "outbox 폴더의 응답 파일 " + r.task_id + ".response.md") + " - 창에서 렌더링/Raw 로 보기 (Ctrl+클릭: Raw 를 새 탭에서)"
+    };
+  }
+
+  // ---- 카드에는 일반적인 길이까지만 보인다 ----
+  // 기록 145건의 길이를 보면 답변은 중앙값 300자, 상위 25%가 약 1,100자 이상이고 2,000자를 넘는 것은 13%뿐이다. 질문은 더 길어서(상위 25%가 약 2,000자 이상) 3,000자로 둔다.
+  // 글자 수와 줄 수 중 먼저 닿는 쪽에서 줄 단위로 자르고, 한도를 조금 넘는 정도(여유)는 접지 않고 다 보인다.
+  var QA_PREVIEW_ANSWER_MAX = 2000;
+  var QA_PREVIEW_QUESTION_MAX = 3000;
+  var QA_PREVIEW_MAX_LINES = 40;
+  var QA_PREVIEW_SLACK_CHARS = 400;
+  var QA_PREVIEW_SLACK_LINES = 8;
+
+  function qaPreviewLimitOf(kind) {
+    return { chars: kind === "question" ? QA_PREVIEW_QUESTION_MAX : QA_PREVIEW_ANSWER_MAX, lines: QA_PREVIEW_MAX_LINES };
+  }
+
+  // 반환: { text, cut, shown, total }. 자르면 text 는 앞부분이고, 코드 블록 한가운데서 잘렸으면 블록을 닫아 준다(뒤 글이 코드로 번지지 않게).
+  function qaPreviewOf(text, maxChars, maxLines) {
+    var s = text == null ? "" : String(text);
+    var lines = s.split("\n");
+    if (s.length <= maxChars + QA_PREVIEW_SLACK_CHARS && lines.length <= maxLines + QA_PREVIEW_SLACK_LINES) {
+      return { text: s, cut: false, shown: s.length, total: s.length };
+    }
+    var out = [];
+    var used = 0;
+    for (var i = 0; i < lines.length; i++) {
+      if (out.length >= maxLines) { break; }
+      if (out.length > 0 && used + lines[i].length > maxChars) { break; }
+      out.push(out.length === 0 && lines[i].length > maxChars ? lines[i].slice(0, maxChars) : lines[i]);
+      used += lines[i].length + 1;
+    }
+    // 끝의 빈 줄과 제목 줄(뒤에 올 문단이 잘려 제목만 남는 것)은 뺀다
+    while (out.length > 1 && (!out[out.length - 1].trim() || /^\s*#{1,6}\s/.test(out[out.length - 1]))) { out.pop(); }
+    var shown = out.join("\n");
+    var fences = 0;
+    for (var j = 0; j < out.length; j++) { if (/^\s*(```|~~~)/.test(out[j])) { fences++; } }
+    return { text: fences % 2 === 1 ? shown + "\n```" : shown, cut: true, shown: shown.length, total: s.length };
+  }
+
+  // 원본 창이 보여 줄 "기록에 저장된 글". 5초마다 카드를 다시 그려도 같은 키로 덮어써서 쌓이지 않는다.
+  var qaInlineTexts = {};
+
+  // 카드 본문을 그린다. 일반적인 길이를 넘으면 앞부분만 그리고 아래에 "전체 보기" 줄을 붙이며,
+  // 기록 자체가 20000자에서 잘려 있으면(끝의 안내 문구) 안내를 떼어 내고 원본 파일을 여는 길을 준다.
+  function renderQaText(container, text, cwd, r, kind) {
+    var parts = splitTruncationNote(text);
+    var lim = qaPreviewLimitOf(kind);
+    var pv = qaPreviewOf(parts.text, lim.chars, lim.lines);
+    renderBody(container, pv.cut ? pv.text : parts.text, cwd);
+    if (!pv.cut && !parts.truncated) return;
+
+    var link = qaTruncationLinkOf(r, kind);
+    var key = kind + ":" + String((r && (r.task_id || r.timestamp)) || "");
+    qaInlineTexts[key] = parts.text;
+    var msgText;
+    if (pv.cut && parts.truncated) { msgText = "앞부분 " + pv.shown.toLocaleString() + "자만 보입니다. 기록에도 일부만 저장돼 있습니다."; }
+    else if (pv.cut) { msgText = "앞부분 " + pv.shown.toLocaleString() + "자만 보입니다 (전체 " + pv.total.toLocaleString() + "자)."; }
+    else { msgText = "내용이 길어 일부만 보입니다."; }
+    var canOpen = pv.cut || Boolean(link);
+    if (!canOpen) { msgText += " 원본 파일은 이 PC 에 없습니다."; }
+
+    var note = document.createElement("div");
+    note.className = "truncation-note";
+    var msg = document.createElement("span");
+    msg.textContent = msgText;
+    note.appendChild(msg);
+    if (canOpen) {
+      var a;
+      if (link) {
+        a = document.createElement("a");
+        a.href = link.url;                       // 새 탭에서 Raw 로 여는 길(Ctrl+클릭, 가운데 클릭, 자바스크립트가 막힌 경우)
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.textContent = parts.truncated ? link.label : (kind === "question" ? "질문 전체 보기" : "답변 전체 보기");   // 기록이 온전하면 "원본"이 아니라 그냥 전체
+        a.title = link.hint;
+      } else {
+        a = document.createElement("button");    // 원본 파일이 없는 기록(MCP 등)은 기록에 저장된 글을 창에서 보여 준다
+        a.type = "button";
+        a.textContent = kind === "question" ? "질문 전체 보기" : "답변 전체 보기";
+        a.title = "기록에 저장된 전체 내용을 창에서 보기";
+      }
+      a.className = "src-open";
+      a.setAttribute("data-src-task", link ? String(r.task_id) : "");
+      a.setAttribute("data-src-kind", kind);
+      a.setAttribute("data-src-cwd", cwd || "");
+      a.setAttribute("data-src-key", key);
+      a.setAttribute("data-src-file", parts.truncated && link ? "1" : "0");   // 기록이 잘려 있어야만 원본 파일이 필요하다
+      note.appendChild(a);
+    }
+    container.parentNode ? container.parentNode.insertBefore(note, container.nextSibling) : container.appendChild(note);
+  }
+
+  // ---- 원본 창: 길어서 잘린 질문·답변의 전체 원본을 답변과 같은 스타일로 보고, Raw 로 진짜 원본 텍스트도 본다 ----
+  // 렌더링이 이 글자 수를 넘는 파일에서는 브라우저가 오래 멈출 수 있어, 그런 파일은 기본을 Raw 로 연다(토글로 렌더링도 가능).
+  var QA_SOURCE_RENDER_MAX = 400000;
+
+  function qaSourceDefaultView(len) {
+    return (typeof len === "number" && len > QA_SOURCE_RENDER_MAX) ? "raw" : "rendered";
+  }
+
+  // 원본 파일을 보면 "지시 원본/답변 원본", 기록에 저장된 글을 보면 "질문 전체/답변 전체"
+  function qaSourceTitle(kind, fromRecord) {
+    if (fromRecord) { return kind === "question" ? "질문 전체" : "답변 전체"; }
+    return kind === "question" ? "지시 원본" : "답변 원본";
+  }
+
+  var srcDlgState = null;   // { task, kind, cwd, text, view, error }
+  var srcDlgCache = {};     // url -> 받아 둔 원본 글(토글할 때 다시 받지 않는다)
+
+  function ensureSourceDialog() {
+    var dlg = document.getElementById("source-dialog");
+    if (dlg) return dlg;
+    dlg = document.createElement("dialog");
+    dlg.id = "source-dialog";
+    dlg.setAttribute("aria-labelledby", "source-dialog-title");
+    dlg.innerHTML = [
+      '<div class="proc-dlg">',
+      '  <header class="proc-dlg-head">',
+      '    <div class="proc-dlg-heading">',
+      '      <h2 id="source-dialog-title" class="proc-dlg-title">원본</h2>',
+      '      <span class="proc-dlg-task"></span>',
+      '    </div>',
+      '    <button type="button" class="proc-dlg-close" title="닫기 (Esc)">닫기</button>',
+      '  </header>',
+      '  <div class="src-dlg-tools">',
+      '    <div class="src-toggle" role="group" aria-label="보기 방식">',
+      '      <button type="button" data-view="rendered" aria-pressed="true">렌더링</button>',
+      '      <button type="button" data-view="raw" aria-pressed="false">Raw</button>',
+      '    </div>',
+      '    <button type="button" class="src-copy" title="원본 텍스트를 그대로 복사">Raw 복사</button>',
+      '    <a class="src-newtab" target="_blank" rel="noopener" title="원본 텍스트를 새 탭에서 열기">새 탭에서 Raw</a>',
+      '    <span class="src-info" aria-live="polite"></span>',
+      '  </div>',
+      '  <div class="proc-dlg-body src-dlg-body"></div>',
+      '</div>'
+    ].join("");
+    dlg.addEventListener("click", function (e) {
+      if (e.target === dlg || (e.target.classList && e.target.classList.contains("proc-dlg-close"))) { dlg.close(); return; }
+      var tb = e.target.closest ? e.target.closest(".src-toggle button") : null;
+      if (tb && srcDlgState) { srcDlgState.view = tb.getAttribute("data-view"); renderSourceDialog(); return; }
+      var cp = e.target.closest ? e.target.closest(".src-copy") : null;
+      if (cp && srcDlgState && srcDlgState.text != null) {
+        var done = function (ok) { cp.textContent = ok ? "복사했습니다" : "복사하지 못했습니다"; setTimeout(function () { cp.textContent = "Raw 복사"; }, 1500); };
+        if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(srcDlgState.text).then(function () { done(true); }, function () { done(false); }); }
+        else { done(false); }
+      }
+    });
+    dlg.addEventListener("close", function () { srcDlgState = null; });
+    document.body.appendChild(dlg);
+    return dlg;
+  }
+
+  function renderSourceDialog() {
+    var dlg = document.getElementById("source-dialog");
+    if (!dlg || !srcDlgState) return;
+    var s = srcDlgState;
+    dlg.querySelector(".proc-dlg-title").textContent = qaSourceTitle(s.kind, s.fromRecord);
+    dlg.querySelector(".proc-dlg-task").textContent = s.task || "";
+    var newTab = dlg.querySelector(".src-newtab");
+    if (s.task) { newTab.setAttribute("href", qaSourceUrl(s.task, s.kind)); newTab.hidden = false; } else { newTab.removeAttribute("href"); newTab.hidden = true; }
+    var body = dlg.querySelector(".src-dlg-body");
+    var info = dlg.querySelector(".src-info");
+    var btns = dlg.querySelectorAll(".src-toggle button");
+    for (var i = 0; i < btns.length; i++) { btns[i].setAttribute("aria-pressed", btns[i].getAttribute("data-view") === s.view ? "true" : "false"); }
+    body.innerHTML = "";
+    if (s.error) {
+      info.textContent = "";
+      var err = document.createElement("p");
+      err.className = "empty";
+      err.textContent = s.error;
+      body.appendChild(err);
+      return;
+    }
+    if (s.text == null) {
+      info.textContent = "불러오는 중...";
+      var wait = document.createElement("p");
+      wait.className = "empty";
+      wait.textContent = "원본을 불러오는 중입니다...";
+      body.appendChild(wait);
+      return;
+    }
+    info.textContent = s.text.length.toLocaleString() + "자" + (s.view === "raw" && s.text.length > QA_SOURCE_RENDER_MAX ? " · 매우 커서 Raw 로 열었습니다(렌더링은 느릴 수 있음)" : "");
+    if (s.notice) {
+      var nt = document.createElement("p");
+      nt.className = "src-notice";
+      nt.textContent = s.notice;
+      body.appendChild(nt);
+    }
+    if (s.view === "raw") {
+      var pre = document.createElement("pre");
+      pre.className = "src-raw";
+      pre.textContent = s.text;
+      body.appendChild(pre);
+    } else {
+      var content = document.createElement("div");
+      content.className = "qa-content";
+      body.appendChild(content);
+      renderBody(content, s.text, s.cwd || "");
+    }
+    body.scrollTop = 0;
+  }
+
+  // o: { task, kind, cwd, key, useFile }. useFile 이면 원본 파일을 받아 보여 주고(기록이 잘려 있는 경우), 파일이 없으면 기록에 저장된 글로 대신한다.
+  // 아니면 기록에 저장된 글(qaInlineTexts[key])을 그대로 보여 준다.
+  function openSourceDialog(o) {
+    var dlg = ensureSourceDialog();
+    var inline = Object.prototype.hasOwnProperty.call(qaInlineTexts, o.key) ? qaInlineTexts[o.key] : null;
+    var wantFile = Boolean(o.useFile && o.task);
+    var url = wantFile ? qaSourceUrl(o.task, o.kind) : "";
+    var st = { task: o.task || "", kind: o.kind, cwd: o.cwd || "", text: null, view: "rendered", error: "", notice: "", fromRecord: !wantFile };
+    srcDlgState = st;
+    if (!wantFile) {
+      if (inline == null) { st.error = "기록에 저장된 내용을 찾을 수 없습니다."; }
+      else { st.text = inline; st.view = qaSourceDefaultView(inline.length); }
+    } else if (srcDlgCache[url] != null) {
+      st.text = srcDlgCache[url]; st.view = qaSourceDefaultView(st.text.length);
+    }
+    renderSourceDialog();
+    if (!dlg.open) dlg.showModal();
+    if (!wantFile || st.text != null || st.error) return;
+    var fallback = function (why) {
+      if (srcDlgState !== st) return;   // 그 사이 닫았거나 다른 창을 열었다
+      if (inline != null) {
+        st.fromRecord = true; st.text = inline; st.view = qaSourceDefaultView(inline.length);
+        st.notice = why + " 기록에 저장된 내용(" + inline.length.toLocaleString() + "자)을 보여 줍니다. 끝이 잘려 있을 수 있습니다.";
+      } else { st.error = why; }
+      renderSourceDialog();
+    };
+    fetch(url, { cache: "no-store" }).then(function (res) {
+      return res.text().then(function (t) { return { ok: res.ok, status: res.status, text: t }; });
+    }).then(function (r) {
+      if (srcDlgState !== st) return;
+      if (!r.ok) { fallback(r.status === 404 ? "원본 파일을 찾을 수 없습니다(이미 정리됐을 수 있습니다)." : "원본을 불러오지 못했습니다 (" + r.status + ")."); return; }
+      srcDlgCache[url] = r.text; st.text = r.text; st.view = qaSourceDefaultView(r.text.length);
+      renderSourceDialog();
+    }).catch(function (e) {
+      fallback("원본을 불러오지 못했습니다: " + (e && e.message ? e.message : e) + ".");
+    });
+  }
+
   function metaItem(text, cls, title) {
     var s = document.createElement("span");
     s.className = "meta-item" + (cls ? " " + cls : "");
@@ -4982,7 +5245,7 @@
     qBadge.textContent = "질문";
     sq.appendChild(qBadge);
 
-    var qKw = extractQuestionKeyword(r.question);
+    var qKw = extractQuestionKeyword(splitTruncationNote(r.question).text);   // 잘림 안내 문구는 요약 줄에 보이지 않게 뗀다
     if (qKw) {
       var qKwSpan = document.createElement("span");
       qKwSpan.className = "qa-preview-keyword";
@@ -4999,8 +5262,8 @@
     if (qGallery) qb.appendChild(qGallery);
     var qContent = document.createElement("div");
     qContent.className = "qa-content";
-    renderBody(qContent, r.question, qImgInfo.cwd);
     qb.appendChild(qContent);
+    renderQaText(qContent, r.question, qImgInfo.cwd, r, "question");
     dq.appendChild(qb);
     card.appendChild(dq);
 
@@ -5014,7 +5277,7 @@
     aBadge.textContent = "답변";
     sa.appendChild(aBadge);
 
-    var aKw = extractAnswerKeyword(r.answer);
+    var aKw = extractAnswerKeyword(splitTruncationNote(r.answer).text);
     if (aKw) {
       var aKwSpan = document.createElement("span");
       aKwSpan.className = "qa-preview-keyword";
@@ -5031,8 +5294,8 @@
     if (aGallery) ab.appendChild(aGallery);
     var aContent = document.createElement("div");
     aContent.className = "qa-content";
-    renderBody(aContent, r.answer, qImgInfo.cwd || aImgInfo.cwd);
     ab.appendChild(aContent);
+    renderQaText(aContent, r.answer, qImgInfo.cwd || aImgInfo.cwd, r, "answer");
     da.appendChild(ab);
     card.appendChild(da);
 
@@ -5971,6 +6234,17 @@
       els.cards.addEventListener("click", function (e) {
         var procBtn = e.target && e.target.closest ? e.target.closest(".proc-open") : null;
         if (procBtn) { openProcessDialog(procBtn.getAttribute("data-proc-key")); return; }
+        var srcLink = e.target && e.target.closest ? e.target.closest(".src-open") : null;
+        if (srcLink) {
+          // 링크(a)의 수정키·가운데 클릭은 브라우저 기본(새 탭에서 Raw)
+          if (srcLink.tagName === "A" && (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button)) { return; }
+          e.preventDefault();
+          openSourceDialog({
+            task: srcLink.getAttribute("data-src-task"), kind: srcLink.getAttribute("data-src-kind"), cwd: srcLink.getAttribute("data-src-cwd"),
+            key: srcLink.getAttribute("data-src-key"), useFile: srcLink.getAttribute("data-src-file") === "1"
+          });
+          return;
+        }
         var sumEl = e.target && e.target.closest ? e.target.closest("summary") : null;
         var d = sumEl ? sumEl.parentNode : null;
         if (!d || !d.classList || !d.classList.contains("qa") || !d.parentNode || !d.parentNode.getAttribute("data-key")) return;
