@@ -402,6 +402,13 @@ if (-not (Test-Path $rulesFile)) {
 }
 . $rulesFile
 
+# 코딩 위임 전후의 git 상태(HEAD · 브랜치 · stash)를 비교해 agy 가 임의로 바꿨으면 응답 맨 위에 경고를 붙이는 안전장치(agy-gitguard.ps1). 테스트: tests\delegate-agy
+$gitGuardFile = Join-Path $PSScriptRoot "agy-gitguard.ps1"
+if (-not (Test-Path $gitGuardFile)) {
+    $gitGuardFile = Join-Path (Split-Path $PSScriptRoot -Parent) "agy-gitguard.ps1"
+}
+. $gitGuardFile
+
 # 핸드오프 "자동 이어가기" 펌프(워처 본체만 씀): 채널에 Claude 가 새 메시지를 보내면 agy 에게 위임하고, 답이 오면 회신 메시지로 기록한다.
 # 못 찾거나 불러오지 못해도 워처의 본래 일(inbox 위임)에는 영향이 없다. 함수 정의는 handoff-pump.ps1 머리말 참고. 테스트: tests\handoff
 $script:HandoffPumpReady = $false
@@ -1149,6 +1156,20 @@ function ConvertTo-SpaceKey([string]$Path) {
     return $p
 }
 
+# 지금 도는 다른 작업 중 이 폴더들과 겹치는 폴더를 연 것의 수(git 안전장치가 "변화의 원인이 다른 작업일 수 있다"고 알리는 데 쓴다).
+function Get-OverlappingRunningCount([string]$ExceptTaskId, $Cwds) {
+    $n = 0
+    try {
+        if (@($Cwds).Count -eq 0) { return 0 }
+        foreach ($f in @(Get-ChildItem -LiteralPath $RunningDir -Filter "*.json" -File -ErrorAction SilentlyContinue)) {
+            $c = Read-RunningClaim $f.FullName
+            if ($null -eq $c -or [string]$c.task_id -eq $ExceptTaskId -or @($c.cwds).Count -eq 0) { continue }
+            if (Test-SpaceOverlap $Cwds @($c.cwds)) { $n++ }
+        }
+    } catch {}
+    return $n
+}
+
 # 두 작업의 "공간"(작업 폴더들)이 겹치는가: 같은 폴더이거나 한쪽이 다른 쪽의 상위 폴더이면 겹친다.
 # 폴더가 하나도 없는 작업은 폴더로 구분할 수 없으므로 겹치는 것으로 본다(같은 세션끼리 차례로 하는 쪽이 안전하다).
 function Test-SpaceOverlap($CwdsA, $CwdsB) {
@@ -1350,6 +1371,17 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
 
 
 
+    # 폴더(@cwd)가 git 저장소면 agy 를 부르기 전의 HEAD·브랜치·stash 를 기록하고(커밋 안 한 변경은 스냅샷 참조로 보관), 끝난 뒤 비교해 경고한다(agy-gitguard.ps1).
+    $gitGuard = $null
+    $guardConcurrent = 0
+    try {
+        $gitGuard = New-AgyGitGuardState $targetCwds $baseName
+        $guardConcurrent = Get-OverlappingRunningCount $baseName $targetCwds
+        foreach ($gr in @($gitGuard.Repos)) {
+            Log "  -> git 상태 기록: $($gr.Root) (브랜치 $($gr.Branch), HEAD $(if ($gr.Head) { $gr.Head.Substring(0, [math]::Min(8, $gr.Head.Length)) } else { '없음' })$(if ($gr.SnapRef) { ", 미커밋 변경 스냅샷 $($gr.SnapRef)" }))"
+        }
+    } catch { $gitGuard = $null }
+
     $recModel    = $null
     $recAttempts = $null
     $recTried    = ""
@@ -1380,6 +1412,14 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
         $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwds -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel -taskId $baseName -promptFile $tempPromptFile -requestedModel $requestedModel -autoModel $autoModel
 
         $agyStderr = [string]$agyResult.StdErr
+
+        # agy 가 git 상태를 바꿨으면 응답 맨 위에 붙일 경고(없으면 빈 문자열). 자동으로 되돌리지는 않는다.
+        $guardBanner = ""
+        try {
+            $guardBanner = Get-AgyGitGuardBanner $gitGuard ([math]::Max($guardConcurrent, (Get-OverlappingRunningCount $baseName $targetCwds)))
+            if ($guardBanner) { Log "경고: agy 가 git 상태를 바꾼 것으로 보여 응답 맨 위에 경고를 붙였습니다" }
+        } catch { $guardBanner = "" }
+
         if ($agyResult.RawJson) {
             Set-Content -Path (Join-Path $OutboxDir "$baseName.raw.json") -Value $agyResult.RawJson -Encoding UTF8
         }
@@ -1390,7 +1430,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
         $recTried    = $triedStr
 
         if ($agyResult.Success) {
-            Set-Content -Path $outFile -Value $agyResult.Response -Encoding UTF8
+            Set-Content -Path $outFile -Value ($guardBanner + $agyResult.Response) -Encoding UTF8
 
             $elapsedForLog = if ($agyResult.AgyDuration) { [math]::Round([double]$agyResult.AgyDuration, 1) } else { $agyResult.ElapsedSec }
             $timeSrc = if ($agyResult.AgyDuration) { "agy 자체 보고" } else { "워처 측정(폴백 시도 포함 총 시간)" }
@@ -1420,7 +1460,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
             $failMsg = "agy 실행 실패 (시도한 모델: $triedStr) - $($agyResult.ErrorMessage)"
             if ($requestedModel -and -not $conversationId) { $failMsg += " [@model 로 지정한 모델이라 다른 모델로 자동 전환하지 않았습니다]" }
 
-            Set-Content -Path $outFile -Value $failMsg -Encoding UTF8
+            Set-Content -Path $outFile -Value ($guardBanner + $failMsg) -Encoding UTF8
             Log $failMsg
             $recElapsed = $agyResult.ElapsedSec
             Write-UsageRow $baseName $null $recAttempts $recTried $null $null $null $null $recElapsed "ERROR" $sessionName $effectiveSessionId
