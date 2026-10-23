@@ -14,6 +14,9 @@
 # stop_hook_active 는 보지 않는다: 이 훅은 새 agy 회신이 있을 때만 막고(회신은 유한하다), 같은 회신은 최대 2번까지만 막고
 # 넘어가며, 펌프가 왕복 한도를 지켜 무한히 이어질 수 없다.
 #
+# 같은 채널을 세션 둘 이상이 함께 쓸 수 있다(저장소 하나에 Claude 창이 여럿). 그래서 Claude 가 쓴 c2a 에 `세션:`(그 세션의 ID)을 적어 두고,
+# agy 회신은 그 c2a 를 쓴 세션에게만 알린다(주인이 없거나 주인 세션이 한 시간 넘게 조용하면 아무 세션이나 받는다).
+#
 # 조절용 환경변수: SAMJIL_HANDOFF_WAIT_SECONDS(기본 1800) · SAMJIL_HANDOFF_SENT_WITHIN_MINUTES(기본 10) ·
 #   SAMJIL_HANDOFF_UNREAD_HOURS(기본 6) · SAMJIL_HANDOFF_MAX_BLOCKS(같은 회신당, 기본 2) · SAMJIL_HANDOFF_POLL_SECONDS(기본 3) ·
 #   SAMJIL_HANDOFF_DEBUG=1 (오류를 stderr 로 보여 준다)
@@ -86,6 +89,26 @@ function Test-WithinMinutes($Row, [double]$Minutes) {
     return ($t -ge (Get-Date).AddMinutes(-$Minutes))
 }
 
+# 대화 기록 끝부분의 글자(찾아볼 용도). 못 읽으면 "".
+function Get-TranscriptTailText([string]$TranscriptPath, [long]$MaxBytes) {
+    if (-not $TranscriptPath -or -not (Test-Path -LiteralPath $TranscriptPath -PathType Leaf)) { return "" }
+    try {
+        $fs = [System.IO.File]::Open($TranscriptPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $take = [long][math]::Min($fs.Length, $MaxBytes)
+            [void]$fs.Seek($fs.Length - $take, [System.IO.SeekOrigin]::Begin)
+            $buf = New-Object byte[] ([int]$take)
+            $got = 0
+            while ($got -lt $take) {
+                $n = $fs.Read($buf, $got, [int]$take - $got)
+                if ($n -le 0) { break }
+                $got += $n
+            }
+            return $utf8.GetString($buf, 0, $got)
+        } finally { $fs.Dispose() }
+    } catch { return "" }
+}
+
 try {
     # 입력은 UTF-8 로 직접 읽는다(콘솔 입력 코드페이지로 읽으면 한글 경로가 깨진다)
     $stdin = [Console]::OpenStandardInput()
@@ -108,13 +131,47 @@ try {
 
     # Claude 가 쓴 c2a 에 모델·노력이 비어 있으면(쓸 때 빼먹은 경우) 이 세션의 모델과 노력 단계를 머리말에 적어 둔다 — 뷰어가 "Claude Sonnet 5.5 (High)" 로 보여 주는 근거.
     # 최근 15분 안에 보낸 것만 대상으로 해 다른 세션의 옛 메시지를 잘못 찍지 않는다.
-    $stampInfo = Get-TranscriptModelInfo ([string]$in.transcript_path)
-    if ($stampInfo.Model) {
-        foreach ($r in @(Read-HandoffIndex $ch)) {
-            if ($r.Dir -ne "c2a" -or -not (Test-WithinMinutes $r 15)) { continue }
-            $f = Get-HandoffMessageFile $ch $r.Num
-            if ($f) { [void](Set-HandoffMessageModel $f.FullName $stampInfo.Model $stampInfo.Effort) }
+    # 같은 채널을 쓰는 다른 세션이 쓴 c2a 에는 도장을 찍지 않는다: 이 세션의 대화 기록 끝부분에 그 파일 이름이 있을 때만(= 이 세션이 쓴 것) 찍는다.
+    # 같은 때 `세션:` 도 적는다. 먼저 적은 쪽이 주인이다(쓴 세션의 턴이 끝날 때 이 훅이 가장 먼저 돈다).
+    $sid = [string]$in.session_id
+    $transcriptPath = [string]$in.transcript_path
+    $stampInfo = Get-TranscriptModelInfo $transcriptPath
+    $tailText = ""
+    foreach ($r in @(Read-HandoffIndex $ch)) {
+        if ($r.Dir -ne "c2a" -or -not (Test-WithinMinutes $r 15)) { continue }
+        $f = Get-HandoffMessageFile $ch $r.Num
+        if (-not $f) { continue }
+        if (-not $sid) { continue }
+        $owner = [string](Read-HandoffFrontMatter $f.FullName)["세션"]
+        if (-not $owner) {
+            if (-not $tailText) { $tailText = Get-TranscriptTailText $transcriptPath 1048576 }
+            if ($tailText -and $tailText.Contains($f.Name)) { [void](Set-HandoffMessageField $f.FullName "세션" $sid); $owner = $sid }
         }
+        if ($owner -eq $sid -and $stampInfo.Model) { [void](Set-HandoffMessageModel $f.FullName $stampInfo.Model $stampInfo.Effort) }
+    }
+
+    # 이 c2a 의 주인이 이 세션(또는 주인 없음)인가. 주인이 다른 세션이어도 그 세션의 대화 기록이 한 시간 넘게 멈춰 있거나 없으면 아무나 받는다(세션을 닫았을 때 회신이 묻히지 않게).
+    function Test-OwnedByMeOrNobody([string]$Owner) {
+        if (-not $Owner -or -not $sid -or $Owner -eq $sid) { return $true }
+        if (-not $transcriptPath) { return $true }
+        $other = Join-Path (Split-Path -Parent $transcriptPath) ($Owner + ".jsonl")
+        if (-not (Test-Path -LiteralPath $other -PathType Leaf)) { return $true }
+        return ((Get-Item -LiteralPath $other).LastWriteTime -lt (Get-Date).AddMinutes(-60))
+    }
+    function Get-RowOwner($Row) {
+        $f = Get-HandoffMessageFile $ch $Row.Num
+        if (-not $f) { return "" }
+        return [string](Read-HandoffFrontMatter $f.FullName)["세션"]
+    }
+    # agy 회신(a2c)의 주인은 그 회신이 답한 c2a(답장대상)의 주인이다.
+    function Test-ReplyIsMine($Row) {
+        $f = Get-HandoffMessageFile $ch $Row.Num
+        if (-not $f) { return $true }
+        $to = [string](Read-HandoffFrontMatter $f.FullName)["답장대상"]
+        if (-not $to) { return $true }
+        $cf = Get-HandoffMessageFile $ch $to
+        if (-not $cf) { return $true }
+        return (Test-OwnedByMeOrNobody ([string](Read-HandoffFrontMatter $cf.FullName)["세션"]))
     }
 
     # agy 가 남긴 읽지 않은 회신(최근 것만, 같은 회신을 maxBlocks 번보다 더 막지 않는다)
@@ -128,6 +185,7 @@ try {
             $blocks = 0
             if ($state.hook_blocks.ContainsKey([string]$r.Num)) { $blocks = [int]$state.hook_blocks[[string]$r.Num] }
             if ($blocks -ge $maxBlocks) { continue }
+            if (-not (Test-ReplyIsMine $r)) { continue }
             $out += $r
         }
         return @($out)
@@ -170,7 +228,7 @@ $($lines -join "`n")
     if ($unread.Count -gt 0) { $script:__hkUnread = $unread; Send-Block $unread; exit 0 }
 
     # 2) 방금 보낸 메시지에 대한 회신 기다리기
-    $waiting = @(Read-HandoffIndex $ch | Where-Object { $_.Dir -eq "c2a" -and ($_.Status -eq "보냄" -or $_.Status -eq "읽음") -and (Test-WithinMinutes $_ $sentWithin) })
+    $waiting = @(Read-HandoffIndex $ch | Where-Object { $_.Dir -eq "c2a" -and ($_.Status -eq "보냄" -or $_.Status -eq "읽음") -and (Test-WithinMinutes $_ $sentWithin) -and (Test-OwnedByMeOrNobody (Get-RowOwner $_)) })
     if ($waiting.Count -eq 0) { exit 0 }
     $st = Read-HandoffAutoState $ch
     if ($st.halted) {

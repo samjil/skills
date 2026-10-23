@@ -186,7 +186,11 @@ try {
     $nNew = Add-HandoffMessage $st "c2a" "방금 보냄" "## 요약`n- new"
     $nHas = Add-HandoffMessage $st "c2a" "모델 이미 있음" "## 요약`n- has" "" "claude-sonnet-4-5"
     $tr = Join-Path $work "transcript.jsonl"
+    $nNewName = (Get-HandoffMessageFile $st $nNew).Name
+    $nHasName = (Get-HandoffMessageFile $st $nHas).Name
+    $nOldName = (Get-HandoffMessageFile $st $nOld).Name
     $trLines = @(
+        ('{"type":"user","message":{"role":"user","content":"wrote ' + $nNewName + ' and ' + $nHasName + ' and ' + $nOldName + '"}}'),
         '{"type":"user","message":{"role":"user","content":"hi"}}',
         '{"type":"assistant","message":{"model":"claude-opus-4-5-20251101","role":"assistant","content":[{"type":"text","text":"ok"}]},"effort":"high","perTurnEffort":null}',
         '{"type":"assistant","message":{"model":"claude-opus-4-5-20251101","role":"assistant","content":[{"type":"text","text":"ok2"}]},"effort":"medium","perTurnEffort":null}',
@@ -201,14 +205,63 @@ try {
     Assert-Equal "  노력은 가장 최근 assistant 줄의 effort 가 적힌다(<synthetic> 줄은 건너뜀)" "medium" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nNew).FullName)["노력"])
     Assert-Equal "  모델이 이미 있어도 노력이 없으면 노력만 채운다(모델은 그대로)" "claude-sonnet-4-5|medium" ("{0}|{1}" -f [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nHas).FullName)["모델"], [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nHas).FullName)["노력"])
     Assert-Equal "  15분보다 오래된 c2a 에는 노력도 넣지 않는다" "" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nOld).FullName)["노력"])
+    Assert-Equal "  이 세션이 쓴 c2a 에는 세션 ID 도 적힌다(오래된 것은 안 적는다)" "s1|" ("{0}|{1}" -f [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nNew).FullName)["세션"], [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nOld).FullName)["세션"])
     $nPer = Add-HandoffMessage $st "c2a" "이번 턴만 노력 다름" "## 요약`n- p"
     $trPer = Join-Path $work "transcript-per.jsonl"
-    [IO.File]::WriteAllText($trPer, ('{"type":"assistant","message":{"model":"claude-sonnet-5-5","role":"assistant","content":[]},"effort":"high","perTurnEffort":"xhigh"}' + "`n"), (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText($trPer, ('{"type":"user","message":{"role":"user","content":"wrote ' + (Get-HandoffMessageFile $st $nPer).Name + '"}}' + "`n" + '{"type":"assistant","message":{"model":"claude-sonnet-5-5","role":"assistant","content":[]},"effort":"high","perTurnEffort":"xhigh"}' + "`n"), (New-Object Text.UTF8Encoding($false)))
     [void](Invoke-Hook $stCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "1" } (@{ cwd = $stCwd; session_id = "s1"; hook_event_name = "Stop"; transcript_path = $trPer } | ConvertTo-Json -Compress))
     Assert-Equal "  perTurnEffort 가 있으면 그것을 쓴다" "claude-sonnet-5-5|xhigh" ("{0}|{1}" -f [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nPer).FullName)["모델"], [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nPer).FullName)["노력"])
     $nNew2 = Add-HandoffMessage $st "c2a" "대화 기록 없이" "## 요약`n- z"
     $r = Invoke-Hook $stCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "1" }
     Assert-Equal "  대화 기록 경로가 없으면 모델을 만들어 넣지 않는다" "" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nNew2).FullName)["모델"])
+
+    Write-Host "같은 채널을 세션 둘이 함께 쓸 때 -> 회신은 그 c2a 를 쓴 세션에게만 간다"
+    $two = New-Channel "two-app"
+    $twoCwd = Join-Path $code "two-app"
+    New-Item -ItemType Directory -Force -Path $twoCwd | Out-Null
+    $tdir = Join-Path $work "tr2"
+    New-Item -ItemType Directory -Force -Path $tdir | Out-Null
+    $trA = Join-Path $tdir "sessA.jsonl"
+    $trB = Join-Path $tdir "sessB.jsonl"
+    $cA = Add-HandoffMessage $two "c2a" "A 가 보낸 질문" "## 요약`n- A" "" "claude-sonnet-5-5"
+    $cB = Add-HandoffMessage $two "c2a" "B 가 보낸 질문" "## 요약`n- B" "" "claude-sonnet-5-5"
+    $nameA = (Get-HandoffMessageFile $two $cA).Name
+    $nameB = (Get-HandoffMessageFile $two $cB).Name
+    $enc = New-Object Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($trA, ('{"type":"user","message":{"role":"user","content":"wrote ' + $nameA + '"}}' + "`n"), $enc)
+    [IO.File]::WriteAllText($trB, ('{"type":"user","message":{"role":"user","content":"wrote ' + $nameB + '"}}' + "`n"), $enc)
+    $stdinOf = { param($sid, $tr) (@{ cwd = $twoCwd; session_id = $sid; hook_event_name = "Stop"; transcript_path = $tr } | ConvertTo-Json -Compress) }
+    [void](Invoke-Hook $twoCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "1" } (& $stdinOf "sessA" $trA))
+    Assert-Equal "A 의 훅은 A 의 대화 기록에 있는 c2a 에만 세션을 적는다" "sessA|" ("{0}|{1}" -f [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $two $cA).FullName)["세션"], [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $two $cB).FullName)["세션"])
+    [void](Invoke-Hook $twoCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "1" } (& $stdinOf "sessB" $trB))
+    Assert-Equal "B 의 훅은 B 의 c2a 에 세션을 적고 A 의 것은 그대로 둔다" "sessA|sessB" ("{0}|{1}" -f [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $two $cA).FullName)["세션"], [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $two $cB).FullName)["세션"])
+    $rA = Add-HandoffMessage $two "a2c" "Re: A 가 보낸 질문" "## 요약`n- 답A" $cA "gemini-3.8-flash-high" $true
+    $rB = Add-HandoffMessage $two "a2c" "Re: B 가 보낸 질문" "## 요약`n- 답B" $cB "gemini-3.8-flash-high" $true
+    [IO.File]::SetLastWriteTime($trA, (Get-Date))
+    [IO.File]::SetLastWriteTime($trB, (Get-Date))
+    $r = Invoke-Hook $twoCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "1" } (& $stdinOf "sessB" $trB)
+    $json = $r.Out | ConvertFrom-Json
+    Assert-Equal "B 는 자기 c2a 의 회신만 받는다(block, A 의 회신은 안 나온다)" $true (($json.decision -eq "block") -and ($json.reason -match "#$rB") -and ($json.reason -notmatch "#$rA"))
+    Assert-Equal "  A 의 회신은 막은 횟수에도 안 잡힌다" $false ((Read-HandoffAutoState $two).hook_blocks.ContainsKey($rA))
+    $r = Invoke-Hook $twoCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "1" } (& $stdinOf "sessA" $trA)
+    $json = $r.Out | ConvertFrom-Json
+    Assert-Equal "A 는 자기 c2a 의 회신만 받는다(block, B 의 회신은 안 나온다)" $true (($json.decision -eq "block") -and ($json.reason -match "#$rA") -and ($json.reason -notmatch "#$rB"))
+    Set-HandoffStatus $two $rA "처리됨" | Out-Null
+    Set-HandoffStatus $two $rB "처리됨" | Out-Null
+    Update-HandoffAutoState $two { param($s) $s.hook_blocks = @{} }
+    Write-Host "  주인 세션이 조용해졌거나 없으면 아무 세션이나 받는다"
+    $rA2 = Add-HandoffMessage $two "a2c" "Re: A 두 번째" "## 요약`n- 답A2" $cA "gemini-3.8-flash-high" $true
+    [IO.File]::SetLastWriteTime($trA, (Get-Date).AddHours(-2))
+    $r = Invoke-Hook $twoCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "1" } (& $stdinOf "sessB" $trB)
+    Assert-Equal "  주인(A)의 대화 기록이 한 시간 넘게 멈춰 있으면 B 가 받는다" $true ((($r.Out | ConvertFrom-Json).decision -eq "block") -and (($r.Out | ConvertFrom-Json).reason -match "#$rA2"))
+    Set-HandoffStatus $two $rA2 "처리됨" | Out-Null
+    Update-HandoffAutoState $two { param($s) $s.hook_blocks = @{} }
+    $cOld = Add-HandoffMessage $two "c2a" "세션 표시 없는 질문" "## 요약`n- old"
+    $rOld = Add-HandoffMessage $two "a2c" "Re: 세션 표시 없는 질문" "## 요약`n- 답" $cOld "gemini-3.8-flash-high" $true
+    [IO.File]::SetLastWriteTime($trA, (Get-Date))
+    $r = Invoke-Hook $twoCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "1" } (& $stdinOf "sessA" $trA)
+    Assert-Equal "  주인 표시가 없는 c2a 의 회신은 아무 세션이나 받는다(예전 메시지)" $true ((($r.Out | ConvertFrom-Json).decision -eq "block") -and (($r.Out | ConvertFrom-Json).reason -match "#$rOld"))
+    Set-HandoffStatus $two $rOld "처리됨" | Out-Null
 
     Write-Host "한글 채널 이름·경로, 하위 폴더에서 열기"
     $kr = New-Channel "프로젝트-가나다"
