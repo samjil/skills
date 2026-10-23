@@ -1986,6 +1986,13 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
   font-size: 12.5px;
   line-height: 1.55;
 }
+/* 밝은 테마의 구문 강조(github 팔레트) 중 코드 바탕 위에서 대비 4.5 에 못 미치는 색만 진하게 한다 */
+:root[data-theme="light"] .hljs-built_in { color: #b94700; }
+:root[data-theme="light"] .hljs-keyword,
+:root[data-theme="light"] .hljs-type { color: #c42e3d; }
+:root[data-theme="light"] .hljs-name,
+:root[data-theme="light"] .hljs-selector-tag { color: #1a7f37; }
+:root[data-theme="light"] .hljs-comment { color: #5f6b76; }
 
 /* ==========================================================================
    Mermaid 다이어그램 시각화 블록
