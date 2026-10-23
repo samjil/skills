@@ -107,6 +107,12 @@ W (Join-Path $src "runtime\delegate-agy\scripts\sub\agy-db.ps1") "db v2"
 $r = Run-Sync
 Assert-Equal "  워처 재시작 안내가 있다" $true ($r.Out -like "*워처 스크립트가 바뀌었*")
 Assert-Equal "  뷰어 재시작 안내도 있다" $true ($r.Out -like "*뷰어 본체 스크립트가 바뀌었습니다*")
+Write-Host "submit-task.ps1 은 워처가 읽지 않으므로 바뀌어도 워처 재시작 안내가 없다"
+W (Join-Path $src "runtime\delegate-agy\scripts\submit-task.ps1") "submit v1"
+$r = Run-Sync
+Assert-Equal "  submit-task.ps1 만 새로 생겨도 워처 재시작 안내가 없다" $false ($r.Out -like "*워처 스크립트가 바뀌었*")
+Assert-Equal "  그래도 설치본으로는 복사된다" "submit v1" ([System.IO.File]::ReadAllText((Join-Path $inst "delegate-agy\scripts\submit-task.ps1")))
+
 Write-Host "소스에서 지운 파일은 설치본에 남기고 알리기만 한다"
 Remove-Item -LiteralPath (Join-Path $src "runtime\handoff\templates\t.md") -Force
 $r = Run-Sync

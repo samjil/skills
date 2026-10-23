@@ -164,8 +164,8 @@ Claude가 스스로 서브에이전트를 열려는 경우도 같다 — 서브�
 - **위임 런타임 폴더(`~/.samjil/delegate-agy/runtime`)를 찾는다.**
   독립 스킬 구조에서는 사용자 홈 디렉터리의 `~/.samjil/delegate-agy/runtime`을 사용한다.
   (원격 장치 마운트 환경에서는 `~/mnt/` 아래를 자동 탐색한다.)
-  아래 코드 블록은 각각 독립된 `device_bash` 호출이라 변수가 이어지지 않으므로, `$BASE`가
-  필요한 블록마다 이 탐색을 맨 앞에 넣는다.
+  **`submit-task.ps1`(아래 "실행 방법")은 런타임 폴더를 스스로 찾으므로 이 탐색이 필요 없다.** 아래 탐색은 스크립트가 없는 낡은 설치이거나(설치본을 갱신하라고 사용자에게 알린다)
+  워처 켜기 절차처럼 `$BASE`가 필요한 블록에서만 쓴다. 코드 블록은 각각 독립된 `device_bash` 호출이라 변수가 이어지지 않으므로, `$BASE`가 필요한 블록마다 맨 앞에 넣는다.
 
 ```bash
 BASE=""
@@ -362,92 +362,53 @@ agy는 기본적으로 매번 빈 상태로 시작한다(이 스킬 맨 위 "직
 
 ## 실행 방법
 
-```bash
-set -e
-BASE=""
-[ -d "$HOME/.samjil/delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/samjil-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/samjil-delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/agent-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/agent-delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/delegate/runtime/inbox" ] && BASE="$HOME/.samjil/delegate/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.agent-delegate/runtime/inbox" ] && BASE="$HOME/.agent-delegate/runtime"
-if [ -z "$BASE" ]; then
-  BASE=$(find ~/mnt -maxdepth 6 -type d \( -path "*/.samjil/delegate-agy/runtime" -o -path "*/.samjil/samjil-delegate-agy/runtime" -o -path "*/.samjil/agent-delegate-agy/runtime" -o -path "*/.samjil/delegate/runtime" -o -path "*/.agent-delegate/runtime" \) 2>/dev/null | head -1)
-fi
-if [ -z "$BASE" ]; then
-  for f in $(find ~/mnt -maxdepth 6 -type f -path "*/watch-agy.ps1" 2>/dev/null); do
-    r="$(dirname "$(dirname "$f")")"; [ -d "$r/runtime/inbox" ] && BASE="$r/runtime" && break
-  done
-fi
-[ -z "$BASE" ] && echo "위임 런타임 폴더(~/.samjil/delegate-agy/runtime)를 찾지 못함" && exit 1
+위임은 **`submit-task.ps1` 한 번 호출**이다. 런타임 폴더 찾기 · 작업 ID 만들기 · inbox 기록 · 결과 기다리기를 스크립트가 모두 한다 — 긴 bash 나 폴링 루프를 직접 쓰지 않는다.
+지시문은 **따옴표 붙은 heredoc**(`<<'CLAUDE_TASK_EOF'`)으로 표준입력에 준다(`$` · backtick 이 셸에서 해석되지 않게).
 
-TASK_ID="claude_$(date +%s)_$RANDOM"
-cat > "$BASE/inbox/$TASK_ID.md" <<'CLAUDE_TASK_EOF'
+```bash
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1" <<'CLAUDE_TASK_EOF'
 @cwd: C:\Users\username\workspace\my-project
+@model: gemini-3.8-flash-medium
 <지시문 - 자기완결적으로. 필요한 맥락은 명시적으로 다 포함할 것>
 CLAUDE_TASK_EOF
-
-OUT="$BASE/outbox/$TASK_ID.response.md"
-ERR="$BASE/outbox/$TASK_ID.error.log"
-echo "submitted: $TASK_ID"
-for i in $(seq 1 50); do
-  if [ -s "$OUT" ]; then echo "===RESULT==="; cat "$OUT"; exit 0; fi
-  if [ -s "$ERR" ]; then echo "===ERROR==="; cat "$ERR"; exit 1; fi
-  sleep 3
-done
-echo "===TIMEOUT==="; exit 2
 ```
 
-폴더 접근이 필요 없는 작업이면 `@cwd:` 줄만 빼면 된다.
+폴더 접근이 필요 없는 작업이면 `@cwd:` 줄만 빼면 된다. 출력과 종료 코드:
 
-**여러 개를 한 번에 위임**할 수도 있다(서로 독립적인 작업일 때). 워처가 **동시에 최대 3개**까지 돌리므로(같은 `@session`+겹치는 `@cwd`인 것만 차례로) 서로 다른 세션·폴더의 작업은 대기시간이 합산되지 않는다. 그래도 한 배치에 2~3개까지만 묶는다.
+| 출력 | 종료 코드 | 뜻 | 다음 |
+|---|---|---|---|
+| `===RESULT=== <ID>` + 본문 | 0 | 응답 파일이 생겼다(**실패 사유도 응답 본문으로 올 수 있으니 본문을 읽는다**) | 아래 "결과 처리"로 검토 |
+| `===ERROR=== <ID>` + 본문 | 1 | 응답 없이 오류 로그만 있다 | 오류를 읽고 판단 |
+| `===PENDING=== <ID> 진행 중 · 경과 N분 · 모델 … · 마지막 단계 …` | 2 | 170초 안에 안 끝났다. **작업은 계속 돌고 있다** | **다시 제출하지 말고** `-Poll <ID>` 로 기다린다 |
+| (안내 문장) | 3 | 런타임 폴더를 못 찾음 · 지시문이 비었음 등 | 아래 BASE 탐색(스크립트를 못 찾는 경우)이나 직접 처리 |
+
+- `device_bash` 한 호출은 최대 3분이라 스크립트는 기본 170초만 기다리고 진행 상태를 돌려준다(`-WaitSeconds` 로 바꿀 수 있다). 대기 간격은 스크립트 안에서 돌아 Claude 토큰을 쓰지 않는다.
+- **`PENDING` 이후**: `high` 모델 위임은 약 9~12분이라 보통 서너 번 확인하게 된다. 한 번 확인할 때마다 한 턴이 드니, 그 사이에 위임과 무관한 다른 일(검토 준비, 다음 조각 설계)을 하고 돌아온다.
+  `PENDING` 줄의 경과 시간 · 마지막 단계(`#14 PLANNER_RESPONSE DONE 도구: view_file`)가 계속 같으면 멈춘 것일 수 있다. 워처가 5분 동안 새 단계가 없으면 스스로 중단하므로, 그보다 길게 같을 때만 의심한다.
+  `대기열에서 기다리는 중`이면 앞선 작업이 끝나길 기다리는 것이고, `워처 하트비트가 없습니다`가 같이 나오면 워처를 확인한다(위 "워처가 꺼져 있을 때").
+  `접수 기록 없음`은 작업 ID 가 틀렸다는 뜻이다.
+
+```bash
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1" -Poll claude_1790000000_123
+```
+
+**여러 개를 한 번에 위임**할 수도 있다(서로 독립적인 작업일 때). 먼저 `-NoWait` 로 각각 넣어 ID 만 받고(`submitted: <ID>`), 한 번에 `-Poll` 로 기다린다(쉼표나 공백으로 여러 ID).
+워처가 **동시에 최대 3개**까지 돌리므로(같은 `@session`+겹치는 `@cwd`인 것만 차례로) 서로 다른 세션·폴더의 작업은 대기시간이 합산되지 않는다. 그래도 한 배치에 2~3개까지만 묶는다.
 (같은 `@session` 이름을 서로 다른 폴더에서 동시에 쓰면 agy 대화는 하나라서 서로 섞일 수 있으니, 폴더가 다르면 세션 이름도 다르게 짓는 것이 안전하다.)
 
 ```bash
-set -e
-BASE=""
-[ -d "$HOME/.samjil/delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/samjil-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/samjil-delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/agent-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/agent-delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/delegate/runtime/inbox" ] && BASE="$HOME/.samjil/delegate/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.agent-delegate/runtime/inbox" ] && BASE="$HOME/.agent-delegate/runtime"
-if [ -z "$BASE" ]; then
-  BASE=$(find ~/mnt -maxdepth 6 -type d \( -path "*/.samjil/delegate-agy/runtime" -o -path "*/.samjil/samjil-delegate-agy/runtime" -o -path "*/.samjil/agent-delegate-agy/runtime" -o -path "*/.samjil/delegate/runtime" -o -path "*/.agent-delegate/runtime" \) 2>/dev/null | head -1)
-fi
-if [ -z "$BASE" ]; then
-  for f in $(find ~/mnt -maxdepth 6 -type f -path "*/watch-agy.ps1" 2>/dev/null); do
-    r="$(dirname "$(dirname "$f")")"; [ -d "$r/runtime/inbox" ] && BASE="$r/runtime" && break
-  done
-fi
-[ -z "$BASE" ] && echo "위임 런타임 폴더(~/.samjil/delegate-agy/runtime)를 찾지 못함" && exit 1
-
-STAMP=$(date +%s)_$RANDOM
-T1="claude_${STAMP}_a"; T2="claude_${STAMP}_b"
-cat > "$BASE/inbox/$T1.md" <<'EOF_A'
+S="powershell.exe -NoProfile -ExecutionPolicy Bypass -File $USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1"
+$S -NoWait <<'EOF_A'
 <작업 1>
 EOF_A
-cat > "$BASE/inbox/$T2.md" <<'EOF_B'
+$S -NoWait <<'EOF_B'
 <작업 2>
 EOF_B
-
-for i in $(seq 1 50); do
-  ok=1
-  for T in "$T1" "$T2"; do
-    [ -s "$BASE/outbox/$T.response.md" ] || [ -s "$BASE/outbox/$T.error.log" ] || ok=0
-  done
-  [ "$ok" = 1 ] && break
-  sleep 3
-done
-for T in "$T1" "$T2"; do
-  echo "===== $T"
-  cat "$BASE/outbox/$T.response.md" 2>/dev/null \
-    || cat "$BASE/outbox/$T.error.log" 2>/dev/null \
-    || echo "(아직 처리 중)"
-done
+# 위 두 호출이 출력한 submitted: <ID> 두 개로
+$S -Poll <ID1>,<ID2>
 ```
 
-**타임아웃 처리:** `device_bash` 한 호출은 최대 180000ms(3분)다. 코딩 작업은 이보다 오래 걸릴 수 있다. 타임아웃이 나도 **워처는 사용자 컴퓨터에서 계속 돌고 있으므로 작업은 진행 중이다.**
-1. 작업을 다시 제출하지 않는다.
-2. 잠시 후 같은 `$TASK_ID`의 `outbox/$TASK_ID.response.md`가 생겼는지만 확인하는 짧은 `device_bash` 호출을 다시 한다.
+**타임아웃 처리:** 작업은 사용자 컴퓨터의 워처가 계속 돌리므로 `PENDING` 이어도 진행 중이다. 작업을 다시 제출하지 않고(중복 위임이 된다) 같은 ID 로 `-Poll` 만 한다.
 
 ## 모델 선택 (`@model:`)
 
