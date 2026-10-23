@@ -84,11 +84,13 @@ if (-not (Test-Path $WatcherScript)) {
 $targets = @(
     "start-agy.ps1",
     "stop-agy.ps1",
+    "submit-task.ps1",
     "sub\common.ps1",
     "sub\watch-agy.ps1",
     "sub\agy-task-worker.ps1",
     "sub\ensure-agy-running.ps1",
     "sub\handoff-pump.ps1",
+    "sub\agy-rules.ps1",
     "sub\log-qa.ps1"
 )
 

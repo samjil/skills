@@ -134,9 +134,10 @@ $SelectableModels = @(@("gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gem
 #   @cwd:     agy 의 워크스페이스에 추가할 폴더 (--add-dir). 여러 줄 가능: 줄마다 폴더 하나, 폴더마다 --add-dir 를 한 번씩 넘긴다(줄 순서 유지, 같은 경로는 대소문자·끝의 \ 를 무시하고 한 번만)
 #   @session: 대화를 이어갈 세션 이름
 #   @model:   이번 호출에 쓸 모델 하나 (위 $SelectableModels)
-# 반환: @{ Cwd; Session; Model; Prompt }  (Cwd 는 폴더 배열이고 없으면 빈 배열, Session/Model 은 없으면 $null)
+#   @raw:     true 면 워처가 표준 규칙(DO NOT COMMIT 등, agy-rules.ps1)을 프롬프트에 자동으로 붙이지 않는다
+# 반환: @{ Cwd; Session; Model; Raw; Prompt }  (Cwd 는 폴더 배열이고 없으면 빈 배열, Session/Model 은 없으면 $null, Raw 는 $true/$false)
 function ConvertFrom-TaskDirectives([string]$rawText) {
-    $cwdRaw = New-Object System.Collections.ArrayList; $session = $null; $model = $null
+    $cwdRaw = New-Object System.Collections.ArrayList; $session = $null; $model = $null; $raw = $false
     $prompt = $rawText
     while ($prompt.Length -gt 0) {
         $firstLine = ($prompt -split "`r?`n", 2)[0]
@@ -148,13 +149,15 @@ function ConvertFrom-TaskDirectives([string]$rawText) {
             $session = $Matches[1].Trim()
         } elseif ($firstLine -match '^\ufeff?@model:\s*(.+)$') {
             $model = $Matches[1].Trim()
+        } elseif ($firstLine -match '^\ufeff?@raw:\s*(.+)$') {
+            $raw = ConvertTo-AgyDirectiveFlag $Matches[1]
         } else {
             break
         }
         $rest = ($prompt -split "`r?`n", 2)
         $prompt = if ($rest.Length -gt 1) { $rest[1] } else { "" }
     }
-    return @{ Cwd = @(ConvertTo-CwdList $cwdRaw.ToArray()); Session = $session; Model = $model; Prompt = $prompt }
+    return @{ Cwd = @(ConvertTo-CwdList $cwdRaw.ToArray()); Session = $session; Model = $model; Raw = $raw; Prompt = $prompt }
 }
 
 # 요청한 @model 을 확인합니다. 반환: @{ Model = <정식 ID 또는 $null>; Error = <사용자에게 보일 사유 또는 $null> }
@@ -391,6 +394,13 @@ if (-not (Test-Path $autoTierFile)) {
     $autoTierFile = Join-Path (Split-Path $PSScriptRoot -Parent) "agy-autotier.ps1"
 }
 . $autoTierFile
+
+# 폴더(@cwd)를 여는 코딩 위임에 표준 규칙(DO NOT COMMIT · FOREGROUND · 한글 답변 등)을 호출 직전에 붙이는 헬퍼(agy-rules.ps1). 테스트: tests\delegate-agy
+$rulesFile = Join-Path $PSScriptRoot "agy-rules.ps1"
+if (-not (Test-Path $rulesFile)) {
+    $rulesFile = Join-Path (Split-Path $PSScriptRoot -Parent) "agy-rules.ps1"
+}
+. $rulesFile
 
 # 핸드오프 "자동 이어가기" 펌프(워처 본체만 씀): 채널에 Claude 가 새 메시지를 보내면 agy 에게 위임하고, 답이 오면 회신 메시지로 기록한다.
 # 못 찾거나 불러오지 못해도 워처의 본래 일(inbox 위임)에는 영향이 없다. 함수 정의는 handoff-pump.ps1 머리말 참고. 테스트: tests\handoff
@@ -1359,9 +1369,13 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
         if (-not (Test-Path -LiteralPath $promptsDir)) {
             New-Item -ItemType Directory -Force -Path $promptsDir | Out-Null
         }
+        # 폴더(@cwd)를 여는 작업에는 표준 규칙을 붙인다(@raw: true 면 안 붙임). 위임 기록에는 원본 지시문이 남는다(여기서는 agy 에 넘길 프롬프트만 바꾼다).
+        $withRules = Add-AgyStandardRules $promptText (@($targetCwds).Count -gt 0) ([bool]$directives.Raw)
+        $promptForAgy = [string]$withRules.Text
+        if (@($withRules.Added).Count -gt 0) { Log "  -> 표준 규칙 자동 추가: $(@($withRules.Added) -join ', ')" }
         $tempPromptFile = Join-Path $promptsDir "prompt_$baseName.txt"
-        [System.IO.File]::WriteAllText($tempPromptFile, $promptText, (New-Object System.Text.UTF8Encoding($false)))
-        $safePrompt = $promptText -replace '"', '\"'
+        [System.IO.File]::WriteAllText($tempPromptFile, $promptForAgy, (New-Object System.Text.UTF8Encoding($false)))
+        $safePrompt = $promptForAgy -replace '"', '\"'
 
         $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwds -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel -taskId $baseName -promptFile $tempPromptFile -requestedModel $requestedModel -autoModel $autoModel
 
