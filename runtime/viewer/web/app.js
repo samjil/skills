@@ -1525,21 +1525,32 @@
 
   // 메시지의 주인 세션: c2a 는 머리말의 `세션`(Claude 가 쓴 세션 ID — Stop 훅이 적는다), agy 회신(a2c)은 그 회신이 답한 c2a 의 `세션`.
   // 같은 채널을 세션 둘이 함께 쓸 때 회신을 읽은 세션이 아니라 질문을 보낸 세션에 붙이려는 것이다(읽은 쪽으로 붙이면 엉뚱한 세션에 걸린다).
-  // 머리말에 세션이 없거나(예전 메시지) 그 세션이 트리에 없으면 null — 그때는 아래의 기존 근거(대화 기록의 파일 이름 등)를 쓴다.
-  function handoffOwnerNodeOf(msg, channelData, tree) {
+  // 세션을 이어서 다시 열면 세션 ID 가 바뀌어 머리말의 세션이 트리에 없을 수 있다. 그때 회신은 질문(c2a) 파일 이름이 나오는 대화 기록의 세션을 따른다
+  // (이어 연 세션의 기록에는 앞선 대화가 이어져 있어 질문 파일 이름이 나온다). 둘 다 없으면(예전 메시지) null — 아래의 기존 근거를 쓴다.
+  function handoffOwnerNodeOf(channelName, msg, channelData, tree) {
     if (!msg) { return null; }
-    var sid = msg.dir === "a2c" ? "" : String(msg.session || "");
-    if (!sid && msg.dir === "a2c" && msg.replyTo && channelData && Array.isArray(channelData.messages)) {
-      for (var i = 0; i < channelData.messages.length; i++) {
-        var m = channelData.messages[i];
-        if (m && String(m.num) === String(msg.replyTo)) { sid = String(m.session || ""); break; }
+    var ask = msg;
+    if (msg.dir === "a2c") {
+      ask = null;
+      if (msg.replyTo && channelData && Array.isArray(channelData.messages)) {
+        for (var i = 0; i < channelData.messages.length; i++) {
+          var m = channelData.messages[i];
+          if (m && String(m.num) === String(msg.replyTo)) { ask = m; break; }
+        }
       }
+      if (!ask) { return null; }
     }
-    return sid ? handoffSessionNodeOf(tree, sid) : null;
+    var sid = String(ask.session || "");
+    var node = sid ? handoffSessionNodeOf(tree, sid) : null;
+    if (node) { return node; }
+    if (msg.dir === "a2c") {
+      return handoffSessionNodeOf(tree, handoffLinkOf(tree, channelName, handoffMsgFileOf(ask, channelData)));
+    }
+    return null;
   }
 
   function handoffNodeOf(channelName, msg, channelData, tree) {
-    var owner = handoffOwnerNodeOf(msg, channelData, tree);
+    var owner = handoffOwnerNodeOf(channelName, msg, channelData, tree);
     if (owner) { return owner; }
     var file = handoffMsgFileOf(msg, channelData);
     var link = handoffLinkOf(tree, channelName, file);
