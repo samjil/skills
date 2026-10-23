@@ -24,12 +24,13 @@ function extractNumber(name) {
   return Number(m[1]);
 }
 
-const names = ["pad2", "escapeHtml", "formatDuration", "healthStallMinutes", "delegateRunHealth", "handoffDispatchOf", "handoffSafeChannelName", "handoffTaskIdOf", "handoffFinishedTaskId", "handoffLiveOf", "healthInnerHtml", "healthBadgeClass", "syncLiveProcess", "fetchLiveProcess", "pendingProcessOpts"];
+const names = ["pad2", "escapeHtml", "formatDuration", "healthStallMinutes", "delegateRunHealth", "handoffDispatchOf", "handoffSafeChannelName", "handoffTaskIdOf", "handoffFinishedTaskId", "handoffMessageTimeMs", "handoffLiveOf", "healthInnerHtml", "healthBadgeClass", "syncLiveProcess", "fetchLiveProcess", "pendingProcessOpts"];
 const fetchLog = [];
 const make = new Function(
   "fetchJson", "renderProcessDialog", "updateProcessButtons", "cwdListOf",
   "var PROGRESS_QUIET_SEC = " + extractNumber("PROGRESS_QUIET_SEC") + ";\n" +
   "var HEALTH_STALL_DEFAULT_SEC = " + extractNumber("HEALTH_STALL_DEFAULT_SEC") + ";\n" +
+  "var HANDOFF_AUTO_MAX_AGE_HOURS = " + extractNumber("HANDOFF_AUTO_MAX_AGE_HOURS") + ";\n" +
   "var liveProc = {};\n" +
   names.map(extractFunction).join("\n") +
   "\nreturn { delegateRunHealth, handoffDispatchOf, handoffSafeChannelName, handoffTaskIdOf, handoffFinishedTaskId, handoffLiveOf, healthInnerHtml, healthBadgeClass, syncLiveProcess, pendingProcessOpts, liveProc, formatDuration };"
@@ -112,6 +113,18 @@ live = api.handoffLiveOf(chan({ enabled: false }), c2a("0005", "보냄"), [], []
 eq("보냄 + 자동 이어가기 꺼짐: 안 넘어감", "아직 안 넘어감", live.label);
 live = api.handoffLiveOf(chan({ halted: true }), c2a("0005", "보냄"), [], [], true, NOW);
 eq("보냄 + 자동 이어가기 멈춤", ["stalled", "멈춤"], [live.kind, live.label]);
+const c2aAt = (num, status, time) => ({ num: num, dir: "c2a", status: status, time: time });
+live = api.handoffLiveOf(chan(), c2aAt("0081", "보냄", "2026-09-22 15:15"), [], [], true, NOW);
+eq("보냄 + 2시간이 넘은 메시지: 자동 위임 안 됨(워처가 켜져 있어도 기다리는 것처럼 안 보인다)", ["stalled", "자동 위임 안 됨", false], [live.kind, live.label, live.canOpen]);
+eq("  안내에 시간(2시간)과 할 일(새 메시지 · 보류)이 있다", true, /2시간/.test(live.detail) && /새 메시지/.test(live.detail) && /보류/.test(live.detail));
+live = api.handoffLiveOf(chan(), c2aAt("0081", "보냄", "2026-10-16 09:30"), [], [], false, NOW);
+eq("  워처가 꺼져 있어도 오래된 메시지는 이 안내가 먼저다", "자동 위임 안 됨", live.label);
+live = api.handoffLiveOf(chan(), c2aAt("0082", "보냄", "2026-10-16 10:30"), [], [], true, NOW);
+eq("보냄 + 1시간 30분 전: 아직 기다림", "agy 가 가져가기를 기다림", live.label);
+live = api.handoffLiveOf(chan(), c2aAt("0083", "보냄", "시각을 못 읽음"), [], [], true, NOW);
+eq("보낸 시각을 못 읽으면 기다림으로 둔다", "agy 가 가져가기를 기다림", live.label);
+live = api.handoffLiveOf(chan({ dispatches: [{ num: "0081", taskId: "handoff_ch_0081_100000", at: "2026-09-22 15:20:00", done: false }] }), c2aAt("0081", "읽음", "2026-09-22 15:15"), [], [], true, NOW);
+eq("읽음(이미 위임됨)은 오래돼도 이 안내를 쓰지 않는다", "상태 확인 중", live.label);
 
 const disp = [{ num: "0007", taskId: "handoff_ch_0007_100000", at: "2026-10-16 10:00:00", done: false }];
 const running = proc(20, { task_id: "handoff_ch_0007_100000" });

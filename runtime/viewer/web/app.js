@@ -5649,6 +5649,19 @@
     return "";
   }
 
+  // 워처 펌프(handoff-pump.ps1 의 Get-HandoffMaxAgeHours)가 자동 위임하는 메시지의 최대 나이 기본값(시간). AGY_HANDOFF_MAX_AGE_HOURS 로 바꾼 PC 에서는 안내가 어긋날 수 있다.
+  var HANDOFF_AUTO_MAX_AGE_HOURS = 2;
+
+  // 메시지의 보낸 시각(밀리초). 목록의 시각은 "2026-09-22 15:15" 처럼 이 PC 의 현지 시각이다. 못 읽으면 0.
+  function handoffMessageTimeMs(msg) {
+    var t = msg && msg.time ? String(msg.time).trim() : "";
+    var m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(t);
+    if (!m) { return 0; }
+    var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), 0, 0);
+    var ms = d.getTime();
+    return isNaN(ms) ? 0 : ms;
+  }
+
   // 핸드오프 메시지 한 건의 진행 표시. Claude 가 보낸(c2a) 메시지가 보냄·읽음(또는 자동 처리 실패로 보류)일 때만 있다. 없으면 null.
   //   보냄: agy 가 아직 가져가지 않음(워처가 꺼져 있거나 자동 이어가기가 꺼져 있으면 그렇게 알린다)
   //   읽음: 위임됨 -> 위임 작업(pending)의 상태를 그대로. 작업이 끝났으면 "회신을 정리하는 중", 위임 기록이 없으면 확인 중
@@ -5661,6 +5674,12 @@
     var disp = handoffDispatchOf(channelData, msg.num);
 
     if (status === "보냄" && !disp) {
+      // 워처의 핸드오프 펌프는 보낸 지 HANDOFF_AUTO_MAX_AGE_HOURS 시간이 지난 메시지를 자동으로 위임하지 않는다(옛 요청을 뒤늦게 시키지 않으려는 안전장치).
+      // 다른 이유(워처 꺼짐 등)로 기다리는 것처럼 보이지 않게, 먼저 이것부터 알린다.
+      var sentMs = handoffMessageTimeMs(msg);
+      if (sentMs && nowMs && (nowMs - sentMs) > HANDOFF_AUTO_MAX_AGE_HOURS * 3600000) {
+        return { kind: "stalled", label: "자동 위임 안 됨", detail: "보낸 지 " + HANDOFF_AUTO_MAX_AGE_HOURS + "시간이 지난 메시지는 자동으로 agy 에게 넘기지 않습니다. 더 필요하면 새 메시지로 다시 보내고, 아니면 상태를 '보류'로 바꾸세요", taskId: "", pending: null, canOpen: false };
+      }
       if (auto && auto.enabled === false) { return { kind: "queued", label: "아직 안 넘어감", detail: "이 채널은 자동 이어가기가 꺼져 있어 agy 가 가져가지 않습니다", taskId: "", pending: null, canOpen: false }; }
       if (auto && auto.halted) { return { kind: "stalled", label: "멈춤", detail: "자동 이어가기가 멈춰 있어 agy 에게 넘어가지 않았습니다", taskId: "", pending: null, canOpen: false }; }
       if (watcherAlive === false) { return { kind: "stalled", label: "가져가지 못함", detail: "워처가 꺼져 있습니다. 워처를 켜면 자동으로 이어집니다", taskId: "", pending: null, canOpen: false }; }
