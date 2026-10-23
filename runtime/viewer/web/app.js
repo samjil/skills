@@ -6196,11 +6196,16 @@
         '  <span class="handoff-title" title="' + escapeHtml(m.title || "") + '"><span class="handoff-channel">' + escapeHtml(channel) + '</span>' + escapeHtml(m.title || "(제목 없음)") + '</span>',
         '  <span class="handoff-dir">' + dirLabelHtml(m.dir, m, channel) + '</span>',
         '</div>',
+        // 오른쪽도 왼쪽(제목 / 방향)처럼 두 줄: 윗줄 [과정 버튼] [토큰], 아랫줄 [시각] [상태 진행 표시]. 윗줄이 비어도 아랫줄은 늘 아래에 맞춘다.
         '<div class="handoff-card-header-right">',
-        (usageText ? '  <span class="handoff-tokens" title="' + escapeHtml(usageText.title) + '">' + escapeHtml(usageText.chip) + '</span>' : ''),
-        (claudeText ? '  <span class="handoff-tokens is-claude" title="' + escapeHtml(claudeText.title) + '">' + escapeHtml(claudeText.chip) + '</span>' : ''),
-        '  <span class="handoff-time">' + escapeHtml(m.time || "") + '</span>',
-        '  ' + stepsHtml(m.status),
+        '  <div class="hh-top">',
+        (usageText ? '    <span class="handoff-tokens" title="' + escapeHtml(usageText.title) + '">' + escapeHtml(usageText.chip) + '</span>' : ''),
+        (claudeText ? '    <span class="handoff-tokens is-claude" title="' + escapeHtml(claudeText.title) + '">' + escapeHtml(claudeText.chip) + '</span>' : ''),
+        '  </div>',
+        '  <div class="hh-bottom">',
+        '    <span class="handoff-time">' + escapeHtml(m.time || "") + '</span>',
+        '    ' + stepsHtml(m.status),
+        '  </div>',
         '</div>'
       ].join("");
       makeActivatable(header);
@@ -6210,8 +6215,8 @@
       var doneTaskId = handoffFinishedTaskId(handoffChannels[channel], channel, m, allItems);
       var doneSrc = doneTaskId ? findProcessSource("r:" + doneTaskId) : null;
       if (doneSrc) {
-        var rightEl = header.querySelector(".handoff-card-header-right");
-        if (rightEl) { rightEl.insertBefore(buildProcessButton("r:" + doneTaskId, doneSrc.opts), rightEl.firstChild); }
+        var topEl = header.querySelector(".handoff-card-header-right .hh-top");
+        if (topEl) { topEl.insertBefore(buildProcessButton("r:" + doneTaskId, doneSrc.opts), topEl.firstChild); }
       }
 
       var body = document.createElement("div");
