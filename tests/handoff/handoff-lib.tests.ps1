@@ -266,6 +266,11 @@ try {
     $fE = (Get-HandoffMessageFile $modelCh $nE).FullName
     Assert-Equal "  모델과 노력을 함께 넣는다" "True|claude-sonnet-5-5|medium" ("{0}|{1}|{2}" -f (Set-HandoffMessageModel $fE "claude-sonnet-5-5" "medium"), [string](Read-HandoffFrontMatter $fE)["모델"], [string](Read-HandoffFrontMatter $fE)["노력"])
     Assert-Equal "  둘 다 비어 있으면 아무것도 하지 않는다" $false (Set-HandoffMessageModel $fE "" "")
+    Assert-Equal "Set-HandoffMessageField: 없는 키는 넣는다" "True|sess-1" ("{0}|{1}" -f (Set-HandoffMessageField $fE "세션" "sess-1"), [string](Read-HandoffFrontMatter $fE)["세션"])
+    Assert-Equal "  이미 있으면 덮어쓰지 않는다" "False|sess-1" ("{0}|{1}" -f (Set-HandoffMessageField $fE "세션" "sess-2"), [string](Read-HandoffFrontMatter $fE)["세션"])
+    Assert-Equal "  다른 머리말 항목(모델·노력)은 그대로 남는다" "claude-sonnet-5-5|medium" ("{0}|{1}" -f [string](Read-HandoffFrontMatter $fE)["모델"], [string](Read-HandoffFrontMatter $fE)["노력"])
+    Assert-Equal "  Get-HandoffMessageMeta 가 세션을 읽는다" "sess-1" ([string](Get-HandoffMessageMeta $fE).session)
+    Assert-Equal "  빈 값이면 아무것도 하지 않는다" $false (Set-HandoffMessageField $fE "세션" "")
     $fNo = Join-Path $modelCh "msg\9999-c2a-머리말-없음.md"
     Set-Content -LiteralPath $fNo -Value "본문만 있는 파일" -Encoding UTF8
     Assert-Equal "  머리말이 없는 파일은 건드리지 않는다" $false (Set-HandoffMessageModel $fNo "claude-opus-4-5")
