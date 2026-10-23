@@ -46,9 +46,11 @@ function Test-WatcherAliveForHook {
     if ($hb.Count -eq 0) { return $false }
     return (((Get-Date) - $hb[0].LastWriteTime).TotalSeconds -le 300)
 }
-# 대화 기록(transcript_path, JSONL)의 끝에서 가장 최근 assistant 메시지의 모델 ID 를 읽는다. 못 읽으면 "".
-function Get-TranscriptModel([string]$TranscriptPath) {
-    if (-not $TranscriptPath -or -not (Test-Path -LiteralPath $TranscriptPath -PathType Leaf)) { return "" }
+# 대화 기록(transcript_path, JSONL)의 끝에서 가장 최근 assistant 메시지의 모델 ID 와 노력 단계(그 줄의 effort. 이번 턴만 다르게 준 값 perTurnEffort 가 있으면 그것)를 읽는다.
+# 반환: @{ Model; Effort }. 못 읽으면 둘 다 "". (노력은 대화 기록 줄에 effort 로 남는다: Claude Code 2.1.x 에서 확인)
+function Get-TranscriptModelInfo([string]$TranscriptPath) {
+    $none = @{ Model = ""; Effort = "" }
+    if (-not $TranscriptPath -or -not (Test-Path -LiteralPath $TranscriptPath -PathType Leaf)) { return $none }
     $fs = [System.IO.File]::Open($TranscriptPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
     try {
         $take = [long][math]::Min($fs.Length, 262144)
@@ -69,9 +71,14 @@ function Get-TranscriptModel([string]$TranscriptPath) {
         try { $o = $l | ConvertFrom-Json } catch { continue }       # 잘린 첫 줄 등
         $m = ""
         if ($o -and $o.message -and $o.message.model) { $m = [string]$o.message.model }
-        if ($m -and $m -notlike "<*" -and $m -like "claude*") { return $m }
+        if ($m -and $m -notlike "<*" -and $m -like "claude*") {
+            $eff = ""
+            if ($o.PSObject.Properties["perTurnEffort"] -and $o.perTurnEffort -is [string] -and $o.perTurnEffort.Trim()) { $eff = $o.perTurnEffort.Trim() }
+            elseif ($o.PSObject.Properties["effort"] -and $o.effort -is [string] -and $o.effort.Trim()) { $eff = $o.effort.Trim() }
+            return @{ Model = $m; Effort = $eff }
+        }
     }
-    return ""
+    return $none
 }
 function Test-WithinMinutes($Row, [double]$Minutes) {
     $t = [datetime]::MinValue
@@ -99,14 +106,14 @@ try {
     $maxBlocks = [int](Get-EnvNumber "SAMJIL_HANDOFF_MAX_BLOCKS" 2)
     $poll = [int](Get-EnvNumber "SAMJIL_HANDOFF_POLL_SECONDS" 3)
 
-    # Claude 가 쓴 c2a 에 모델이 비어 있으면(쓸 때 빼먹은 경우) 이 세션의 모델을 머리말에 적어 둔다 — 뷰어가 모델명으로 보여 주는 근거.
+    # Claude 가 쓴 c2a 에 모델·노력이 비어 있으면(쓸 때 빼먹은 경우) 이 세션의 모델과 노력 단계를 머리말에 적어 둔다 — 뷰어가 "Claude Sonnet 5.5 (High)" 로 보여 주는 근거.
     # 최근 15분 안에 보낸 것만 대상으로 해 다른 세션의 옛 메시지를 잘못 찍지 않는다.
-    $stampModel = Get-TranscriptModel ([string]$in.transcript_path)
-    if ($stampModel) {
+    $stampInfo = Get-TranscriptModelInfo ([string]$in.transcript_path)
+    if ($stampInfo.Model) {
         foreach ($r in @(Read-HandoffIndex $ch)) {
             if ($r.Dir -ne "c2a" -or -not (Test-WithinMinutes $r 15)) { continue }
             $f = Get-HandoffMessageFile $ch $r.Num
-            if ($f) { [void](Set-HandoffMessageModel $f.FullName $stampModel) }
+            if ($f) { [void](Set-HandoffMessageModel $f.FullName $stampInfo.Model $stampInfo.Effort) }
         }
     }
 

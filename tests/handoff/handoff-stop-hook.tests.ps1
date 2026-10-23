@@ -188,7 +188,8 @@ try {
     $tr = Join-Path $work "transcript.jsonl"
     $trLines = @(
         '{"type":"user","message":{"role":"user","content":"hi"}}',
-        '{"type":"assistant","message":{"model":"claude-opus-4-5-20251101","role":"assistant","content":[{"type":"text","text":"ok"}]}}',
+        '{"type":"assistant","message":{"model":"claude-opus-4-5-20251101","role":"assistant","content":[{"type":"text","text":"ok"}]},"effort":"high","perTurnEffort":null}',
+        '{"type":"assistant","message":{"model":"claude-opus-4-5-20251101","role":"assistant","content":[{"type":"text","text":"ok2"}]},"effort":"medium","perTurnEffort":null}',
         '{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"x"}]}}'
     )
     [IO.File]::WriteAllText($tr, (($trLines -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
@@ -197,6 +198,14 @@ try {
     Assert-Equal "  방금 보낸 c2a 에 대화 기록의 마지막 모델이 적힌다" "claude-opus-4-5-20251101" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nNew).FullName)["모델"])
     Assert-Equal "  15분보다 오래된 c2a 는 건드리지 않는다" "" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nOld).FullName)["모델"])
     Assert-Equal "  모델이 이미 있는 c2a 는 그대로 둔다" "claude-sonnet-4-5" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nHas).FullName)["모델"])
+    Assert-Equal "  노력은 가장 최근 assistant 줄의 effort 가 적힌다(<synthetic> 줄은 건너뜀)" "medium" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nNew).FullName)["노력"])
+    Assert-Equal "  모델이 이미 있어도 노력이 없으면 노력만 채운다(모델은 그대로)" "claude-sonnet-4-5|medium" ("{0}|{1}" -f [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nHas).FullName)["모델"], [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nHas).FullName)["노력"])
+    Assert-Equal "  15분보다 오래된 c2a 에는 노력도 넣지 않는다" "" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nOld).FullName)["노력"])
+    $nPer = Add-HandoffMessage $st "c2a" "이번 턴만 노력 다름" "## 요약`n- p"
+    $trPer = Join-Path $work "transcript-per.jsonl"
+    [IO.File]::WriteAllText($trPer, ('{"type":"assistant","message":{"model":"claude-sonnet-5-5","role":"assistant","content":[]},"effort":"high","perTurnEffort":"xhigh"}' + "`n"), (New-Object Text.UTF8Encoding($false)))
+    [void](Invoke-Hook $stCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "1" } (@{ cwd = $stCwd; session_id = "s1"; hook_event_name = "Stop"; transcript_path = $trPer } | ConvertTo-Json -Compress))
+    Assert-Equal "  perTurnEffort 가 있으면 그것을 쓴다" "claude-sonnet-5-5|xhigh" ("{0}|{1}" -f [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nPer).FullName)["모델"], [string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nPer).FullName)["노력"])
     $nNew2 = Add-HandoffMessage $st "c2a" "대화 기록 없이" "## 요약`n- z"
     $r = Invoke-Hook $stCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "1" }
     Assert-Equal "  대화 기록 경로가 없으면 모델을 만들어 넣지 않는다" "" ([string](Read-HandoffFrontMatter (Get-HandoffMessageFile $st $nNew2).FullName)["모델"])

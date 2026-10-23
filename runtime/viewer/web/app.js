@@ -2836,6 +2836,24 @@
     return s;
   }
 
+  // 노력 단계 이름: low -> Low · xhigh -> XHigh · max -> Max. 모르는 값은 첫 글자만 대문자로.
+  function formatEffortName(raw) {
+    var s = String(raw == null ? "" : raw).trim();
+    if (!s) return "";
+    var low = s.toLowerCase();
+    if (low === "xhigh") return "XHigh";
+    return low.charAt(0).toUpperCase() + low.slice(1);
+  }
+
+  // 모델 ID(+노력)를 화면 이름으로. agy(Gemini) 모델 ID 는 이름에 노력이 들어 있다("Gemini 3.8 Flash (High)").
+  // Claude 는 모델 ID 에 노력이 없으니 메시지 머리말의 `노력:` 을 "Claude Sonnet 5.5 (High)" 처럼 덧붙인다. 모델을 모르면 빈 문자열.
+  function handoffNameOf(model, effort, party) {
+    var base = formatModelName(model);
+    if (!base) return "";
+    if (party === "claude" && effort) return base + " (" + formatEffortName(effort) + ")";
+    return base;
+  }
+
   // 메시지 목록(번호 오름차순)에서 두 쪽이 가장 최근에 쓴 모델(메시지 머리말의 `모델:` 기준). 없으면 빈 문자열.
   function handoffLatestModels(messages) {
     var out = { claude: "", agy: "" };
@@ -2850,25 +2868,84 @@
     return out;
   }
 
+  // 두 쪽이 가장 최근에 쓴 "화면 이름"(모델 + Claude 는 노력). 같은 메시지의 모델과 노력을 짝으로 본다. 없으면 빈 문자열.
+  function handoffLatestNames(messages) {
+    var out = { claude: "", agy: "" };
+    var list = Array.isArray(messages) ? messages : [];
+    for (var i = list.length - 1; i >= 0; i--) {
+      var m = list[i];
+      if (!m || !m.model) continue;
+      var p = dirParty(m.dir);
+      if (p && !out[p]) out[p] = handoffNameOf(m.model, m.effort, p);
+      if (out.claude && out.agy) break;
+    }
+    return out;
+  }
+
+  // agy 가 쓴 회신(a2c)에 머리말 모델이 없으면, 그 회신이 답한 메시지(답장대상)를 처리한 위임의 모델로 채운다.
+  // resolver(num) 은 { model, inferred } 또는 null. 이미 모델이 있으면 그대로. 새 배열을 돌려준다.
+  function handoffEnrichMessages(messages, resolver) {
+    var list = Array.isArray(messages) ? messages : [];
+    if (typeof resolver !== "function") return list;
+    return list.map(function (m) {
+      if (!m || m.model || dirParty(m.dir) !== "agy" || !m.replyTo) return m;
+      var r = resolver(m.replyTo);
+      if (!r || !r.model) return m;
+      var c = {};
+      for (var k in m) { if (Object.prototype.hasOwnProperty.call(m, k)) c[k] = m[k]; }
+      c.model = r.model;
+      return c;
+    });
+  }
+
+  // 채널의 위임 기록으로 "이 c2a 번호를 처리한 agy 모델"을 찾는 함수를 만든다.
+  //   채널 응답의 auto.dispatches(번호 -> 위임 작업 ID) -> 진행 중이면 대기 작업(pendingItems)의 모델, 끝났으면 위임 기록(allItems)의 모델.
+  //   둘 다 모르면 위임 때 고른 단계(tier)로 gemini-3.8-flash-<tier> 를 짐작한다(inferred).
+  function handoffDispatchResolver(channelData, records, pendings) {
+    var ds = channelData && channelData.auto && Array.isArray(channelData.auto.dispatches) ? channelData.auto.dispatches : [];
+    var recs = Array.isArray(records) ? records : [];
+    var pend = Array.isArray(pendings) ? pendings : [];
+    var usable = function (v) { v = String(v == null ? "" : v).trim(); return v && v.charAt(0) !== "(" ? v : ""; };
+    return function (num) {
+      if (num == null || num === "") return null;
+      for (var i = ds.length - 1; i >= 0; i--) {
+        var d = ds[i];
+        if (!d || String(d.num) !== String(num)) continue;
+        var id = d.taskId, j, v;
+        if (id) {
+          for (j = 0; j < pend.length; j++) { if (pend[j] && pend[j].task_id === id && (v = usable(pend[j].model))) return { model: v, inferred: false }; }
+          for (j = 0; j < recs.length; j++) { if (recs[j] && recs[j].task_id === id && (v = usable(recs[j].model))) return { model: v, inferred: false }; }
+        }
+        if (d.tier && /^(low|medium|high)$/.test(String(d.tier))) return { model: "gemini-3.8-flash-" + d.tier, inferred: true };
+        return null;
+      }
+      return null;
+    };
+  }
+
   // 메시지 하나의 "보낸 쪽 → 받는 쪽" 이름.
-  //   보낸 쪽: 그 메시지 머리말의 모델(없는 옛 메시지는 Claude/agy 라고만).
-  //   받는 쪽: 그 메시지에 답한 메시지(답장대상이 이 번호)의 모델이 있으면 그것(실제로 받은 쪽). 아직 답이 없으면 그 쪽이 가장 최근에 쓴 모델
-  //            (inferred=true 로 표시해 "추정"임을 밝힌다). 그것도 없으면 Claude/agy 라고만.
-  function handoffLabelParts(m, messages) {
+  //   보낸 쪽: 그 메시지 머리말의 모델(+Claude 는 노력). 머리말에 모델이 없는 agy 회신은 그 회신이 답한 위임의 모델. 그것도 없으면 그 쪽이 가장 최근에 쓴 모델
+  //            (senderInferred=true 로 표시해 "추정"임을 밝힌다). 그것도 없으면 Claude/agy 라고만.
+  //   받는 쪽: 그 메시지에 답한 메시지(답장대상이 이 번호)의 모델이 있으면 그것(실제로 받은 쪽). 아직 답이 없는 c2a 는 그 메시지를 처리 중인(처리한) 위임의 모델.
+  //            그것도 없으면 그 쪽이 가장 최근에 쓴 모델(inferred=true). 그것도 없으면 Claude/agy 라고만.
+  //   resolver: handoffDispatchResolver 의 함수(선택). 없으면 메시지 머리말만으로 정한다.
+  function handoffLabelParts(m, messages, resolver) {
     var senderParty = m ? dirParty(m.dir) : null;
     if (!senderParty) return null;
     var receiverParty = senderParty === "claude" ? "agy" : "claude";
     var generic = { claude: "Claude", agy: "agy" };
-    var list = Array.isArray(messages) ? messages : [];
+    var list = handoffEnrichMessages(Array.isArray(messages) ? messages : [], resolver);
     var full = m;
     if (m.model === undefined) {
       for (var k = 0; k < list.length; k++) { if (list[k] && String(list[k].num) === String(m.num)) { full = list[k]; break; } }
+    } else if (!m.model && senderParty === "agy") {
+      full = handoffEnrichMessages([m], resolver)[0];
     }
-    var sender = formatModelName(full.model);
+    var sender = handoffNameOf(full.model, full.effort, senderParty);
     var senderInferred = false;
     if (!sender) {
-      var latestSender = handoffLatestModels(list)[senderParty];
-      if (latestSender) { sender = formatModelName(latestSender); senderInferred = true; }
+      var latestSender = handoffLatestNames(list)[senderParty];
+      if (latestSender) { sender = latestSender; senderInferred = true; }
     }
     if (!sender) sender = generic[senderParty];
     var receiver = "";
@@ -2876,13 +2953,17 @@
     for (var i = 0; i < list.length; i++) {
       var r = list[i];
       if (r && r.model && r.replyTo && String(r.replyTo) === String(m.num) && dirParty(r.dir) === receiverParty) {
-        receiver = formatModelName(r.model);
+        receiver = handoffNameOf(r.model, r.effort, receiverParty);
         break;
       }
     }
+    if (!receiver && receiverParty === "agy" && typeof resolver === "function") {
+      var dm = resolver(m.num);
+      if (dm && dm.model) { receiver = handoffNameOf(dm.model, "", "agy"); inferred = !!dm.inferred; }
+    }
     if (!receiver) {
-      var latest = handoffLatestModels(list)[receiverParty];
-      if (latest) { receiver = formatModelName(latest); inferred = true; }
+      var latest = handoffLatestNames(list)[receiverParty];
+      if (latest) { receiver = latest; inferred = true; }
     }
     if (!receiver) receiver = generic[receiverParty];
     return { senderParty: senderParty, sender: sender, receiverParty: receiverParty, receiver: receiver, inferred: inferred, senderInferred: senderInferred };
@@ -2891,7 +2972,7 @@
   // 방향 표시: 모델명으로 "Claude Opus 5.5 → Gemini 3.8 Flash (High)". 채널 정보가 없으면 예전처럼 Claude/agy.
   function dirLabelHtml(dir, m, channelName) {
     var data = (m && channelName && handoffChannels[channelName]) ? handoffChannels[channelName] : null;
-    var parts = m ? handoffLabelParts(m, data ? data.messages : null) : null;
+    var parts = m ? handoffLabelParts(m, data ? data.messages : null, data ? handoffDispatchResolver(data, allItems, pendingItems) : null) : null;
     if (parts) {
       var tip = parts.inferred ? ' title="이 메시지에 답한 기록이 아직 없어, 그 쪽이 가장 최근에 쓴 모델로 표시했습니다"' : "";
       var sTip = parts.senderInferred ? ' title="이 메시지 머리말에 모델이 없어, 그 쪽이 가장 최근에 쓴 모델로 표시했습니다"' : "";
@@ -2967,7 +3048,8 @@
   function handoffRow(projectName, m, subPrefix) {
     var waitText = "";
     if (m.status === "보냄" || m.status === "읽음") {
-      var waitParts = handoffLabelParts(m, handoffChannels[projectName] ? handoffChannels[projectName].messages : null);
+      var waitData = handoffChannels[projectName];
+      var waitParts = handoffLabelParts(m, waitData ? waitData.messages : null, waitData ? handoffDispatchResolver(waitData, allItems, pendingItems) : null);
       if (waitParts) waitText = '<span class="who-' + waitParts.receiverParty + '">' + escapeHtml(waitParts.receiver) + ' 처리 대기</span>';
     }
     return buildRow({
@@ -5823,9 +5905,13 @@
 
   // 머리 범례와 방향 필터의 이름을 지금 보는 메시지들의 최근 모델로(없으면 Claude/agy).
   function updateHandoffPartyLabels(items) {
-    var latest = handoffLatestModels((items || []).map(function (it) { return it.msg; }));
-    var claudeName = formatModelName(latest.claude) || "Claude";
-    var agyName = formatModelName(latest.agy) || "agy";
+    var msgs = (items || []).map(function (it) {
+      var data = it && it.channel ? handoffChannels[it.channel] : null;
+      return data ? handoffEnrichMessages([it.msg], handoffDispatchResolver(data, allItems, pendingItems))[0] : it.msg;
+    });
+    var latest = handoffLatestNames(msgs);
+    var claudeName = latest.claude || "Claude";
+    var agyName = latest.agy || "agy";
     if (els.handoffLegendClaude) els.handoffLegendClaude.textContent = claudeName + " 보냄";
     if (els.handoffLegendAgy) els.handoffLegendAgy.textContent = agyName + " 보냄";
     if (els.handoffDirFilter) {

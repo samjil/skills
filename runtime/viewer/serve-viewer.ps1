@@ -1102,6 +1102,7 @@ try {
                                     title   = $mTitle
                                     status  = if ($mStatus) { $mStatus } else { "처리됨" }
                                     model   = [string]$mMeta.model
+                                    effort  = [string]$mMeta.effort
                                     replyTo = [string]$mMeta.replyTo
                                     auto    = [bool]$mMeta.auto
                                     created = $mCreated
