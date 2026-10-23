@@ -258,6 +258,14 @@ try {
     Assert-Equal "  본문은 그대로" $true ((Read-Raw $fM) -match "---\r?\n\r?\n## 요약\r?\n- m")
     Assert-Equal "  이미 있으면 덮어쓰지 않는다" $false (Set-HandoffMessageModel $fM "claude-sonnet-4-5")
     Assert-Equal "  그대로 claude-opus-4-5-20251101" "claude-opus-4-5-20251101" ([string](Read-HandoffFrontMatter $fM)["모델"])
+    Assert-Equal "  모델이 있어도 노력이 없으면 노력만 채운다" "True|claude-opus-4-5-20251101|high" ("{0}|{1}|{2}" -f (Set-HandoffMessageModel $fM "claude-sonnet-4-5" "high"), [string](Read-HandoffFrontMatter $fM)["모델"], [string](Read-HandoffFrontMatter $fM)["노력"])
+    Assert-Equal "  노력이 이미 있으면 덮어쓰지 않는다" "False|high" ("{0}|{1}" -f (Set-HandoffMessageModel $fM "x" "low"), [string](Read-HandoffFrontMatter $fM)["노력"])
+    $mE = Get-HandoffMessageMeta $fM
+    Assert-Equal "  Get-HandoffMessageMeta 가 노력을 읽는다" "claude-opus-4-5-20251101|high" ("{0}|{1}" -f $mE.model, $mE.effort)
+    $nE = Add-HandoffMessage $modelCh "c2a" "모델도 노력도 없음" "## 요약`n- e"
+    $fE = (Get-HandoffMessageFile $modelCh $nE).FullName
+    Assert-Equal "  모델과 노력을 함께 넣는다" "True|claude-sonnet-5-5|medium" ("{0}|{1}|{2}" -f (Set-HandoffMessageModel $fE "claude-sonnet-5-5" "medium"), [string](Read-HandoffFrontMatter $fE)["모델"], [string](Read-HandoffFrontMatter $fE)["노력"])
+    Assert-Equal "  둘 다 비어 있으면 아무것도 하지 않는다" $false (Set-HandoffMessageModel $fE "" "")
     $fNo = Join-Path $modelCh "msg\9999-c2a-머리말-없음.md"
     Set-Content -LiteralPath $fNo -Value "본문만 있는 파일" -Encoding UTF8
     Assert-Equal "  머리말이 없는 파일은 건드리지 않는다" $false (Set-HandoffMessageModel $fNo "claude-opus-4-5")

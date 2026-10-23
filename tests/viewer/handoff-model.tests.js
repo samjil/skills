@@ -19,12 +19,13 @@ function extractFunction(name) {
   throw new Error(name + " 의 끝을 찾지 못했습니다.");
 }
 
-const names = ["escapeHtml", "dirParty", "formatModelName", "handoffLatestModels", "handoffLabelParts", "dirLabelHtml", "handoffAutoText", "handoffAutoRows"];
-const make = new Function(
-  "handoffChannels",
+const names = ["escapeHtml", "dirParty", "formatModelName", "formatEffortName", "handoffNameOf", "handoffLatestModels", "handoffLatestNames", "handoffEnrichMessages", "handoffDispatchResolver", "handoffLabelParts", "dirLabelHtml", "handoffAutoText", "handoffAutoRows"];
+const makeRaw = new Function(
+  "handoffChannels", "allItems", "pendingItems",
   names.map(extractFunction).join("\n") +
-  "\nreturn { formatModelName, handoffLatestModels, handoffLabelParts, dirLabelHtml, handoffAutoText, handoffAutoRows };"
+  "\nreturn { formatModelName, formatEffortName, handoffNameOf, handoffLatestModels, handoffLatestNames, handoffEnrichMessages, handoffDispatchResolver, handoffLabelParts, dirLabelHtml, handoffAutoText, handoffAutoRows };"
 );
+const make = (hc, ai, pi) => makeRaw(hc || {}, ai || [], pi || []);
 
 let passed = 0, failed = 0;
 function eq(name, expected, actual) {
@@ -124,6 +125,53 @@ rr = api.handoffAutoRows([it("ch-a"), it("ch-b"), it("ch-c")], chans, now, 2);
 eq("limit 을 넘으면 나머지는 개수로만", [2, 1], [rr.rows.length, rr.hidden]);
 eq("메시지가 없으면 줄이 없다", 0, api.handoffAutoRows([], chans, now, 5).rows.length);
 eq("꺼진 채널의 토글은 '켜기' 동작(enabled=false)", false, api.handoffAutoRows([it("ch-c")], chans, now, 5).rows[0].enabled);
+
+console.log("\nformatEffortName · handoffNameOf: 노력 표시");
+eq("low/medium/high", ["Low", "Medium", "High"], ["low", "MEDIUM", "high"].map(api.formatEffortName));
+eq("  xhigh 는 XHigh, max 는 Max, 빈 값은 빈 글자", ["XHigh", "Max", ""], [api.formatEffortName("xhigh"), api.formatEffortName("max"), api.formatEffortName("")]);
+eq("Claude 는 모델 이름 뒤에 (노력)", "Claude Sonnet 5.5 (High)", api.handoffNameOf("claude-sonnet-5-5", "high", "claude"));
+eq("  노력이 없으면 모델 이름만", "Claude Sonnet 5.5", api.handoffNameOf("claude-sonnet-5-5", "", "claude"));
+eq("agy 는 모델 ID 의 노력만(Gemini 3.8 Flash (High)), 따로 덧붙이지 않는다", "Gemini 3.8 Flash (High)", api.handoffNameOf("gemini-3.8-flash-high", "low", "agy"));
+eq("모델을 모르면 빈 글자", "", api.handoffNameOf("", "high", "claude"));
+const effMsgs = [
+  { num: "0001", dir: "c2a", model: "claude-sonnet-5-5", effort: "high", replyTo: "" },
+  { num: "0002", dir: "a2c", model: "gemini-3.8-flash-medium", effort: "", replyTo: "0001" },
+  { num: "0003", dir: "c2a", model: "claude-sonnet-5-5", effort: "medium", replyTo: "0002" }
+];
+eq("가장 최근 이름: Claude 는 마지막 c2a 의 노력", { claude: "Claude Sonnet 5.5 (Medium)", agy: "Gemini 3.8 Flash (Medium)" }, api.handoffLatestNames(effMsgs));
+let q = api.handoffLabelParts(effMsgs[0], effMsgs);
+eq("c2a 방향: 보낸 쪽 Claude(노력) -> 받는 쪽은 답한 agy 모델", ["Claude Sonnet 5.5 (High)", "Gemini 3.8 Flash (Medium)", false], [q.sender, q.receiver, q.inferred]);
+q = api.handoffLabelParts(effMsgs[1], effMsgs);
+eq("a2c 방향: 보낸 쪽 agy -> 받는 쪽 Claude(그 회신에 답한 c2a 의 노력)", ["Gemini 3.8 Flash (Medium)", "Claude Sonnet 5.5 (Medium)"], [q.sender, q.receiver]);
+eq("  받는 쪽 Claude 의 노력이 없으면 모델만", "Claude Sonnet 5.5", api.handoffLabelParts({ num: "0009", dir: "a2c", model: "gemini-3.8-flash-low", replyTo: "0008" }, [{ num: "0008", dir: "c2a", model: "claude-sonnet-5-5", replyTo: "" }, { num: "0009", dir: "a2c", model: "gemini-3.8-flash-low", replyTo: "0008" }]).receiver);
+
+console.log("\n위임 기록으로 agy 모델 채우기 (handoffDispatchResolver)");
+const chData = { auto: { dispatches: [
+  { num: "0081", taskId: "handoff_ch_0081_100000", done: true, tier: "medium" },
+  { num: "0082", taskId: "handoff_ch_0082_100500", done: false, tier: "high" },
+  { num: "0083", taskId: "handoff_ch_0083_101000", done: true, tier: "low" },
+  { num: "0084", taskId: "", done: false, tier: "bogus" }
+] } };
+const recs = [{ task_id: "handoff_ch_0081_100000", model: "gemini-3.8-flash-medium" }, { task_id: "handoff_ch_0083_101000", model: "(session)" }];
+const pends = [{ task_id: "handoff_ch_0082_100500", model: "gemini-3.7-flash-high" }];
+const res = api.handoffDispatchResolver(chData, recs, pends);
+eq("끝난 위임은 위임 기록(allItems)의 모델", { model: "gemini-3.8-flash-medium", inferred: false }, res("0081"));
+eq("진행 중인 위임은 대기 작업(pendingItems)의 모델", { model: "gemini-3.7-flash-high", inferred: false }, res("0082"));
+eq("모델이 '(session)' 자리표시자면 쓰지 않고 위임 때 고른 단계로 짐작(추정)", { model: "gemini-3.8-flash-low", inferred: true }, res("0083"));
+eq("알 수 없는 단계·작업 ID 없음·없는 번호는 null", [null, null], [res("0084"), res("0999")]);
+eq("  번호가 비어 있으면 null", null, res(""));
+const enr = api.handoffEnrichMessages([{ num: "0082", dir: "a2c", model: "", replyTo: "0081" }, { num: "0083", dir: "c2a", model: "", replyTo: "" }, { num: "0084", dir: "a2c", model: "gemini-3.8-flash-high", replyTo: "0081" }], res);
+eq("agy 회신에 모델이 없으면 답한 위임의 모델로 채우고, 이미 있거나 c2a 는 그대로", ["gemini-3.8-flash-medium", "", "gemini-3.8-flash-high"], enr.map(x => x.model));
+const pendMsgs = [{ num: "0082", dir: "c2a", model: "claude-sonnet-5-5", effort: "high", replyTo: "", status: "읽음" }];
+q = api.handoffLabelParts(pendMsgs[0], pendMsgs, res);
+eq("처리 중인 c2a 의 받는 쪽은 그 위임의 실제 모델(추정 아님)", ["Claude Sonnet 5.5 (High)", "Gemini 3.7 Flash (High)", false], [q.sender, q.receiver, q.inferred]);
+const tierOnly = api.handoffDispatchResolver({ auto: { dispatches: [{ num: "0090", taskId: "x", tier: "high" }] } }, [], []);
+q = api.handoffLabelParts({ num: "0090", dir: "c2a", model: "claude-sonnet-5-5", effort: "low" }, [], tierOnly);
+eq("위임 모델을 아직 못 읽고 단계만 알면 단계로 짐작하고 추정 표시", ["Gemini 3.8 Flash (High)", true], [q.receiver, q.inferred]);
+q = api.handoffLabelParts({ num: "0080", dir: "a2c", model: "", replyTo: "0081" }, [{ num: "0080", dir: "a2c", model: "", replyTo: "0081" }], res);
+eq("머리말에 모델이 없는 agy 회신(a2c)의 보낸 쪽은 답한 위임의 모델", "Gemini 3.8 Flash (Medium)", q.sender);
+const api3 = make({ ch: Object.assign({ messages: [{ num: "0080", dir: "a2c", model: "", replyTo: "0081", status: "확인함" }, { num: "0081", dir: "c2a", model: "claude-sonnet-5-5", effort: "high", replyTo: "", status: "처리됨" }] }, chData) }, recs, pends);
+eq("dirLabelHtml 이 위임 기록을 써서 화면 이름을 만든다(agy 회신. 아직 답이 없어 받는 Claude 쪽은 추정 표시)", '<span class="who-agy">Gemini 3.8 Flash (Medium)</span> → <span title="이 메시지에 답한 기록이 아직 없어, 그 쪽이 가장 최근에 쓴 모델로 표시했습니다">Claude Sonnet 5.5 (High)</span>', api3.dirLabelHtml("a2c", { num: "0080", dir: "a2c", model: "", replyTo: "0081" }, "ch"));
 
 console.log("\n통과 " + passed + " / 실패 " + failed);
 if (failed > 0) {

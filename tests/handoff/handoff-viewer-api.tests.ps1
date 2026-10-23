@@ -52,6 +52,7 @@ try {
     New-Item -ItemType Directory -Force -Path (Join-Path $ch "msg") | Out-Null
     Set-Content -LiteralPath (Join-Path $ch "INDEX.md") -Value "# INDEX`n| 번호 | 시각 | 방향 | 제목 | 상태 |`n|---|---|---|---|---|" -Encoding UTF8
     $n1 = Add-HandoffMessage $ch "c2a" "Claude 가 보낸 것" "## 요약`n- a" "" "claude-opus-4-5"
+    [void](Set-HandoffMessageModel (Get-HandoffMessageFile $ch $n1).FullName "" "high")     # 노력(Stop 훅이 적는 값)
     $n2 = Add-HandoffMessage $ch "a2c" "agy 의 회신" "## 요약`n- b" $n1 "gemini-3.8-flash-high" $true
     $oldFile = Join-Path $ch "msg\0003-c2a-old.md"
     Set-Content -LiteralPath $oldFile -Value "# 옛 메시지(머리말 없음)`n본문" -Encoding UTF8
@@ -84,6 +85,7 @@ try {
     $m2 = @($data.messages | Where-Object { $_.num -eq $n2 })[0]
     $m3 = @($data.messages | Where-Object { $_.num -eq "0003" })[0]
     Assert-Equal "Claude 가 보낸 메시지: 모델 claude-opus-4-5, 자동 아님" "claude-opus-4-5|False" ("{0}|{1}" -f $m1.model, $m1.auto)
+    Assert-Equal "Claude 가 보낸 메시지의 노력이 응답에 있다(없는 메시지는 빈 값)" "high||" ("{0}|{1}|{2}" -f $m1.effort, $m2.effort, $m3.effort)
     Assert-Equal "agy 회신: 모델·답장대상·자동" "gemini-3.8-flash-high|$n1|True" ("{0}|{1}|{2}" -f $m2.model, $m2.replyTo, $m2.auto)
     Assert-Equal "머리말이 없는 옛 메시지: 모델·답장대상 빈 값" "||False" ("{0}|{1}|{2}" -f $m3.model, $m3.replyTo, $m3.auto)
     Assert-Equal "auto 요약: 켜짐, 멈춤 아님, 왕복 0/6" "True|False|0|6" ("{0}|{1}|{2}|{3}" -f $data.auto.enabled, $data.auto.halted, $data.auto.rounds, $data.auto.maxRounds)

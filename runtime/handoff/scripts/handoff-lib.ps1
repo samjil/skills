@@ -283,16 +283,20 @@ function Read-HandoffFrontMatter([string]$Path) {
 }
 
 # 메시지 머리말에 모델이 없으면 넣는다(이미 있으면 그대로 둔다). 머리말이 없는 파일은 건드리지 않는다. 넣었으면 $true.
-function Set-HandoffMessageModel([string]$Path, [string]$Model) {
-    if (-not $Model -or -not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+# 모델(`모델:`)과 노력(`노력:`)을 각각 따로 본다: 이미 있는 것은 그대로 두고 없는 것만 넣는다. 하나라도 넣었으면 $true.
+function Set-HandoffMessageModel([string]$Path, [string]$Model, [string]$Effort = "") {
+    if ((-not $Model -and -not $Effort) -or -not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
     $bytes = [System.IO.File]::ReadAllBytes($Path)
     $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
     $text = (New-Object System.Text.UTF8Encoding($false)).GetString($bytes, $(if ($hasBom) { 3 } else { 0 }), $bytes.Length - $(if ($hasBom) { 3 } else { 0 }))
     $m = [regex]::Match($text, '\A(---[ \t]*\r?\n)((?:.*?\r?\n)*?)(---[ \t]*(?:\r?\n|\z))')
     if (-not $m.Success) { return $false }
-    if ([regex]::IsMatch($m.Groups[2].Value, '(?m)^\s*모델\s*[:：]')) { return $false }
     $eol = if ($m.Groups[1].Value.EndsWith("`r`n")) { "`r`n" } else { "`n" }
-    $new = $m.Groups[1].Value + $m.Groups[2].Value + "모델: $Model" + $eol + $m.Groups[3].Value
+    $add = ""
+    if ($Model -and -not [regex]::IsMatch($m.Groups[2].Value, '(?m)^\s*모델\s*[:：]')) { $add += "모델: $Model" + $eol }
+    if ($Effort -and -not [regex]::IsMatch($m.Groups[2].Value, '(?m)^\s*노력\s*[:：]')) { $add += "노력: $Effort" + $eol }
+    if (-not $add) { return $false }
+    $new = $m.Groups[1].Value + $m.Groups[2].Value + $add + $m.Groups[3].Value
     $text = $new + $text.Substring($m.Length)
     $out = (New-Object System.Text.UTF8Encoding($false)).GetBytes($text)
     if ($hasBom) { $out = [byte[]](@(0xEF, 0xBB, 0xBF) + $out) }
@@ -469,7 +473,7 @@ function Get-HandoffRounds($State, [int]$Minutes = 60) {
 
 # 메시지 파일 머리말에서 뷰어가 쓰는 것만(모델 · 답장대상 · 자동). 파일 수정 시각이 같으면 캐시를 쓴다($Cache 는 호출하는 쪽이 들고 있는 해시테이블).
 function Get-HandoffMessageMeta([string]$Path, [hashtable]$Cache = $null) {
-    $empty = @{ model = ""; replyTo = ""; auto = $false }
+    $empty = @{ model = ""; effort = ""; replyTo = ""; auto = $false }
     if (-not $Path) { return $empty }
     $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
     if (-not $item) { return $empty }
@@ -478,7 +482,7 @@ function Get-HandoffMessageMeta([string]$Path, [hashtable]$Cache = $null) {
     $h = Read-HandoffFrontMatter $Path
     $mdl = [string]$h["모델"]
     if ($mdl -eq "(session)") { $mdl = "" }
-    $meta = @{ model = $mdl; replyTo = [string]$h["답장대상"]; auto = ([string]$h["자동"] -eq "예") }
+    $meta = @{ model = $mdl; effort = [string]$h["노력"]; replyTo = [string]$h["답장대상"]; auto = ([string]$h["자동"] -eq "예") }
     if ($Cache) { $Cache[$Path] = @{ stamp = $stamp; meta = $meta } }
     return $meta
 }
@@ -488,7 +492,7 @@ function Get-HandoffAutoSummary([string]$ChannelDir) {
     $s = Read-HandoffAutoState $ChannelDir
     $inFlight = @(@($s.dispatches) | Where-Object { $_ -and -not $_.done } | ForEach-Object { [pscustomobject]@{ num = [string]$_.num; taskId = [string]$_.task_id; at = [string]$_.at } })
     # 메시지 번호 -> 위임 작업 ID. 화면이 보냄·읽음 메시지의 진행 과정을 그 위임에서 찾아 보여 주고, 끝난 메시지도 과정을 열 수 있게 한다(최근 30건).
-    $dispatches = @(@($s.dispatches) | Where-Object { $_ } | Select-Object -Last 30 | ForEach-Object { [pscustomobject]@{ num = [string]$_.num; taskId = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done } })
+    $dispatches = @(@($s.dispatches) | Where-Object { $_ } | Select-Object -Last 30 | ForEach-Object { [pscustomobject]@{ num = [string]$_.num; taskId = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done; tier = [string]$_.tier } })
     return [pscustomobject]@{
         dispatches    = $dispatches
         enabled       = (-not (Test-HandoffAutoDisabled $ChannelDir))
