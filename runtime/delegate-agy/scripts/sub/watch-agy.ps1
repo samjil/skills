@@ -135,9 +135,10 @@ $SelectableModels = @(@("gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gem
 #   @session: 대화를 이어갈 세션 이름
 #   @model:   이번 호출에 쓸 모델 하나 (위 $SelectableModels)
 #   @raw:     true 면 워처가 표준 규칙(DO NOT COMMIT 등, agy-rules.ps1)을 프롬프트에 자동으로 붙이지 않는다
-# 반환: @{ Cwd; Session; Model; Raw; Prompt }  (Cwd 는 폴더 배열이고 없으면 빈 배열, Session/Model 은 없으면 $null, Raw 는 $true/$false)
+#   @upgrade: true 면 @session 으로 이어가는 대화에 다른 @model 을 줘도 오류 대신 "모델 승격"을 한다: 새 대화를 시작하고 이전 질문·답 글을 지시문 위에 붙인다(Resolve-RequestedModel)
+# 반환: @{ Cwd; Session; Model; Raw; Upgrade; Prompt }  (Cwd 는 폴더 배열이고 없으면 빈 배열, Session/Model 은 없으면 $null, Raw/Upgrade 는 $true/$false)
 function ConvertFrom-TaskDirectives([string]$rawText) {
-    $cwdRaw = New-Object System.Collections.ArrayList; $session = $null; $model = $null; $raw = $false
+    $cwdRaw = New-Object System.Collections.ArrayList; $session = $null; $model = $null; $raw = $false; $upgrade = $false
     $prompt = $rawText
     while ($prompt.Length -gt 0) {
         $firstLine = ($prompt -split "`r?`n", 2)[0]
@@ -151,30 +152,35 @@ function ConvertFrom-TaskDirectives([string]$rawText) {
             $model = $Matches[1].Trim()
         } elseif ($firstLine -match '^\ufeff?@raw:\s*(.+)$') {
             $raw = ConvertTo-AgyDirectiveFlag $Matches[1]
+        } elseif ($firstLine -match '^\ufeff?@upgrade:\s*(.+)$') {
+            $upgrade = ConvertTo-AgyDirectiveFlag $Matches[1]
         } else {
             break
         }
         $rest = ($prompt -split "`r?`n", 2)
         $prompt = if ($rest.Length -gt 1) { $rest[1] } else { "" }
     }
-    return @{ Cwd = @(ConvertTo-CwdList $cwdRaw.ToArray()); Session = $session; Model = $model; Raw = $raw; Prompt = $prompt }
+    return @{ Cwd = @(ConvertTo-CwdList $cwdRaw.ToArray()); Session = $session; Model = $model; Raw = $raw; Upgrade = $upgrade; Prompt = $prompt }
 }
 
 # 요청한 @model 을 확인합니다. 반환: @{ Model = <정식 ID 또는 $null>; Error = <사용자에게 보일 사유 또는 $null> }
 #   - 목록에 없으면 오류(대소문자는 구분하지 않고 정식 ID 로 바꿔 줍니다).
 #   - 이어가는 세션(@session 으로 기존 대화를 잇는 경우)은 agy 가 시작할 때의 모델을 유지하므로,
-#     다른 모델을 요청하면 조용히 무시하지 않고 오류로 알립니다.
-function Resolve-RequestedModel([string]$requested, [string]$conversationId, [string]$knownModel, [string]$sessionName) {
+#     다른 모델을 요청하면 조용히 무시하지 않고 오류로 알립니다(원래 대화를 지키려는 것: 실수로 모델을 잘못 적어도 대화가 바뀌지 않는다).
+#   - 단 @upgrade: true 를 명시했으면 오류 대신 Upgrade = $true 로 돌려줍니다(호출한 쪽이 새 대화를 시작하고 이전 질문·답 글을 붙인다).
+#     이어가는 대화가 없거나 모델이 같으면 @upgrade 는 할 일이 없다(Upgrade = $false).
+function Resolve-RequestedModel([string]$requested, [string]$conversationId, [string]$knownModel, [string]$sessionName, [bool]$upgrade = $false) {
     if (-not $requested) { return @{ Model = $null; Error = $null } }
     $canonical = @($SelectableModels | Where-Object { $_ -ieq $requested }) | Select-Object -First 1
     if (-not $canonical) {
         return @{ Model = $null; Error = "지정한 @model 을 쓸 수 없습니다: $requested (쓸 수 있는 모델: $($SelectableModels -join ', '))" }
     }
     if ($conversationId -and ($canonical -ne $knownModel)) {
+        if ($upgrade) { return @{ Model = $canonical; Error = $null; Upgrade = $true } }
         $was = if ($knownModel) { $knownModel } else { "기록 없음" }
-        return @{ Model = $canonical; Error = "이어가는 세션 '$sessionName' 은 시작할 때의 모델($was)로 계속됩니다. 다른 모델($canonical)을 쓰려면 @session 없이 보내거나 새 세션 이름으로 보내세요." }
+        return @{ Model = $canonical; Error = "이어가는 세션 '$sessionName' 은 시작할 때의 모델($was)로 계속됩니다. 다른 모델($canonical)을 쓰려면 @upgrade: true 를 지시문에 추가해 새 대화로 승격하거나(이전 질문·답 글을 붙여 줍니다. 파일 읽기 기록은 이어지지 않습니다), @session 없이 보내거나 새 세션 이름으로 보내세요." }
     }
-    return @{ Model = $canonical; Error = $null }
+    return @{ Model = $canonical; Error = $null; Upgrade = $false }
 }
 
 
@@ -1321,7 +1327,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
 
 
     # @model 검사: 쓸 수 없는 모델이면 agy 를 부르지 않고 바로 실패 처리합니다(@cwd 오류와 같은 방식).
-    $modelCheck = Resolve-RequestedModel $requestedModel $conversationId $knownModel $sessionName
+    $modelCheck = Resolve-RequestedModel $requestedModel $conversationId $knownModel $sessionName ([bool]$directives.Upgrade)
     if ($modelCheck.Error) {
         Set-Content -Path $outFile -Value $modelCheck.Error -Encoding UTF8
         Log "실패: $($modelCheck.Error)"
@@ -1331,6 +1337,18 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
     }
     $requestedModel = $modelCheck.Model
     if ($requestedModel) { Log "  -> 지정 모델(@model): $requestedModel (다른 모델로 자동 전환하지 않음)" }
+
+    # 모델 승격(@upgrade): 이어가던 대화(시작 모델 $knownModel)를 버리고 새 대화로 시작한다. 이전 질문·답 글(최근 2쌍)을 지시문 위에 붙인다.
+    # 새 대화가 성공하면 세션의 대화 ID·모델이 새 값으로 바뀐다. 실패하면 세션은 이전 대화 그대로 남는다(Write-Session 은 성공 때만 부른다).
+    if ($modelCheck.Upgrade) {
+        $oldConversation = $conversationId
+        $history = @()
+        try { $history = @(Get-AgySessionHistory $AgyDbPath $sessionName 2) } catch { $history = @() }
+        $promptText = New-AgyUpgradeContext $history $knownModel $requestedModel $promptText
+        $conversationId = ""
+        $knownModel = ""
+        Log "  -> 모델 승격(@upgrade): 세션 '$sessionName' 의 대화(ID: $oldConversation)를 이어가지 않고 $requestedModel 로 새 대화를 시작합니다(이전 질문·답 $($history.Count)쌍을 지시문에 붙임)"
+    }
 
     # 모델을 지정하지 않았고 새 대화(@session 없음)면 요청 난이도로 노력 단계를 자동 선택한다(agy-autotier.ps1).
     # 분명히 쉬운 일만 low/medium 으로 낮추고, 애매하거나 어려우면 지금처럼 우선순위 목록(high)을 쓴다. 이어가는 세션은 시작할 때의 모델을 유지한다.

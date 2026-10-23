@@ -523,6 +523,22 @@ function Get-AgySession([string]$DbPath, [string]$Name) {
     try { return (Get-AgySessionRow $db (Get-AgySessionKey $Name)) } finally { $db.Dispose() }
 }
 
+# 세션의 최근 "성공한" 위임(질문·답)을 오래된 것부터 돌려준다(모델 승격 때 새 대화에 이전 맥락을 글로 붙이려는 용도). 세션 이름은 대소문자를 가리지 않는다.
+# 반환: @(@{ TaskId; Timestamp; Model; Question; Answer }). DB 가 없거나 기록이 없으면 빈 배열.
+function Get-AgySessionHistory([string]$DbPath, [string]$Name, [int]$Limit = 2) {
+    if (-not $Name -or $Limit -lt 1 -or -not (Test-Path -LiteralPath $DbPath)) { return @() }
+    $db = Open-AgyDb $DbPath
+    try {
+        $rows = $db.Query("SELECT task_id, timestamp, model, question, answer FROM tasks WHERE session = ? COLLATE NOCASE AND status = 'OK' AND answer IS NOT NULL ORDER BY timestamp DESC, task_id DESC LIMIT ?", [object[]]@($Name, [long]$Limit))
+        $out = @()
+        foreach ($r in $rows) {
+            $out += ,@{ TaskId = [string]$r['task_id']; Timestamp = [string]$r['timestamp']; Model = [string]$r['model']; Question = [string]$r['question']; Answer = [string]$r['answer'] }
+        }
+        [array]::Reverse($out)
+        return @($out)
+    } finally { $db.Dispose() }
+}
+
 function Remove-AgySessionsOlderThan([string]$DbPath, [int]$Days) {
     if (-not (Test-Path -LiteralPath $DbPath)) { return 0 }
     $cut = (Get-Date).AddDays(-$Days).ToString('yyyy-MM-dd HH:mm:ss')
