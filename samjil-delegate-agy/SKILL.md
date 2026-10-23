@@ -263,9 +263,10 @@ done
 웹 뷰어는 위임 지시문(질문)과 agy 답변을 **있는 그대로** 보여 준다. 영어로 쓰면 화면 전체가 영어로 나와 사용자가 읽기 어렵다(2026-10 사용자 요청).
 
 - **지시문 본문은 한글로 쓴다.** 코드 · 파일 경로 · 명령어 · 식별자 · 에러 메시지 원문은 번역하지 않고 그대로 둔다.
-- **지시문 맨 끝에 "최종 답변과 보고서는 한글로 작성한다(코드·경로·명령어·원문 에러는 그대로)" 문장을 반드시 넣는다.** 이 문장이 없으면 agy는 지시문이 영어일 때 영어로 답한다.
+- **지시문 맨 끝에 "최종 답변과 보고서는 한글로 작성한다(코드·경로·명령어·원문 에러는 그대로)" 문장을 넣는다.** 이 문장이 없으면 agy는 지시문이 영어일 때 영어로 답한다.
+  단 `@cwd` 로 폴더를 여는 작업은 워처가 같은 뜻의 문장을 자동으로 붙이므로(아래 "표준 규칙 자동 추가") 생략해도 된다. **`@cwd` 가 없는 위임은 이 문장을 직접 넣는다**(번역처럼 결과 언어가 한국어가 아닌 작업만 예외).
 - **테스트/스크립트 실행 시 창 깜빡임 방지**: 코딩 위임 지시문에서 테스트나 명령어 실행 시 `powershell.exe -WindowStyle Hidden -Command ...` 등으로 감싸지 말고 도구(`run_command`)의 `CommandLine`에 명령어를 직접 실행하도록 안내한다 (Windows에서 `powershell.exe`를 서브프로세스로 재호출하면 실행 순간 화면에 콘솔 창이 깜빡이는 부작용이 발생함).
-- 한 줄 지시문(`Find real defects` 같은 영어 관용 표현)만 영어로 남기지 않는다. 아래 "기본 문단"의 Rules 도 한글로 옮겨 써도 되고, 영어로 두더라도 맨 끝의 "최종 답변과 보고서는 한글로" 문장은 꼭 넣는다.
+- 한 줄 지시문(`Find real defects` 같은 영어 관용 표현)만 영어로 남기지 않는다.
 
 ## 프로젝트 폴더 코딩 위임 (`@cwd`)
 
@@ -298,15 +299,15 @@ done
 실제 프로젝트에서 여러 번 위임해 보고 정한 규칙이다(2026-10 이벤트 로그 작업). 코드 결과물은 명세가 완전하면
 쓸 만하지만, 작업 운영(끝났는지, 무엇을 했는지)은 믿기 어렵다. 그래서 아래를 지킨다.
 
-1. **agy 는 커밋하지 않는다.** 지시문에 반드시 넣는다: "DO NOT COMMIT — git add · commit · stash · reset 등 git 상태를
-   바꾸는 명령을 쓰지 말고, 바꾼 내용은 작업 트리에 그대로 둔다." 브리프에 커밋 단계가 있어도 무시하게 한다.
+1. **agy 는 커밋하지 않는다.** `@cwd` 작업에는 워처가 "DO NOT COMMIT — git add · commit · stash · reset 등 git 상태를 바꾸는 명령을 쓰지 말고, 바꾼 내용은 작업 트리에 그대로 둔다"를
+   프롬프트에 **자동으로 붙인다**(아래 "표준 규칙 자동 추가"). 지시문에 직접 쓸 필요는 없지만, 브리프(명세 문서)에 커밋 단계가 있으면 그 단계를 지시문에서 빼 둔다.
    - agy 가 이미 커밋했으면 `git reset --mixed <커밋 전>` 으로 풀어(변경은 작업 트리에 남는다) 검토한다.
    - **Claude 가 diff 를 직접 읽어 리뷰**하고, 테스트 · 빌드를 직접 다시 돌린 뒤 **커밋할지 말지 Claude 가 정해 직접 커밋**한다.
      서브에이전트 리뷰로 갈음하지 않는다(사용자 지시). 사소한 보완은 이때 Claude 가 바로 고친다.
 2. **작게 나눈다.** 한 위임은 파일 몇 개 · 10분 안팎으로 끝날 크기로. 마감(30분) 전이라도 큰 작업은 늦고, 검토도 어렵다.
    점검 · 분석처럼 넓은 일은 **결과 파일을 먼저 만들고 확인한 것을 그때그때 덧붙이게** 해서 중단돼도 부분 결과가 남게 한다.
-3. **명령은 전경에서 끝까지 기다리게 한다.** 지시문에 "모든 명령을 FOREGROUND 로 실행하고 끝날 때까지 기다린다. 백그라운드
-   작업 · 터미널을 남기지 않는다"를 넣는다. 그래도 agy 가 긴 명령(npm install · gradle · 빌드)을 스스로 백그라운드로 돌릴 수 있다.
+3. **명령은 전경에서 끝까지 기다리게 한다.** "모든 명령을 FOREGROUND 로 실행하고 끝날 때까지 기다린다. 백그라운드
+   작업 · 터미널을 남기지 않는다"도 `@cwd` 작업에는 워처가 자동으로 붙인다. 그래도 agy 가 긴 명령(npm install · gradle · 빌드)을 스스로 백그라운드로 돌릴 수 있다.
 4. **"오류"로 보고돼도 agy 가 아직 돌고 있을 수 있다.** 응답에 `root agent idle; waiting ... for background task(s)` 같은 문구가
    오면 워처는 오류로 기록하지만 agy 는 계속 일해 나중에 파일을 바꾸거나 커밋까지 한다. 그 저장소를 만지기 전에 확인한다:
    - `logs/watcher.log` 에 그 작업의 `완료` 줄이 있는지, `logs/current_task.json` 이 다른 작업으로 넘어갔는지
@@ -321,17 +322,24 @@ done
    수치 기준(약 40줄 미만 · 파일 둘 이하 · 새 요소 없음)을 모두 만족할 때만 한다. 급하다는 이유만으로 기준을 넘는 수정을 직접 하지 않고,
    서로 다른 파일이면 병렬로(최대 3개) 보내 대기를 줄인다.
 
-지시문 맨 아래에 붙이는 기본 문단(필요에 맞게 고쳐 쓴다):
+### 표준 규칙 자동 추가 (`@cwd` 작업, `@raw` 로 끔)
+
+`@cwd` 로 폴더를 여는 작업에는 워처가 agy 를 부르기 직전에 아래 규칙을 프롬프트 **맨 끝에 자동으로 붙인다**(`agy-rules.ps1`). 그래서 Claude 는 **작업 명세만 짧게** 쓰면 된다 —
+예전처럼 영문 `Rules:` 문단을 매번 적지 않는다.
 
 ```
-Rules:
-- DO NOT COMMIT. Do not run git add / commit / stash / reset or any command that changes git state. Leave all changes in the working tree.
-- Run every command in the FOREGROUND and wait for it to finish. Do not leave background tasks or terminals running.
+Rules (added automatically by the watcher):
+- DO NOT COMMIT. Do not run git add / commit / stash / reset / checkout / switch or any command that changes git state. Leave all changes in the working tree.
+- Run every command in the FOREGROUND and wait for it to finish. Do not leave background tasks or terminals running. Run commands directly; do not wrap them in another powershell.exe call.
 - Touch only the files this task needs. Do not touch untracked files you did not create.
-- Write a report to <report path>: what you changed per file, every command you ran with its raw output (test counts, failures, build result), and concerns.
-Final reply, short: status, files changed, one-line test summary, concerns.
-Write the final reply and the report in Korean (keep code, paths, commands and raw error text as is).
+Write the final reply and any report in Korean (keep code, paths, commands and raw error text as is).
 ```
+
+- **규칙마다 따로 본다.** 지시문에 이미 같은 뜻의 규칙(예: `DO NOT COMMIT`, `한글로 작성`)이 있으면 그 규칙만 건너뛰고 빠진 것만 붙인다. 로그(`watcher.log`)에 `표준 규칙 자동 추가:` 로 붙인 규칙이 남는다.
+- **`@cwd` 가 없는 위임에는 아무것도 붙이지 않는다.** 번역 · 데이터 변환처럼 결과 언어와 형식이 지시문마다 다르기 때문이다. 이런 위임은 Claude 가 위 "지시문과 답변은 한글로"의 문장을 직접 넣는다.
+- **`@raw: true`** 를 지시문 맨 위(다른 `@` 줄과 같이)에 쓰면 자동으로 붙이지 않는다. 자기 규칙을 직접 쓰는 작업(핸드오프 펌프가 만드는 지시문)이 이렇게 한다.
+- 붙인 규칙은 agy 에게 넘기는 프롬프트에만 들어가고, 뷰어와 위임 기록의 질문에는 Claude 가 쓴 원본이 그대로 남는다.
+- **Claude 가 지시문에 계속 직접 적어야 하는 것**: 보고서 파일 경로와 보고 내용("무엇을 바꿨는지 · 실행한 명령과 원래 출력 · 걱정되는 점을 `<보고서 경로>` 에 적고, 최종 답변은 상태 · 바뀐 파일 · 시험 한 줄 요약 · 걱정되는 점만 짧게").
 
 ## 여러 작업을 이어서 위임 (`@session`)
 

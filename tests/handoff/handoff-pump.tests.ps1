@@ -9,6 +9,7 @@ $subDir   = Join-Path $repoRoot "runtime\delegate-agy\scripts\sub"
 . (Join-Path $repoRoot "runtime\handoff\scripts\handoff-lib.ps1")
 . (Join-Path $subDir "handoff-pump.ps1")
 . (Join-Path $subDir "common.ps1")
+. (Join-Path $subDir "agy-rules.ps1")
 
 $script:Failed = 0
 $script:Passed = 0
@@ -66,6 +67,7 @@ try {
     $text = [IO.File]::ReadAllText($tasks[0].FullName, [Text.Encoding]::UTF8)
     $dir = ConvertFrom-TaskDirectives $text
     Assert-Equal "  워처가 읽는 지시어: 세션 handoff-my-app" "handoff-my-app" $dir.Session
+    Assert-Equal "  @raw: true(워처가 표준 규칙을 덧붙이지 않는다)" $true ([bool]$dir.Raw)
     Assert-Equal "  @cwd 두 곳(채널 폴더 + 저장소)" 2 @($dir.Cwd).Count
     Assert-Equal "  @cwd 에 채널 폴더와 저장소가 있다" $true ((@($dir.Cwd) -contains $ch) -and (@($dir.Cwd) -contains $repo))
     Assert-Equal "  본문에 메시지 전문과 번호·제목이 들어간다" $true (($dir.Prompt -match "본문 상세 내용 ABC") -and ($dir.Prompt -match "#0001") -and ($dir.Prompt -match "로그인 버튼 색 고치기"))

@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $subDir   = Join-Path $repoRoot "runtime\delegate-agy\scripts\sub"
 . (Join-Path $subDir "agy-progress.ps1")
+. (Join-Path $subDir "agy-rules.ps1")
 
 $script:Failed = 0
 $script:Passed = 0
@@ -75,6 +76,13 @@ Assert-Equal "  본문에 그대로 남는다" "첫 줄은 본문`n@model: gemin
 $d = ConvertFrom-TaskDirectives "@foo: 모르는 키`n@model: gemini-3.8-flash-low`n끝"
 Assert-Equal "모르는 @키 줄에서 지시어 읽기가 멈춘다 (그 뒤 @model 은 읽지 않음)" $null $d.Model
 
+
+Write-Host "ConvertFrom-TaskDirectives: @raw"
+$d = ConvertFrom-TaskDirectives "@cwd: C:\p`n@raw: true`n질문"
+Assert-Equal "@raw: true 는 Raw 가 참이고 본문은 다음 줄부터" "True|질문" ("{0}|{1}" -f $d.Raw, $d.Prompt)
+foreach ($v in @("yes", "1", "On", "예", "TRUE")) { Assert-Equal "  @raw: $v 도 참" $true ((ConvertFrom-TaskDirectives "@raw: $v`n질문").Raw) }
+foreach ($v in @("false", "no", "0", "아니오", "")) { Assert-Equal "  @raw: [$v] 는 거짓" $false ((ConvertFrom-TaskDirectives "@raw: $v`n질문").Raw) }
+Assert-Equal "  @raw 가 없으면 거짓" $false ((ConvertFrom-TaskDirectives "질문").Raw)
 
 Write-Host "ConvertFrom-TaskDirectives: @cwd 여러 줄"
 $d = ConvertFrom-TaskDirectives "@cwd: D:\a\repo`n@cwd: D:\b\docs`n@model: gemini-3.8-flash-medium`n본문"
