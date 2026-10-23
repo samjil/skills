@@ -43,7 +43,8 @@ description: "사용자 컴퓨터에 agy 워처(~/.samjil/delegate-agy/scripts/s
 2. **설계, 그리고 가장 어려운 수준의 작업** — 아키텍처 결정, 요구사항이 모호해 되물어야 하는 것, 트레이드오프 비교, 사용자 의도 파악, 디자인 방향·시스템 설계, 그리고 위 표의 "가장 어려운 수준"에 해당하는 조각.
 3. **틀리면 비용이 큰 것** — 보안/인증/결제/키 관리, 마이그레이션, 되돌리기 어려운 변경, **정확한 최신 사실이 중요한 질문**(agy는 웹 검색 없이 답하므로 사실 주장은 신뢰하지 않는다).
 4. **Claude 전용 도구가 필요한 것** — 웹 검색/브라우저, 데스크탑 제어, MCP 커넥터, 프로젝트 문서 읽기·쓰기, 아티팩트 발행, 문서 생성 스킬(docx/xlsx/pptx/pdf).
-5. **아주 사소한 것** — 아래를 **모두** 만족할 때만: (a) 바뀌는 코드가 약 40줄 미만, (b) 파일 두 개 이하,
+5. **아주 사소한 것** — 아래를 **모두** 만족할 때만(**Claude 가 어떤 모델로 돌든 같은 기준이다.** "내가 직접 하는 게 더 빠르다/더 낫다"는 예외 사유가 아니고,
+   설계가 끝난 구현 조각에 "직접(설계)"·"직접(가장 어려움)" 을 붙이는 것도 남용이다 — 그 둘은 설계와 가장 어려운 조각 자체일 때만 쓴다. 판정은 아래 수치로만 한다): (a) 바뀌는 코드가 약 40줄 미만, (b) 파일 두 개 이하,
    (c) 새 컴포넌트 · 새 함수 · 새 화면 요소를 만들지 않는 위치 · 순서 · 클래스 · 문구 수정(또는 한 줄 답변, 파일 하나 grep 같은 조회).
    **하나라도 넘으면 위임한다.** "왕복보다 빨라 보인다"는 이유로 이 예외를 쓰지 않는다(위임 한 번은 `high` 에서 약 9~12분이라
    거의 모든 수정이 직접이 빨라 보이는데, 그 기준을 쓰면 위임이 남지 않는다).
@@ -66,6 +67,8 @@ Claude가 스스로 서브에이전트를 열려는 경우도 같다 — 서브�
 - 서브에이전트 대신 위임한 결과도 아래 "결과 처리: 필수 검토와 반복"을 그대로 따른다.
 - 위임했다면 다른 경우와 똑같이 "(agy에게 위임하고 Claude가 검토한 결과입니다)"로 짧게 밝힌다.
 - 직접 처리 대상에 해당해서 Claude 서브에이전트를 그대로 쓰면, 어떤 사유 때문인지 한 줄로 밝힌다.
+- **Claude 서브에이전트를 열어야 할 때는 모델을 지정한다.** 설계·가장 어려운 수준의 하위 작업이 아니면 Agent 도구의 `model` 을 가벼운 모델(`sonnet` 또는 `haiku`)로 열거나, 먼저 agy 로 우회할 수 있는지 본다.
+  지정하지 않으면 현재 대화와 같은 (가장 비싼) 모델로 열린다.
 - 사용자가 Claude 서브에이전트를 명시적으로 요구했으면 그대로 따른다. 사용자 지시가 이 스킬보다 우선이다.
 
 **agy로 옮길 때 주의할 점**
@@ -137,7 +140,8 @@ Claude가 스스로 서브에이전트를 열려는 경우도 같다 — 서브�
    - **사실 주장(수치, 최신 정보, 인용)은 그대로 옮기지 않는다.** 사용자 원칙상 확실한 근거가 있는 것만 전달해야 하므로, 검증할 수 없으면 그 부분은 빼거나 Claude가 직접 확인한다.
 2. **미달이면 구체적인 피드백을 붙여 다시 위임한다.** 무엇이 왜 부족한지, 기대하는 결과가 무엇인지를 적는다.
    같은 작업의 후속이면 `@session`(아래 "여러 작업을 이어서 위임")으로 이어서 보내 agy가 맥락을 유지하게 한다.
-   단 **모델을 한 단계 올려야 할 때**(아래 "모델 선택")는 이어가는 세션이 시작할 때의 모델을 유지하므로 `@session` 없이 새로 보낸다(피드백 전문을 본문에 담는다).
+   단 **모델을 한 단계 올려야 할 때**(아래 "모델 선택")는 이어가는 세션이 시작할 때의 모델을 유지하므로, `@session` 과 `@model: <올릴 모델>` 에 **`@upgrade: true`** 를 더해 보낸다
+   (워처가 새 대화를 시작하고 이전 질문·답 글을 붙여 준다. 피드백 전문은 본문에 담는다). `@upgrade` 를 빼먹으면 워처가 오류로 돌려주니 그때 추가해 다시 보낸다.
 3. **만족할 만한 수준이 될 때까지 검토 → 피드백 → 재위임을 반복한다.** 미달 결과를 "일단 쓰고 넘어가기"는 하지 않는다.
 4. **반복이 소용없으면 직접 마무리한다.** 같은 문제로 연속 3회 재위임해도 개선이 없거나 피드백 반영이 안 되면, 그 조각은
    "가장 어려운 수준"으로 재분류해 Claude가 직접 처리하고 사용자에게 한 줄로 알린다. (quota 절약보다 품질이 우선이다.)
@@ -164,8 +168,8 @@ Claude가 스스로 서브에이전트를 열려는 경우도 같다 — 서브�
 - **위임 런타임 폴더(`~/.samjil/delegate-agy/runtime`)를 찾는다.**
   독립 스킬 구조에서는 사용자 홈 디렉터리의 `~/.samjil/delegate-agy/runtime`을 사용한다.
   (원격 장치 마운트 환경에서는 `~/mnt/` 아래를 자동 탐색한다.)
-  아래 코드 블록은 각각 독립된 `device_bash` 호출이라 변수가 이어지지 않으므로, `$BASE`가
-  필요한 블록마다 이 탐색을 맨 앞에 넣는다.
+  **`submit-task.ps1`(아래 "실행 방법")은 런타임 폴더를 스스로 찾으므로 이 탐색이 필요 없다.** 아래 탐색은 스크립트가 없는 낡은 설치이거나(설치본을 갱신하라고 사용자에게 알린다)
+  워처 켜기 절차처럼 `$BASE`가 필요한 블록에서만 쓴다. 코드 블록은 각각 독립된 `device_bash` 호출이라 변수가 이어지지 않으므로, `$BASE`가 필요한 블록마다 맨 앞에 넣는다.
 
 ```bash
 BASE=""
@@ -263,9 +267,10 @@ done
 웹 뷰어는 위임 지시문(질문)과 agy 답변을 **있는 그대로** 보여 준다. 영어로 쓰면 화면 전체가 영어로 나와 사용자가 읽기 어렵다(2026-10 사용자 요청).
 
 - **지시문 본문은 한글로 쓴다.** 코드 · 파일 경로 · 명령어 · 식별자 · 에러 메시지 원문은 번역하지 않고 그대로 둔다.
-- **지시문 맨 끝에 "최종 답변과 보고서는 한글로 작성한다(코드·경로·명령어·원문 에러는 그대로)" 문장을 반드시 넣는다.** 이 문장이 없으면 agy는 지시문이 영어일 때 영어로 답한다.
+- **지시문 맨 끝에 "최종 답변과 보고서는 한글로 작성한다(코드·경로·명령어·원문 에러는 그대로)" 문장을 넣는다.** 이 문장이 없으면 agy는 지시문이 영어일 때 영어로 답한다.
+  단 `@cwd` 로 폴더를 여는 작업은 워처가 같은 뜻의 문장을 자동으로 붙이므로(아래 "표준 규칙 자동 추가") 생략해도 된다. **`@cwd` 가 없는 위임은 이 문장을 직접 넣는다**(번역처럼 결과 언어가 한국어가 아닌 작업만 예외).
 - **테스트/스크립트 실행 시 창 깜빡임 방지**: 코딩 위임 지시문에서 테스트나 명령어 실행 시 `powershell.exe -WindowStyle Hidden -Command ...` 등으로 감싸지 말고 도구(`run_command`)의 `CommandLine`에 명령어를 직접 실행하도록 안내한다 (Windows에서 `powershell.exe`를 서브프로세스로 재호출하면 실행 순간 화면에 콘솔 창이 깜빡이는 부작용이 발생함).
-- 한 줄 지시문(`Find real defects` 같은 영어 관용 표현)만 영어로 남기지 않는다. 아래 "기본 문단"의 Rules 도 한글로 옮겨 써도 되고, 영어로 두더라도 맨 끝의 "최종 답변과 보고서는 한글로" 문장은 꼭 넣는다.
+- 한 줄 지시문(`Find real defects` 같은 영어 관용 표현)만 영어로 남기지 않는다.
 
 ## 프로젝트 폴더 코딩 위임 (`@cwd`)
 
@@ -298,15 +303,21 @@ done
 실제 프로젝트에서 여러 번 위임해 보고 정한 규칙이다(2026-10 이벤트 로그 작업). 코드 결과물은 명세가 완전하면
 쓸 만하지만, 작업 운영(끝났는지, 무엇을 했는지)은 믿기 어렵다. 그래서 아래를 지킨다.
 
-1. **agy 는 커밋하지 않는다.** 지시문에 반드시 넣는다: "DO NOT COMMIT — git add · commit · stash · reset 등 git 상태를
-   바꾸는 명령을 쓰지 말고, 바꾼 내용은 작업 트리에 그대로 둔다." 브리프에 커밋 단계가 있어도 무시하게 한다.
+1. **agy 는 커밋하지 않는다.** `@cwd` 작업에는 워처가 "DO NOT COMMIT — git add · commit · stash · reset 등 git 상태를 바꾸는 명령을 쓰지 말고, 바꾼 내용은 작업 트리에 그대로 둔다"를
+   프롬프트에 **자동으로 붙인다**(아래 "표준 규칙 자동 추가"). 지시문에 직접 쓸 필요는 없지만, 브리프(명세 문서)에 커밋 단계가 있으면 그 단계를 지시문에서 빼 둔다.
+   - **워처가 감지해 알려 준다.** `@cwd` 폴더가 git 저장소면 워처가 agy 를 부르기 전후의 HEAD · 브랜치 · stash 개수를 비교해, 바뀌었으면 **응답 맨 위에**
+     `> [경고: agy 가 git 상태를 바꾼 것으로 보입니다 — 저장소 …]` 배너와 복구 명령을 붙인다. **자동으로 되돌리지는 않는다**(그 사이 사용자나 Claude 의 정당한 커밋,
+     같은 폴더의 다른 위임 작업이 있었을 수 있어서). 배너가 보이면 `git log` · `git diff` 로 확인한 뒤 배너의 명령 중 필요한 것만 Claude 가 직접 실행한다.
+     (배너에 "다른 위임 작업이 N 개" 가 있으면 그 변화는 다른 작업의 것일 수 있다.)
+   - 작업 트리에 커밋 안 한 변경이 있었으면 워처가 그 상태를 `refs/samjil/snapshots/<작업 ID>` 에 스냅샷으로 보관한다(최근 20개, 작업 트리는 건드리지 않음). agy 가 변경을 날렸을 때
+     `git diff <스냅샷>` 으로 비교하고 `git stash apply <스냅샷>` 으로 되살린다. untracked 파일은 담기지 않는다. 끄려면 환경변수 `AGY_GIT_GUARD=off`(워처 재시작).
    - agy 가 이미 커밋했으면 `git reset --mixed <커밋 전>` 으로 풀어(변경은 작업 트리에 남는다) 검토한다.
    - **Claude 가 diff 를 직접 읽어 리뷰**하고, 테스트 · 빌드를 직접 다시 돌린 뒤 **커밋할지 말지 Claude 가 정해 직접 커밋**한다.
      서브에이전트 리뷰로 갈음하지 않는다(사용자 지시). 사소한 보완은 이때 Claude 가 바로 고친다.
 2. **작게 나눈다.** 한 위임은 파일 몇 개 · 10분 안팎으로 끝날 크기로. 마감(30분) 전이라도 큰 작업은 늦고, 검토도 어렵다.
    점검 · 분석처럼 넓은 일은 **결과 파일을 먼저 만들고 확인한 것을 그때그때 덧붙이게** 해서 중단돼도 부분 결과가 남게 한다.
-3. **명령은 전경에서 끝까지 기다리게 한다.** 지시문에 "모든 명령을 FOREGROUND 로 실행하고 끝날 때까지 기다린다. 백그라운드
-   작업 · 터미널을 남기지 않는다"를 넣는다. 그래도 agy 가 긴 명령(npm install · gradle · 빌드)을 스스로 백그라운드로 돌릴 수 있다.
+3. **명령은 전경에서 끝까지 기다리게 한다.** "모든 명령을 FOREGROUND 로 실행하고 끝날 때까지 기다린다. 백그라운드
+   작업 · 터미널을 남기지 않는다"도 `@cwd` 작업에는 워처가 자동으로 붙인다. 그래도 agy 가 긴 명령(npm install · gradle · 빌드)을 스스로 백그라운드로 돌릴 수 있다.
 4. **"오류"로 보고돼도 agy 가 아직 돌고 있을 수 있다.** 응답에 `root agent idle; waiting ... for background task(s)` 같은 문구가
    오면 워처는 오류로 기록하지만 agy 는 계속 일해 나중에 파일을 바꾸거나 커밋까지 한다. 그 저장소를 만지기 전에 확인한다:
    - `logs/watcher.log` 에 그 작업의 `완료` 줄이 있는지, `logs/current_task.json` 이 다른 작업으로 넘어갔는지
@@ -321,17 +332,24 @@ done
    수치 기준(약 40줄 미만 · 파일 둘 이하 · 새 요소 없음)을 모두 만족할 때만 한다. 급하다는 이유만으로 기준을 넘는 수정을 직접 하지 않고,
    서로 다른 파일이면 병렬로(최대 3개) 보내 대기를 줄인다.
 
-지시문 맨 아래에 붙이는 기본 문단(필요에 맞게 고쳐 쓴다):
+### 표준 규칙 자동 추가 (`@cwd` 작업, `@raw` 로 끔)
+
+`@cwd` 로 폴더를 여는 작업에는 워처가 agy 를 부르기 직전에 아래 규칙을 프롬프트 **맨 끝에 자동으로 붙인다**(`agy-rules.ps1`). 그래서 Claude 는 **작업 명세만 짧게** 쓰면 된다 —
+예전처럼 영문 `Rules:` 문단을 매번 적지 않는다.
 
 ```
-Rules:
-- DO NOT COMMIT. Do not run git add / commit / stash / reset or any command that changes git state. Leave all changes in the working tree.
-- Run every command in the FOREGROUND and wait for it to finish. Do not leave background tasks or terminals running.
+Rules (added automatically by the watcher):
+- DO NOT COMMIT. Do not run git add / commit / stash / reset / checkout / switch or any command that changes git state. Leave all changes in the working tree.
+- Run every command in the FOREGROUND and wait for it to finish. Do not leave background tasks or terminals running. Run commands directly; do not wrap them in another powershell.exe call.
 - Touch only the files this task needs. Do not touch untracked files you did not create.
-- Write a report to <report path>: what you changed per file, every command you ran with its raw output (test counts, failures, build result), and concerns.
-Final reply, short: status, files changed, one-line test summary, concerns.
-Write the final reply and the report in Korean (keep code, paths, commands and raw error text as is).
+Write the final reply and any report in Korean (keep code, paths, commands and raw error text as is).
 ```
+
+- **규칙마다 따로 본다.** 지시문에 이미 같은 뜻의 규칙(예: `DO NOT COMMIT`, `한글로 작성`)이 있으면 그 규칙만 건너뛰고 빠진 것만 붙인다. 로그(`watcher.log`)에 `표준 규칙 자동 추가:` 로 붙인 규칙이 남는다.
+- **`@cwd` 가 없는 위임에는 아무것도 붙이지 않는다.** 번역 · 데이터 변환처럼 결과 언어와 형식이 지시문마다 다르기 때문이다. 이런 위임은 Claude 가 위 "지시문과 답변은 한글로"의 문장을 직접 넣는다.
+- **`@raw: true`** 를 지시문 맨 위(다른 `@` 줄과 같이)에 쓰면 자동으로 붙이지 않는다. 자기 규칙을 직접 쓰는 작업(핸드오프 펌프가 만드는 지시문)이 이렇게 한다.
+- 붙인 규칙은 agy 에게 넘기는 프롬프트에만 들어가고, 뷰어와 위임 기록의 질문에는 Claude 가 쓴 원본이 그대로 남는다.
+- **Claude 가 지시문에 계속 직접 적어야 하는 것**: 보고서 파일 경로와 보고 내용("무엇을 바꿨는지 · 실행한 명령과 원래 출력 · 걱정되는 점을 `<보고서 경로>` 에 적고, 최종 답변은 상태 · 바뀐 파일 · 시험 한 줄 요약 · 걱정되는 점만 짧게").
 
 ## 여러 작업을 이어서 위임 (`@session`)
 
@@ -362,101 +380,67 @@ agy는 기본적으로 매번 빈 상태로 시작한다(이 스킬 맨 위 "직
 
 ## 실행 방법
 
-```bash
-set -e
-BASE=""
-[ -d "$HOME/.samjil/delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/samjil-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/samjil-delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/agent-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/agent-delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/delegate/runtime/inbox" ] && BASE="$HOME/.samjil/delegate/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.agent-delegate/runtime/inbox" ] && BASE="$HOME/.agent-delegate/runtime"
-if [ -z "$BASE" ]; then
-  BASE=$(find ~/mnt -maxdepth 6 -type d \( -path "*/.samjil/delegate-agy/runtime" -o -path "*/.samjil/samjil-delegate-agy/runtime" -o -path "*/.samjil/agent-delegate-agy/runtime" -o -path "*/.samjil/delegate/runtime" -o -path "*/.agent-delegate/runtime" \) 2>/dev/null | head -1)
-fi
-if [ -z "$BASE" ]; then
-  for f in $(find ~/mnt -maxdepth 6 -type f -path "*/watch-agy.ps1" 2>/dev/null); do
-    r="$(dirname "$(dirname "$f")")"; [ -d "$r/runtime/inbox" ] && BASE="$r/runtime" && break
-  done
-fi
-[ -z "$BASE" ] && echo "위임 런타임 폴더(~/.samjil/delegate-agy/runtime)를 찾지 못함" && exit 1
+위임은 **`submit-task.ps1` 한 번 호출**이다. 런타임 폴더 찾기 · 작업 ID 만들기 · inbox 기록 · 결과 기다리기를 스크립트가 모두 한다 — 긴 bash 나 폴링 루프를 직접 쓰지 않는다.
+지시문은 **따옴표 붙은 heredoc**(`<<'CLAUDE_TASK_EOF'`)으로 표준입력에 준다(`$` · backtick 이 셸에서 해석되지 않게).
 
-TASK_ID="claude_$(date +%s)_$RANDOM"
-cat > "$BASE/inbox/$TASK_ID.md" <<'CLAUDE_TASK_EOF'
+```bash
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1" <<'CLAUDE_TASK_EOF'
 @cwd: C:\Users\username\workspace\my-project
+@model: gemini-3.8-flash-medium
 <지시문 - 자기완결적으로. 필요한 맥락은 명시적으로 다 포함할 것>
 CLAUDE_TASK_EOF
-
-OUT="$BASE/outbox/$TASK_ID.response.md"
-ERR="$BASE/outbox/$TASK_ID.error.log"
-echo "submitted: $TASK_ID"
-for i in $(seq 1 50); do
-  if [ -s "$OUT" ]; then echo "===RESULT==="; cat "$OUT"; exit 0; fi
-  if [ -s "$ERR" ]; then echo "===ERROR==="; cat "$ERR"; exit 1; fi
-  sleep 3
-done
-echo "===TIMEOUT==="; exit 2
 ```
 
-폴더 접근이 필요 없는 작업이면 `@cwd:` 줄만 빼면 된다.
+폴더 접근이 필요 없는 작업이면 `@cwd:` 줄만 빼면 된다. 출력과 종료 코드:
 
-**여러 개를 한 번에 위임**할 수도 있다(서로 독립적인 작업일 때). 워처가 **동시에 최대 3개**까지 돌리므로(같은 `@session`+겹치는 `@cwd`인 것만 차례로) 서로 다른 세션·폴더의 작업은 대기시간이 합산되지 않는다. 그래도 한 배치에 2~3개까지만 묶는다.
+| 출력 | 종료 코드 | 뜻 | 다음 |
+|---|---|---|---|
+| `===RESULT=== <ID>` + 본문 | 0 | 응답 파일이 생겼다(**실패 사유도 응답 본문으로 올 수 있으니 본문을 읽는다**) | 아래 "결과 처리"로 검토 |
+| `===ERROR=== <ID>` + 본문 | 1 | 응답 없이 오류 로그만 있다 | 오류를 읽고 판단 |
+| `===PENDING=== <ID> 진행 중 · 경과 N분 · 모델 … · 마지막 단계 …` | 2 | 170초 안에 안 끝났다. **작업은 계속 돌고 있다** | **다시 제출하지 말고** `-Poll <ID>` 로 기다린다 |
+| (안내 문장) | 3 | 런타임 폴더를 못 찾음 · 지시문이 비었음 등 | 아래 BASE 탐색(스크립트를 못 찾는 경우)이나 직접 처리 |
+
+- `device_bash` 한 호출은 최대 3분이라 스크립트는 기본 170초만 기다리고 진행 상태를 돌려준다(`-WaitSeconds` 로 바꿀 수 있다). 대기 간격은 스크립트 안에서 돌아 Claude 토큰을 쓰지 않는다.
+- **`PENDING` 이후**: `high` 모델 위임은 약 9~12분이라 보통 서너 번 확인하게 된다. 한 번 확인할 때마다 한 턴이 드니, 그 사이에 위임과 무관한 다른 일(검토 준비, 다음 조각 설계)을 하고 돌아온다.
+  `PENDING` 줄의 경과 시간 · 마지막 단계(`#14 PLANNER_RESPONSE DONE 도구: view_file`)가 계속 같으면 멈춘 것일 수 있다. 워처가 5분 동안 새 단계가 없으면 스스로 중단하므로, 그보다 길게 같을 때만 의심한다.
+  `대기열에서 기다리는 중`이면 앞선 작업이 끝나길 기다리는 것이고, `워처 하트비트가 없습니다`가 같이 나오면 워처를 확인한다(위 "워처가 꺼져 있을 때").
+  `접수 기록 없음`은 작업 ID 가 틀렸다는 뜻이다.
+
+```bash
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1" -Poll claude_1790000000_123
+```
+
+**여러 개를 한 번에 위임**할 수도 있다(서로 독립적인 작업일 때). 먼저 `-NoWait` 로 각각 넣어 ID 만 받고(`submitted: <ID>`), 한 번에 `-Poll` 로 기다린다(쉼표나 공백으로 여러 ID).
+워처가 **동시에 최대 3개**까지 돌리므로(같은 `@session`+겹치는 `@cwd`인 것만 차례로) 서로 다른 세션·폴더의 작업은 대기시간이 합산되지 않는다. 그래도 한 배치에 2~3개까지만 묶는다.
 (같은 `@session` 이름을 서로 다른 폴더에서 동시에 쓰면 agy 대화는 하나라서 서로 섞일 수 있으니, 폴더가 다르면 세션 이름도 다르게 짓는 것이 안전하다.)
 
 ```bash
-set -e
-BASE=""
-[ -d "$HOME/.samjil/delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/samjil-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/samjil-delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/agent-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/agent-delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/delegate/runtime/inbox" ] && BASE="$HOME/.samjil/delegate/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.agent-delegate/runtime/inbox" ] && BASE="$HOME/.agent-delegate/runtime"
-if [ -z "$BASE" ]; then
-  BASE=$(find ~/mnt -maxdepth 6 -type d \( -path "*/.samjil/delegate-agy/runtime" -o -path "*/.samjil/samjil-delegate-agy/runtime" -o -path "*/.samjil/agent-delegate-agy/runtime" -o -path "*/.samjil/delegate/runtime" -o -path "*/.agent-delegate/runtime" \) 2>/dev/null | head -1)
-fi
-if [ -z "$BASE" ]; then
-  for f in $(find ~/mnt -maxdepth 6 -type f -path "*/watch-agy.ps1" 2>/dev/null); do
-    r="$(dirname "$(dirname "$f")")"; [ -d "$r/runtime/inbox" ] && BASE="$r/runtime" && break
-  done
-fi
-[ -z "$BASE" ] && echo "위임 런타임 폴더(~/.samjil/delegate-agy/runtime)를 찾지 못함" && exit 1
-
-STAMP=$(date +%s)_$RANDOM
-T1="claude_${STAMP}_a"; T2="claude_${STAMP}_b"
-cat > "$BASE/inbox/$T1.md" <<'EOF_A'
+S="powershell.exe -NoProfile -ExecutionPolicy Bypass -File $USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1"
+$S -NoWait <<'EOF_A'
 <작업 1>
 EOF_A
-cat > "$BASE/inbox/$T2.md" <<'EOF_B'
+$S -NoWait <<'EOF_B'
 <작업 2>
 EOF_B
-
-for i in $(seq 1 50); do
-  ok=1
-  for T in "$T1" "$T2"; do
-    [ -s "$BASE/outbox/$T.response.md" ] || [ -s "$BASE/outbox/$T.error.log" ] || ok=0
-  done
-  [ "$ok" = 1 ] && break
-  sleep 3
-done
-for T in "$T1" "$T2"; do
-  echo "===== $T"
-  cat "$BASE/outbox/$T.response.md" 2>/dev/null \
-    || cat "$BASE/outbox/$T.error.log" 2>/dev/null \
-    || echo "(아직 처리 중)"
-done
+# 위 두 호출이 출력한 submitted: <ID> 두 개로
+$S -Poll <ID1>,<ID2>
 ```
 
-**타임아웃 처리:** `device_bash` 한 호출은 최대 180000ms(3분)다. 코딩 작업은 이보다 오래 걸릴 수 있다. 타임아웃이 나도 **워처는 사용자 컴퓨터에서 계속 돌고 있으므로 작업은 진행 중이다.**
-1. 작업을 다시 제출하지 않는다.
-2. 잠시 후 같은 `$TASK_ID`의 `outbox/$TASK_ID.response.md`가 생겼는지만 확인하는 짧은 `device_bash` 호출을 다시 한다.
+**타임아웃 처리:** 작업은 사용자 컴퓨터의 워처가 계속 돌리므로 `PENDING` 이어도 진행 중이다. 작업을 다시 제출하지 않고(중복 위임이 된다) 같은 ID 로 `-Poll` 만 한다.
 
 ## 모델 선택 (`@model:`)
 
 지시파일 맨 위에 `@model: <ID>`를 쓰면 이번 호출에 그 모델 **하나**를 쓴다(`@cwd:`, `@session:`과 같은 지시어 줄이며 순서는 상관없다).
 쓰지 않으면 워처가 **요청 내용으로 노력 단계를 자동 선택**한다(`agy-autotier.ps1`). 분명히 쉬운 일(짧은 질문·번역·확인·읽기만 하는 조회)은 `low`, 분석·검토·설명처럼
-생각은 필요하지만 파일을 바꾸지 않는 일은 `medium`, 어려운 단어(설계·최적화·디버깅·보안 등)가 있거나 폴더의 파일을 바꾸는 일·긴 요청은 `high`다. 애매하면 `high`(기본 우선순위: `gemini-3.8-flash-high`부터,
+생각은 필요하지만 파일을 바꾸지 않는 일은 `medium`, 어려운 단어(설계·최적화·디버깅·버그·리팩토링·보안 등)가 있거나 긴 요청은 `high`다.
+폴더(`@cwd`)의 파일을 바꾸는 일은 **작은 수정일 때만 `medium`** 이고(고치는 말뿐이고, 새로 만드는 말 — 구현·추가·작성 — 과 "전체/모든" 같은 넓은 범위 말이 없고, 500자 이하이고, 파일 경로가 1개 이하이고, 코드 블록·번호 단계가 없을 때) 나머지는 `high`다. 애매하면 `high`(기본 우선순위: `gemini-3.8-flash-high`부터,
 쿼터 초과 시 다음 모델)를 쓴다. 자동으로 낮춘 단계가 쿼터 초과면 지정한 것이 아니므로 기본 우선순위로 이어서 폴백한다. 판정 이유는 `watcher.log`의 `모델 자동 선택:` 줄에 남는다.
 **자동 선택을 하지 않는 경우**: `@model:`로 직접 골랐을 때, `@session`으로 대화를 이어갈 때(대화는 시작할 때의 모델을 유지한다), 환경변수 `AGY_AUTO_MODEL=off`일 때. 규칙 기반이라 틀릴 수 있으니,
 **반드시 high로 돌려야 하는 일은 `@model: gemini-3.8-flash-high`로 직접 지정한다.**
+
+**`@model` 을 생략하지 않는다.** 자동 선택은 위처럼 좁게 잡혀 있어서, 500자를 넘거나 파일이 둘 이상인 구현·수정은 설계가 끝나 명세가 분명해도 `high`(약 9~12분)로 간다.
+**설계가 끝났고 수정 위치와 기대 결과가 분명한 일반 구현·수정은 Claude 가 `@model: gemini-3.8-flash-medium` 을 직접 적는다.** 결과가 검토에서 미달이면 아래대로 한 단계 올려 다시 보낸다.
+`high` 로 보내는 것은 명세가 모호하거나, 여러 모듈에 걸쳐 판단이 필요하거나, 미달 시 재위임 비용이 큰 일이다.
 
 ```
 @model: gemini-3.8-flash-medium
@@ -470,13 +454,18 @@ done
 |---|---|---|
 | 쉬움 | `@model: gemini-3.8-flash-low` | 기계적인 변환·포맷, 이름 짓기, 짧은 요약·번역, 목록 정리 |
 | 보통 | `@model: gemini-3.8-flash-medium` | 명세가 분명한 작은 수정·테스트, 일반 문서·분석 |
-| 약간 어려움 | `@model: gemini-3.8-flash-high` (지정하지 않으면 자동 선택이 파일을 바꾸는 일·어려운 단어·긴 요청을 high로 두지만, 확실히 하려면 지정한다) | 설계가 정해진 구현·리팩토링, 여러 파일에 걸친 변경, 코드 리뷰 |
+| 약간 어려움 | `@model: gemini-3.8-flash-high` (지정하지 않으면 자동 선택이 작은 수정이 아닌 파일 변경·어려운 단어·긴 요청을 high로 두지만, 확실히 하려면 지정한다) | 설계가 정해진 구현·리팩토링, 여러 파일에 걸친 변경, 코드 리뷰 |
 
 - **사용자가 모델을 말하면 그대로 따른다**(예: "pro로 해 줘" → `gemini-3.1-pro-high`). 쓸 수 있는 값은 `gemini-3.8-flash-high|medium|low`와 기본 우선순위 목록(`gemini-3.7-flash-high`, `gemini-3.1-pro-high`, `gemini-3.6-flash-high`)이다.
   Gemini 계열만 허용한다(`agy models`에는 claude·gpt-oss도 보이지만 이 스킬의 목적이 Claude quota 절약이라 쓰지 않는다).
   `agy models`(2026-10)에는 우선순위 목록의 3.7·3.1-pro·3.6이 보이지 않았다. 그 모델들이 지금 실제로 되는지는 확인하지 못했으니, 사용자가 골랐는데 실패하면 아래 4번대로 묻는다.
 - **이어가는 세션(`@session`)은 시작할 때의 모델을 유지한다.** 모델은 세션을 시작하는 첫 호출에서 정해지므로 그때 난이도를 보고 고른다. 이어가는 호출에서 다른 모델을 쓰면 워처가 오류로 돌려준다(같은 모델을 다시 쓰는 건 괜찮다).
-- **검토에서 미달이면 같은 모델을 반복하지 말고 한 단계 올려 재위임한다**: low → medium → high(`@model: gemini-3.8-flash-high` 지정). 올릴 때는 `@session` 없이 새로 보낸다.
+  이 오류는 **원래 대화를 지키려는 것**이다 — 후속 호출에서 모델을 실수로 잘못 적어도 대화(`conversation_id`)가 바뀌지 않는다.
+- **모델을 올려야 하면 `@upgrade: true` 를 명시한다(소프트 승격).** 검토 미달로 모델을 올릴 때 `@session` · `@model: <올릴 모델>` · `@upgrade: true` 를 함께 쓰면, 워처가 이어가던 대화를 버리고 새 대화를 시작하면서
+  **그 세션의 직전 질문·답 2쌍(질문 3000자 · 답 6000자까지)을 글로 지시문 위에 붙인다.** 새 대화가 성공하면 세션의 대화와 모델이 새 값으로 바뀌고, 실패하면 세션은 이전 대화 그대로 남는다.
+  **한계**: agy 가 이전 대화에서 읽은 파일 · 도구 실행 기록은 우리 쪽에 저장돼 있지 않아 이어지지 않는다. 그래서 agy 는 필요한 파일을 다시 읽는다 — 파일 탐색 맥락이 사라지는 비가역적 동작이니 정말 올려야 할 때만 쓴다.
+  이어가는 대화가 없거나(새 세션) 모델이 같으면 `@upgrade` 는 아무 일도 하지 않는다.
+- **검토에서 미달이면 같은 모델을 반복하지 말고 한 단계 올려 재위임한다**: low → medium → high(`@model: gemini-3.8-flash-high` 지정). 같은 작업의 후속이면 `@session` 과 `@upgrade: true` 를 같이 써서 이전 질문·답을 붙여 보내고, 별개의 작업이면 `@session` 없이 새로 보낸다.
 - **지정한 모델이 쿼터 초과·사용 불가면 워처가 다른 모델로 넘어가지 않고 실패로 돌려준다**(`... [@model 로 지정한 모델이라 다른 모델로 자동 전환하지 않았습니다]`). 임의로 다른 모델로 다시 보내지 말고 사용자에게 묻는다 —
   `AskUserQuestion`이 있으면 선택 팝업으로: `기본 모델로 다시 위임`(지정 없이 보낸다) / `Claude가 직접 처리`. 없으면 같은 내용을 글로 묻는다.
 - `지정한 @model 을 쓸 수 없습니다` 오류는 값이 허용 목록에 없다는 뜻이다(워처는 agy를 부르지 않는다). 오류에 적힌 목록으로 고쳐 다시 보낸다 — 이건 사용자에게 묻지 않아도 된다.

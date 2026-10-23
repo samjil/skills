@@ -106,7 +106,8 @@ if ($allChanged.Count -gt 0) { Write-Host ("복사했습니다: {0}개" -f $allC
 
 # --- 재시작이 필요한가 ---
 # 워처는 켜질 때 handoff-lib.ps1(handoff 스크립트)도 읽어 올리므로 그 파일이 바뀌어도 워처를 다시 켜야 한다(훅·등록기만 바뀐 것은 해당 없음)
-$watcherChanged = @($allChanged | Where-Object { ($_.Group -eq "delegate-agy 스크립트" -and $_.Rel -like "*.ps1") -or ($_.Group -eq "handoff 스크립트" -and $_.Rel -eq "handoff-lib.ps1") })
+# submit-task.ps1(Claude 가 위임할 때 부르는 도구)은 워처가 읽지 않으므로 바뀌어도 워처 재시작 대상이 아니다
+$watcherChanged = @($allChanged | Where-Object { ($_.Group -eq "delegate-agy 스크립트" -and $_.Rel -like "*.ps1" -and $_.Rel -ne "submit-task.ps1") -or ($_.Group -eq "handoff 스크립트" -and $_.Rel -eq "handoff-lib.ps1") })
 $viewerMain = @("serve-viewer.ps1", "claude-sessions.ps1", "watcher-health.ps1")
 # 뷰어는 켜질 때 handoff-lib.ps1(메시지 머리말의 모델·자동 이어가기 상태를 읽는 함수)도 불러 오므로 그 파일이 바뀌어도 다시 켜야 한다
 # 뷰어는 위임 기록 API 를 위해 agy-db.ps1(delegate-agy\scripts\sub)도 불러 오므로 그 파일이 바뀌어도 다시 켜야 한다

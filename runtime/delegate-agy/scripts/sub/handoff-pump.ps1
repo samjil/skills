@@ -46,6 +46,8 @@ function New-HandoffDispatchText([string]$ChannelName, [string]$ChannelDir, [str
     [void]$lines.Add("@session: $(Get-HandoffSessionName $safe $Auto)")
     # 낮은 단계(low/medium)로 자동 선택했으면 그 모델을 지정한다. high 는 지정하지 않아 기본 우선순위(쿼터 초과 때 폴백)를 그대로 쓴다.
     if ($Auto -and [string]$Auto.Tier -ne "high" -and [string]$Auto.Model) { [void]$lines.Add("@model: $($Auto.Model)") }
+    # 이 지시문은 자기 규칙을 직접 담고 있으므로 워처가 표준 규칙(agy-rules.ps1)을 덧붙이지 않게 한다
+    [void]$lines.Add("@raw: true")
     [void]$lines.Add("@cwd: $ChannelDir")
     if ($RepoPath) { [void]$lines.Add("@cwd: $RepoPath") }
     $body = [string]$MsgText
