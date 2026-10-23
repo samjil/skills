@@ -1088,7 +1088,7 @@ try {
                                 }
 
                                 # 메시지 머리말의 모델·답장대상·자동(없으면 빈 값). 파일이 안 바뀌면 캐시를 쓴다.
-                                $mMeta = @{ model = ""; replyTo = ""; auto = $false }
+                                $mMeta = @{ model = ""; replyTo = ""; auto = $false; session = "" }
                                 if ($handoffLibLoaded -and $msgFilesByNum.ContainsKey($mNum)) {
                                     try { $mMeta = Get-HandoffMessageMeta $msgFilesByNum[$mNum].FullName $script:HandoffMetaCache } catch {}
                                 }
@@ -1105,6 +1105,7 @@ try {
                                     effort  = [string]$mMeta.effort
                                     replyTo = [string]$mMeta.replyTo
                                     auto    = [bool]$mMeta.auto
+                                    session = [string]$mMeta.session
                                     created = $mCreated
                                 }
                             }
