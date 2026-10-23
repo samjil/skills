@@ -37,6 +37,7 @@ const names = [
   "handoffChainNodeOf",
   "handoffBriefSessionIds",
   "handoffBriefNodeOf",
+  "handoffOwnerNodeOf",
   "handoffNodeOf",
   "buildHandoffTree",
   "handoffFilterTree",
@@ -416,6 +417,33 @@ eq("  BRIEF 에 세션 ID 가 없으면 연결 안 됨(기존 동작)", "c:bound
 const boundLinked = Object.assign({}, boundTree, { handoffLinks: { "bound/0011-c2a-x.md": "sess-old" } });
 eq("파일 이름 근거의 직접 연결이 BRIEF 보다 먼저(0011 → sess-old)", "sess-old", api.handoffNodeOf("bound", { num: "0011" }, boundData("세션 ID: `sess-new`"), boundLinked).sessionId);
 eq("  이웃의 연결도 BRIEF 보다 먼저(0012 는 0011 을 따라 sess-old)", "sess-old", api.handoffNodeOf("bound", { num: "0012" }, boundData("세션 ID: `sess-new`"), boundLinked).sessionId);
+
+console.log("\n[handoffNodeOf] 주인 세션(머리말의 세션)이 대화 기록의 파일 이름 근거보다 먼저다");
+// 같은 채널을 kahp·TEST 세션이 함께 썼다. 0086(kahp 의 0084 에 대한 회신)을 TEST 세션이 읽어서 대화 기록 연결은 TEST 로 걸려 있다.
+const ownTree = {
+  projects: [{ id: "cg-1", name: "proj", sessions: [{ id: "sess-kahp", title: "건협-kahp" }, { id: "sess-test", title: "TEST" }] }],
+  ungrouped: [],
+  handoffLinks: {
+    "own/0084-c2a-q.md": "sess-kahp",
+    "own/0085-c2a-t.md": "sess-test",
+    "own/0086-a2c-re84.md": "sess-test",
+    "own/0087-a2c-re85.md": "sess-test"
+  }
+};
+const mkS = (num, dir, replyTo, session) => ({ num, dir, replyTo: replyTo || "", session: session || "" });
+const ownData = {
+  name: "own",
+  files: ["0084-c2a-q.md", "0085-c2a-t.md", "0086-a2c-re84.md", "0087-a2c-re85.md"],
+  messages: [mkS("0084", "c2a", "", "sess-kahp"), mkS("0085", "c2a", "", "sess-test"), mkS("0086", "a2c", "0084"), mkS("0087", "a2c", "0085")]
+};
+const ownSid = (n) => api.handoffNodeOf("own", ownData.messages.filter((m) => m.num === n)[0], ownData, ownTree).sessionId;
+eq("c2a 는 자기 머리말의 세션(0084 → kahp)", "sess-kahp", ownSid("0084"));
+eq("a2c 회신은 답한 c2a 의 세션(0086 → kahp, 대화 기록 연결이 TEST 여도)", "sess-kahp", ownSid("0086"));
+eq("다른 세션의 회신은 그 세션(0087 → TEST)", "sess-test", ownSid("0087"));
+const oldData = { name: "own", files: ownData.files, messages: [mkS("0084", "c2a"), mkS("0085", "c2a"), mkS("0086", "a2c", "0084"), mkS("0087", "a2c", "0085")] };
+eq("세션 표시가 없는 예전 메시지는 기존 근거(대화 기록 연결)를 쓴다(0086 → TEST)", "sess-test", api.handoffNodeOf("own", oldData.messages[2], oldData, ownTree).sessionId);
+const goneData = { name: "own", files: ownData.files, messages: [mkS("0084", "c2a", "", "sess-gone"), mkS("0086", "a2c", "0084")] };
+eq("주인 세션이 트리에 없으면 기존 근거로 넘어간다(0086 → TEST)", "sess-test", api.handoffNodeOf("own", goneData.messages[1], goneData, ownTree).sessionId);
 
 console.log("\n통과 " + passed + " / 실패 " + failed);
 if (failed > 0) {
