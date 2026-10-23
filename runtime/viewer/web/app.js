@@ -5581,6 +5581,46 @@
     return pick;
   }
 
+  // 채널 이름 -> 위임 작업 ID 에 들어가는 이름(펌프의 ConvertTo-HandoffSafeName 과 같은 규칙: 이름에 못 쓰는 글자는 -, 앞뒤 - 제거, 40자).
+  function handoffSafeChannelName(name) {
+    var s = String(name == null ? "" : name).replace(/[^A-Za-z0-9가-힣_-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!s) { s = "channel"; }
+    if (s.length > 40) { s = s.slice(0, 40).replace(/^-+|-+$/g, ""); }
+    return s;
+  }
+
+  // 메시지 번호를 처리한 위임 작업 ID. 채널 상태의 위임 연결(auto.dispatches, 최근 30건)에서 찾고, 밀려났으면 위임 기록에서
+  // 작업 ID 모양(handoff_<채널>_<번호>_<시각>)으로 찾는다(records 는 최근 것이 앞). 없으면 "".
+  function handoffTaskIdOf(channelData, channelName, num, records) {
+    if (num == null || num === "") { return ""; }
+    var disp = handoffDispatchOf(channelData, num);
+    if (disp && disp.taskId) { return String(disp.taskId); }
+    var prefix = "handoff_" + handoffSafeChannelName(channelName) + "_" + String(num) + "_";
+    var list = Array.isArray(records) ? records : [];
+    for (var i = 0; i < list.length; i++) {
+      var id = list[i] && list[i].task_id ? String(list[i].task_id) : "";
+      if (id.indexOf(prefix) === 0) { return id; }
+    }
+    return "";
+  }
+
+  // 끝난 메시지 카드에 "과정" 버튼을 붙일 위임 작업 ID(위임 기록이 있는 것만). 없으면 "".
+  //   Claude 가 보낸(c2a) 메시지가 처리됨·확인함·보류일 때: 그 메시지를 처리한 위임.
+  //   agy 가 쓴 회신(a2c): 그 회신이 답한 메시지(답장대상)를 처리한 위임.
+  //   보냄·읽음인 c2a 는 진행 줄(handoffLiveOf)이 과정 버튼을 맡는다.
+  function handoffFinishedTaskId(channelData, channelName, m, records) {
+    if (!m) { return ""; }
+    var num = null;
+    if (m.dir === "c2a" && (m.status === "처리됨" || m.status === "확인함" || m.status === "보류")) { num = m.num; }
+    else if (m.dir === "a2c" && m.replyTo) { num = m.replyTo; }
+    else { return ""; }
+    var id = handoffTaskIdOf(channelData, channelName, num, records);
+    if (!id) { return ""; }
+    var list = Array.isArray(records) ? records : [];
+    for (var i = 0; i < list.length; i++) { if (list[i] && list[i].task_id === id) { return id; } }
+    return "";
+  }
+
   // 핸드오프 메시지 한 건의 진행 표시. Claude 가 보낸(c2a) 메시지가 보냄·읽음(또는 자동 처리 실패로 보류)일 때만 있다. 없으면 null.
   //   보냄: agy 가 아직 가져가지 않음(워처가 꺼져 있거나 자동 이어가기가 꺼져 있으면 그렇게 알린다)
   //   읽음: 위임됨 -> 위임 작업(pending)의 상태를 그대로. 작업이 끝났으면 "회신을 정리하는 중", 위임 기록이 없으면 확인 중
@@ -6044,6 +6084,10 @@
       if (data && Array.isArray(data.messages)) {
         for (var k = 0; k < data.messages.length; k++) { if (String(data.messages[k].num) === String(num)) { msg = data.messages[k]; break; } }
       }
+      // 끝난 메시지의 "과정" 버튼은 위임 기록이 늦게 들어오면 나중에 생긴다: 있어야 하는데 없거나 그 반대면 다시 그린다
+      var wantDone = msg ? handoffFinishedTaskId(data, ch, msg, allItems) : "";
+      var hasDone = Boolean(card.querySelector(":scope > .handoff-card-header .proc-open"));
+      if (Boolean(wantDone) !== hasDone) { needRender = true; break; }
       var live = msg ? handoffLiveFor(ch, msg) : null;
       var cur = card.querySelector(":scope > .handoff-live");
       if (!live && !cur) { continue; }
@@ -6134,6 +6178,14 @@
       makeActivatable(header);
       header.setAttribute("aria-expanded", openHandoffNums[openKey] ? "true" : "false");
 
+      // 끝난 메시지(처리됨·확인함·agy 회신)도 위임 기록이 있으면 "과정" 버튼으로 agy 가 한 일을 볼 수 있다. 기록이 없는 메시지에는 버튼을 만들지 않는다.
+      var doneTaskId = handoffFinishedTaskId(handoffChannels[channel], channel, m, allItems);
+      var doneSrc = doneTaskId ? findProcessSource("r:" + doneTaskId) : null;
+      if (doneSrc) {
+        var rightEl = header.querySelector(".handoff-card-header-right");
+        if (rightEl) { rightEl.insertBefore(buildProcessButton("r:" + doneTaskId, doneSrc.opts), rightEl.firstChild); }
+      }
+
       var body = document.createElement("div");
       body.className = "handoff-card-body md";
 
@@ -6167,7 +6219,8 @@
         body.style.display = "none";
       }
 
-      header.addEventListener("click", function () {
+      header.addEventListener("click", function (ev) {
+        if (ev.target && ev.target.closest && ev.target.closest(".proc-open")) { return; }   // 과정 버튼은 카드를 펴고 접지 않고 창만 연다
         toggleHandoffMessage(card, channel, m, fileName);
       });
 

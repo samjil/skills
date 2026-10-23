@@ -24,7 +24,7 @@ function extractNumber(name) {
   return Number(m[1]);
 }
 
-const names = ["pad2", "escapeHtml", "formatDuration", "healthStallMinutes", "delegateRunHealth", "handoffDispatchOf", "handoffLiveOf", "healthInnerHtml", "healthBadgeClass", "syncLiveProcess", "fetchLiveProcess", "pendingProcessOpts"];
+const names = ["pad2", "escapeHtml", "formatDuration", "healthStallMinutes", "delegateRunHealth", "handoffDispatchOf", "handoffSafeChannelName", "handoffTaskIdOf", "handoffFinishedTaskId", "handoffLiveOf", "healthInnerHtml", "healthBadgeClass", "syncLiveProcess", "fetchLiveProcess", "pendingProcessOpts"];
 const fetchLog = [];
 const make = new Function(
   "fetchJson", "renderProcessDialog", "updateProcessButtons", "cwdListOf",
@@ -32,7 +32,7 @@ const make = new Function(
   "var HEALTH_STALL_DEFAULT_SEC = " + extractNumber("HEALTH_STALL_DEFAULT_SEC") + ";\n" +
   "var liveProc = {};\n" +
   names.map(extractFunction).join("\n") +
-  "\nreturn { delegateRunHealth, handoffDispatchOf, handoffLiveOf, healthInnerHtml, healthBadgeClass, syncLiveProcess, pendingProcessOpts, liveProc, formatDuration };"
+  "\nreturn { delegateRunHealth, handoffDispatchOf, handoffSafeChannelName, handoffTaskIdOf, handoffFinishedTaskId, handoffLiveOf, healthInnerHtml, healthBadgeClass, syncLiveProcess, pendingProcessOpts, liveProc, formatDuration };"
 );
 
 let passed = 0, failed = 0;
@@ -185,6 +185,28 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   eq("대기 중이면 단계 없음 · 시작 전", [null, false, true, ""], [o.steps, o.live, o.waiting, o.convId]);
   o = api.pendingProcessOpts({ task_id: "t9", state: "queued", interrupted: true, conversation_id: "c1" }, []);
   eq("중단된 작업도 마지막까지의 과정을 볼 수 있다", [true, false, "c1"], [Array.isArray(o.steps), o.waiting, o.convId]);
+
+  console.log("\n끝난 핸드오프 메시지의 과정 버튼 (handoffFinishedTaskId)");
+  eq("채널 이름 -> 작업 ID 용 이름(펌프 규칙)", ["healthketch-webview", "my-app", "channel", 40], [api.handoffSafeChannelName("healthketch-webview"), api.handoffSafeChannelName("my app!"), api.handoffSafeChannelName("!!!"), api.handoffSafeChannelName("a".repeat(60)).length]);
+  eq("  한글 채널 이름은 그대로", "건협-웹뷰", api.handoffSafeChannelName("건협-웹뷰"));
+  const chD = { auto: { dispatches: [{ num: "0084", taskId: "handoff_healthketch-webview_0084_154100", done: true }] } };
+  const recsD = [
+    { task_id: "handoff_healthketch-webview_0086_160000", status: "OK" },
+    { task_id: "handoff_healthketch-webview_0084_154100", status: "OK" },
+    { task_id: "handoff_healthketch-webview_0082_153200", status: "OK" },
+    { task_id: "handoff_other_0082_120000", status: "OK" }
+  ];
+  eq("위임 연결(dispatches)이 있으면 그 작업 ID", "handoff_healthketch-webview_0084_154100", api.handoffTaskIdOf(chD, "healthketch-webview", "0084", recsD));
+  eq("  연결이 밀려났으면 위임 기록에서 작업 ID 모양으로 찾는다(다른 채널 것은 안 섞임)", "handoff_healthketch-webview_0082_153200", api.handoffTaskIdOf(chD, "healthketch-webview", "0082", recsD));
+  eq("  어디에도 없거나 번호가 비면 빈 글자", ["", ""], [api.handoffTaskIdOf(chD, "healthketch-webview", "0999", recsD), api.handoffTaskIdOf(chD, "healthketch-webview", "", recsD)]);
+  const f = (m) => api.handoffFinishedTaskId(chD, "healthketch-webview", m, recsD);
+  eq("처리됨 c2a 는 그 메시지의 위임", "handoff_healthketch-webview_0084_154100", f({ num: "0084", dir: "c2a", status: "처리됨" }));
+  eq("  확인함·보류도 같다", [true, true], [f({ num: "0084", dir: "c2a", status: "확인함" }) !== "", f({ num: "0084", dir: "c2a", status: "보류" }) !== ""]);
+  eq("  보냄·읽음 c2a 는 진행 줄이 맡으니 없다", ["", ""], [f({ num: "0084", dir: "c2a", status: "보냄" }), f({ num: "0084", dir: "c2a", status: "읽음" })]);
+  eq("agy 회신(a2c)은 답한 메시지(답장대상)의 위임", "handoff_healthketch-webview_0084_154100", f({ num: "0085", dir: "a2c", status: "확인함", replyTo: "0084" }));
+  eq("  답장대상이 없는 회신(agy 가 직접 쓴 것)은 없다", "", f({ num: "0085", dir: "a2c", status: "확인함", replyTo: "" }));
+  eq("  위임 연결은 있지만 위임 기록이 없으면 버튼을 만들지 않는다", "", api.handoffFinishedTaskId(chD, "healthketch-webview", { num: "0084", dir: "c2a", status: "처리됨" }, []));
+  eq("  메시지가 null 이면 없다", "", f(null));
 
   console.log("\n통과 " + passed + " / 실패 " + failed);
   if (failed > 0) process.exit(1);
