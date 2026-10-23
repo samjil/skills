@@ -441,9 +441,11 @@ eq("c2a 는 자기 머리말의 세션(0084 → kahp)", "sess-kahp", ownSid("008
 eq("a2c 회신은 답한 c2a 의 세션(0086 → kahp, 대화 기록 연결이 TEST 여도)", "sess-kahp", ownSid("0086"));
 eq("다른 세션의 회신은 그 세션(0087 → TEST)", "sess-test", ownSid("0087"));
 const oldData = { name: "own", files: ownData.files, messages: [mkS("0084", "c2a"), mkS("0085", "c2a"), mkS("0086", "a2c", "0084"), mkS("0087", "a2c", "0085")] };
-eq("세션 표시가 없는 예전 메시지는 기존 근거(대화 기록 연결)를 쓴다(0086 → TEST)", "sess-test", api.handoffNodeOf("own", oldData.messages[2], oldData, ownTree).sessionId);
+eq("세션 표시가 없는 예전 회신도 질문 파일의 대화 기록 연결을 따른다(0086 → kahp, 읽은 TEST 가 아니라)", "sess-kahp", api.handoffNodeOf("own", oldData.messages[2], oldData, ownTree).sessionId);
 const goneData = { name: "own", files: ownData.files, messages: [mkS("0084", "c2a", "", "sess-gone"), mkS("0086", "a2c", "0084")] };
-eq("주인 세션이 트리에 없으면 기존 근거로 넘어간다(0086 → TEST)", "sess-test", api.handoffNodeOf("own", goneData.messages[1], goneData, ownTree).sessionId);
+eq("세션을 이어 열어 주인 ID 가 트리에 없으면 회신은 질문 파일의 대화 기록 연결을 따른다(0086 → kahp)", "sess-kahp", api.handoffNodeOf("own", goneData.messages[1], goneData, ownTree).sessionId);
+const goneNoLinkTree = Object.assign({}, ownTree, { handoffLinks: { "own/0086-a2c-re84.md": "sess-test" } });
+eq("질문 파일의 연결도 없으면 기존 근거로 넘어간다(0086 → TEST)", "sess-test", api.handoffNodeOf("own", goneData.messages[1], goneData, goneNoLinkTree).sessionId);
 
 console.log("\n통과 " + passed + " / 실패 " + failed);
 if (failed > 0) {
