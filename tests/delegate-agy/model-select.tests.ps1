@@ -33,7 +33,7 @@ foreach ($name in @("Get-JsonField", "Invoke-AgyOnce", "Get-AgyPromptMarker", "I
 }
 
 $astCommon = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $subDir "common.ps1"), [ref]$tokens, [ref]$errs)
-foreach ($name in @("ConvertTo-CwdList", "Resolve-TaskCwds", "Get-MissingCwds")) {
+foreach ($name in @("ConvertTo-CwdList", "Resolve-TaskCwds", "Get-MissingCwds", "New-AgyUpgradeContext")) {
     $fn = $astCommon.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
     if (-not $fn) { throw "$name 를 common.ps1 에서 찾지 못했습니다." }
     $fnTexts[$name] = $fn.Extent.Text
@@ -117,6 +117,35 @@ $finished = Wait-Job $job -Timeout 20
 Assert-Equal "빈 입력에서 멈추지 않는다" $true ([bool]$finished)
 if (-not $finished) { Stop-Job $job }
 Remove-Job $job -Force -ErrorAction SilentlyContinue
+
+Write-Host "Resolve-RequestedModel: @upgrade (모델 승격)"
+$r = Resolve-RequestedModel "gemini-3.8-flash-high" "conv-1" "gemini-3.8-flash-low" "작업" $false
+Assert-Equal "이어가는 세션에 다른 모델: @upgrade 없으면 오류 + 안내(@upgrade 를 쓰라고)" "True|True" ("{0}|{1}" -f ($r.Error -match "시작할 때의 모델"), ($r.Error -match "@upgrade: true"))
+$r = Resolve-RequestedModel "gemini-3.8-flash-high" "conv-1" "gemini-3.8-flash-low" "작업" $true
+Assert-Equal "  @upgrade 면 오류 없이 Upgrade" "high|True|" ("{0}|{1}|{2}" -f ($r.Model -replace '^gemini-3\.8-flash-', ''), $r.Upgrade, $r.Error)
+$r = Resolve-RequestedModel "gemini-3.8-flash-low" "conv-1" "gemini-3.8-flash-low" "작업" $true
+Assert-Equal "  같은 모델이면 @upgrade 가 있어도 승격하지 않는다" "False|" ("{0}|{1}" -f $r.Upgrade, $r.Error)
+$r = Resolve-RequestedModel "gemini-3.8-flash-high" "" "" "작업" $true
+Assert-Equal "  이어갈 대화가 없으면(새 세션) 승격할 것이 없다" "False|" ("{0}|{1}" -f $r.Upgrade, $r.Error)
+$r = Resolve-RequestedModel "gpt-9" "conv-1" "gemini-3.8-flash-low" "작업" $true
+Assert-Equal "  @upgrade 여도 허용 목록에 없는 모델은 오류" $true ([bool]$r.Error -and $r.Error -match "쓸 수 없습니다")
+$r = Resolve-RequestedModel "" "conv-1" "gemini-3.8-flash-low" "작업" $true
+Assert-Equal "  @model 이 없으면 @upgrade 는 아무 일도 하지 않는다" "False|" ("{0}|{1}" -f [bool]$r.Upgrade, $r.Error)
+$d = ConvertFrom-TaskDirectives "@session: s`n@model: gemini-3.8-flash-high`n@upgrade: yes`n본문"
+Assert-Equal "ConvertFrom-TaskDirectives 가 @upgrade 를 읽고 본문은 다음 줄부터" "True|본문" ("{0}|{1}" -f $d.Upgrade, $d.Prompt)
+Assert-Equal "  @upgrade 가 없으면 거짓" $false ((ConvertFrom-TaskDirectives "@session: s`n본문").Upgrade)
+
+Write-Host "New-AgyUpgradeContext"
+$hist = @(@{ TaskId = "a"; Timestamp = "2026-10-20 10:00:00"; Model = "m"; Question = "@session: 결제`n@cwd: C:\p`n@model: gemini-3.8-flash-low`n구조를 분석해 줘"; Answer = "분석 결과 A" },
+          @{ TaskId = "b"; Timestamp = "2026-10-20 10:05:00"; Model = "m"; Question = "다음 파일도"; Answer = ("가" * 7000) })
+$ctx = New-AgyUpgradeContext $hist "gemini-3.8-flash-low" "gemini-3.8-flash-high" "이번 요청 본문"
+Assert-Equal "이번 요청 본문이 맨 끝에 그대로 있다" $true ($ctx.EndsWith("이번 요청 본문"))
+Assert-Equal "  머리말에 모델 전환과 '파일 읽기 기록은 이어지지 않음' 안내" $true (($ctx -match "gemini-3.8-flash-low -> gemini-3.8-flash-high") -and ($ctx -match "도구 실행 기록은 이어지지 않으니"))
+Assert-Equal "  직전 질문·답이 오래된 것부터 번호로 들어간다" $true (($ctx -match "(?s)직전 질문 1 .*구조를 분석해 줘.*직전 답 1.*분석 결과 A.*직전 질문 2 .*다음 파일도.*직전 답 2"))
+Assert-Equal "  질문 앞의 @지시어 줄은 떼고 본문만 넣는다" $false ($ctx -match "@cwd: C:|@session: 결제|@model: gemini-3.8-flash-low`n구조")
+Assert-Equal "  답은 6000자에서 자르고 알린다" $true (($ctx -match "\(\.\.\. 이하 생략\)") -and -not ($ctx -match ("가" * 6001)))
+$none = New-AgyUpgradeContext @() "" "gemini-3.8-flash-high" "본문"
+Assert-Equal "이전 기록이 없어도 안내와 본문은 나간다" "True|True|True" ("{0}|{1}|{2}" -f ($none -match "기록을 찾지 못했습니다"), ($none -match "기록 없음 -> gemini-3.8-flash-high"), $none.EndsWith("본문"))
 
 Write-Host "Resolve-RequestedModel"
 $r = Resolve-RequestedModel "" "" "" ""
