@@ -1822,7 +1822,9 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
   .proc-tool { grid-column: 2; }
   .proc-text { grid-column: 2; }
 
-  .handoff-card-header { grid-template-columns: minmax(0, 1fr) auto; }
+  /* 좁은 화면: 오른쪽 묶음(과정·토큰·진행 표시)을 제목 아래로 내려 제목이 잘리지 않게 한다 */
+  .handoff-card-header { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
+  .handoff-card-header-right { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 4px 12px; }
   .handoff-num { display: none; }
   .handoff-card-body { padding-left: 14px; }
   .handoff-card-header-right .handoff-time { display: none; }
