@@ -40,13 +40,29 @@ try {
     Assert-Equal "  중간 길이(1200자 넘음)" "medium" (Tier ("가나다 " * 450))
     Assert-Equal "  코드 블록 하나" "medium" (Tier "이 값을 알려 줘`n``````js`nvar a = 1;`n``````")
 
+    Write-Host "폴더(@cwd)의 작은 수정은 medium, 아니면 high"
+    Assert-Equal "짧은 고치는 말 · 파일 이름 없음" "medium" (Tier "로그인 화면의 버튼 색을 바꿔 줘" $true)
+    Assert-Equal "  파일 1개를 짚은 짧은 수정" "medium" (Tier "src/login.js 의 버튼 색을 #0055ff 로 변경해 줘" $true)
+    Assert-Equal "  같은 파일을 두 번 써도 1개" "medium" (Tier "app.js 의 제목을 고쳐 줘. app.js 만 건드려." $true)
+    Assert-Equal "  이유에 '작은 수정' 과 글자 수·파일 수가 있다" $true (((Get-AgyAutoTier "src/login.js 의 버튼 색을 바꿔 줘" $true).Reason) -match "작은 수정.*파일 1개")
+    Assert-Equal "파일이 2개면 high" "high" (Tier "login.js 와 style.css 의 버튼 색을 바꿔 줘" $true)
+    Assert-Equal "  새로 만드는 말(추가)이 있으면 high" "high" (Tier "login.js 에 입력 검증을 추가해 줘" $true)
+    Assert-Equal "  새로 만드는 말(작성)이 있으면 high" "high" (Tier "login.js 의 테스트를 작성해서 고쳐 줘" $true)
+    Assert-Equal "  넓은 범위 말(모든)이 있으면 high" "high" (Tier "모든 버튼의 색을 바꿔 줘" $true)
+    Assert-Equal "  500자를 넘으면 high" "high" (Tier ("login.js 의 버튼 색을 바꿔 줘. " + ("자세한 설명 " * 80)) $true)
+    Assert-Equal "  500자 이하는 medium(경계)" "medium" (Tier ("a" * 470 + " 바꿔 줘") $true)
+    Assert-Equal "  코드 블록이 있으면 high" "high" (Tier ("다음처럼 바꿔 줘:" + "`n" + '```js' + "`n" + "x=1" + "`n" + '```') $true)
+    Assert-Equal "  번호 단계가 있으면 high" "high" (Tier "1. 색을 바꿔 줘`n2. 확인해 줘" $true)
+    Assert-Equal "  버그·리팩토링은 짧아도 high(어려운 단어)" "high" (Tier "login.js 의 버그를 고쳐 줘" $true)
+    Assert-Equal "  폴더가 없으면 작은 수정이 아니어도 기존대로 medium" "medium" (Tier "이 문구를 바꿔 줘")
+    Assert-Equal "  이유에 작은 수정이 아닌 사유가 있다" $true (((Get-AgyAutoTier "모든 버튼의 색을 바꿔 줘" $true).Reason) -match "작은 수정 아님.*넓은 범위")
+
     Write-Host "high: 어렵거나 파일을 바꾸거나 긴 일"
     Assert-Equal "설계 단어" "high" (Tier "결제 모듈 구조를 설계해 줘")
     Assert-Equal "  최적화 단어" "high" (Tier "이 쿼리를 최적화해 줘")
     Assert-Equal "  영어 단어(refactor)" "high" (Tier "refactor this function")
     Assert-Equal "  버그 단어" "high" (Tier "버그 있는지 봐 줘")
-    Assert-Equal "  폴더의 파일을 바꾸는 일" "high" (Tier "로그인 화면의 버튼 색을 바꿔 줘" $true)
-    Assert-Equal "  구현" "high" (Tier "목록 정렬 기능을 구현해 줘" $true)
+    Assert-Equal "  구현(새로 만드는 말)은 폴더가 열려 있으면 high" "high" (Tier "목록 정렬 기능을 구현해 줘" $true)
     Assert-Equal "  어려운 단어는 읽기 전용이라고 해도 high" "high" (Tier "읽기 전용으로 보안 문제를 찾아 줘" $true)
     Assert-Equal "  긴 요청(2500자 넘음)" "high" (Tier ("가나다 " * 900))
     Assert-Equal "  단계가 5개 이상" "high" (Tier "1. 가`n2. 나`n3. 다`n4. 라`n5. 마")
@@ -77,10 +93,10 @@ try {
     $tHigh = New-HandoffDispatchText "my-app" "C:\ch\my-app" "C:\code\my-app" $row "C:\ch\my-app\msg\0003-c2a-x.md" "## 요약`n- 설계 부탁" $high
     $tNone = New-HandoffDispatchText "my-app" "C:\ch\my-app" "C:\code\my-app" $row "C:\ch\my-app\msg\0003-c2a-x.md" "## 요약`n- 부탁"
     $first = { param($t, $n) (($t -split "`n") | Select-Object -First $n) -join "|" }
-    Assert-Equal "low: @session 과 @model 이 맨 위에 있다" "@session: handoff-my-app-low|@model: gemini-3.8-flash-low|@cwd: C:\ch\my-app|@cwd: C:\code\my-app" (& $first $tLow 4)
+    Assert-Equal "low: @session 과 @model 이 맨 위에 있다(@raw: true 로 표준 규칙 자동 추가를 막는다)" "@session: handoff-my-app-low|@model: gemini-3.8-flash-low|@raw: true|@cwd: C:\ch\my-app|@cwd: C:\code\my-app" (& $first $tLow 5)
     Assert-Equal "  medium" "@session: handoff-my-app-medium|@model: gemini-3.8-flash-medium" (& $first $tMed 2)
-    Assert-Equal "  high: @model 은 쓰지 않는다(기본 우선순위로 폴백 가능)" "@session: handoff-my-app|@cwd: C:\ch\my-app|@cwd: C:\code\my-app" (& $first $tHigh 3)
-    Assert-Equal "  자동 선택 없음(null): 예전과 같은 첫 줄들" "@session: handoff-my-app|@cwd: C:\ch\my-app" (& $first $tNone 2)
+    Assert-Equal "  high: @model 은 쓰지 않는다(기본 우선순위로 폴백 가능)" "@session: handoff-my-app|@raw: true|@cwd: C:\ch\my-app|@cwd: C:\code\my-app" (& $first $tHigh 4)
+    Assert-Equal "  자동 선택 없음(null): 예전과 같은 첫 줄들(@raw: true 만 추가)" "@session: handoff-my-app|@raw: true|@cwd: C:\ch\my-app" (& $first $tNone 3)
     Assert-Equal "  지시문 본문(처리 방법)은 단계와 상관없이 같다" $true (($tLow -match "## 처리 방법") -and ($tHigh -match "## 처리 방법"))
     Assert-Equal "  @model 줄은 한 번만" 1 @(($tLow -split "`n") | Where-Object { $_ -like "@model:*" }).Count
 

@@ -134,9 +134,11 @@ $SelectableModels = @(@("gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gem
 #   @cwd:     agy 의 워크스페이스에 추가할 폴더 (--add-dir). 여러 줄 가능: 줄마다 폴더 하나, 폴더마다 --add-dir 를 한 번씩 넘긴다(줄 순서 유지, 같은 경로는 대소문자·끝의 \ 를 무시하고 한 번만)
 #   @session: 대화를 이어갈 세션 이름
 #   @model:   이번 호출에 쓸 모델 하나 (위 $SelectableModels)
-# 반환: @{ Cwd; Session; Model; Prompt }  (Cwd 는 폴더 배열이고 없으면 빈 배열, Session/Model 은 없으면 $null)
+#   @raw:     true 면 워처가 표준 규칙(DO NOT COMMIT 등, agy-rules.ps1)을 프롬프트에 자동으로 붙이지 않는다
+#   @upgrade: true 면 @session 으로 이어가는 대화에 다른 @model 을 줘도 오류 대신 "모델 승격"을 한다: 새 대화를 시작하고 이전 질문·답 글을 지시문 위에 붙인다(Resolve-RequestedModel)
+# 반환: @{ Cwd; Session; Model; Raw; Upgrade; Prompt }  (Cwd 는 폴더 배열이고 없으면 빈 배열, Session/Model 은 없으면 $null, Raw/Upgrade 는 $true/$false)
 function ConvertFrom-TaskDirectives([string]$rawText) {
-    $cwdRaw = New-Object System.Collections.ArrayList; $session = $null; $model = $null
+    $cwdRaw = New-Object System.Collections.ArrayList; $session = $null; $model = $null; $raw = $false; $upgrade = $false
     $prompt = $rawText
     while ($prompt.Length -gt 0) {
         $firstLine = ($prompt -split "`r?`n", 2)[0]
@@ -148,30 +150,37 @@ function ConvertFrom-TaskDirectives([string]$rawText) {
             $session = $Matches[1].Trim()
         } elseif ($firstLine -match '^\ufeff?@model:\s*(.+)$') {
             $model = $Matches[1].Trim()
+        } elseif ($firstLine -match '^\ufeff?@raw:\s*(.+)$') {
+            $raw = ConvertTo-AgyDirectiveFlag $Matches[1]
+        } elseif ($firstLine -match '^\ufeff?@upgrade:\s*(.+)$') {
+            $upgrade = ConvertTo-AgyDirectiveFlag $Matches[1]
         } else {
             break
         }
         $rest = ($prompt -split "`r?`n", 2)
         $prompt = if ($rest.Length -gt 1) { $rest[1] } else { "" }
     }
-    return @{ Cwd = @(ConvertTo-CwdList $cwdRaw.ToArray()); Session = $session; Model = $model; Prompt = $prompt }
+    return @{ Cwd = @(ConvertTo-CwdList $cwdRaw.ToArray()); Session = $session; Model = $model; Raw = $raw; Upgrade = $upgrade; Prompt = $prompt }
 }
 
 # 요청한 @model 을 확인합니다. 반환: @{ Model = <정식 ID 또는 $null>; Error = <사용자에게 보일 사유 또는 $null> }
 #   - 목록에 없으면 오류(대소문자는 구분하지 않고 정식 ID 로 바꿔 줍니다).
 #   - 이어가는 세션(@session 으로 기존 대화를 잇는 경우)은 agy 가 시작할 때의 모델을 유지하므로,
-#     다른 모델을 요청하면 조용히 무시하지 않고 오류로 알립니다.
-function Resolve-RequestedModel([string]$requested, [string]$conversationId, [string]$knownModel, [string]$sessionName) {
+#     다른 모델을 요청하면 조용히 무시하지 않고 오류로 알립니다(원래 대화를 지키려는 것: 실수로 모델을 잘못 적어도 대화가 바뀌지 않는다).
+#   - 단 @upgrade: true 를 명시했으면 오류 대신 Upgrade = $true 로 돌려줍니다(호출한 쪽이 새 대화를 시작하고 이전 질문·답 글을 붙인다).
+#     이어가는 대화가 없거나 모델이 같으면 @upgrade 는 할 일이 없다(Upgrade = $false).
+function Resolve-RequestedModel([string]$requested, [string]$conversationId, [string]$knownModel, [string]$sessionName, [bool]$upgrade = $false) {
     if (-not $requested) { return @{ Model = $null; Error = $null } }
     $canonical = @($SelectableModels | Where-Object { $_ -ieq $requested }) | Select-Object -First 1
     if (-not $canonical) {
         return @{ Model = $null; Error = "지정한 @model 을 쓸 수 없습니다: $requested (쓸 수 있는 모델: $($SelectableModels -join ', '))" }
     }
     if ($conversationId -and ($canonical -ne $knownModel)) {
+        if ($upgrade) { return @{ Model = $canonical; Error = $null; Upgrade = $true } }
         $was = if ($knownModel) { $knownModel } else { "기록 없음" }
-        return @{ Model = $canonical; Error = "이어가는 세션 '$sessionName' 은 시작할 때의 모델($was)로 계속됩니다. 다른 모델($canonical)을 쓰려면 @session 없이 보내거나 새 세션 이름으로 보내세요." }
+        return @{ Model = $canonical; Error = "이어가는 세션 '$sessionName' 은 시작할 때의 모델($was)로 계속됩니다. 다른 모델($canonical)을 쓰려면 @upgrade: true 를 지시문에 추가해 새 대화로 승격하거나(이전 질문·답 글을 붙여 줍니다. 파일 읽기 기록은 이어지지 않습니다), @session 없이 보내거나 새 세션 이름으로 보내세요." }
     }
-    return @{ Model = $canonical; Error = $null }
+    return @{ Model = $canonical; Error = $null; Upgrade = $false }
 }
 
 
@@ -391,6 +400,20 @@ if (-not (Test-Path $autoTierFile)) {
     $autoTierFile = Join-Path (Split-Path $PSScriptRoot -Parent) "agy-autotier.ps1"
 }
 . $autoTierFile
+
+# 폴더(@cwd)를 여는 코딩 위임에 표준 규칙(DO NOT COMMIT · FOREGROUND · 한글 답변 등)을 호출 직전에 붙이는 헬퍼(agy-rules.ps1). 테스트: tests\delegate-agy
+$rulesFile = Join-Path $PSScriptRoot "agy-rules.ps1"
+if (-not (Test-Path $rulesFile)) {
+    $rulesFile = Join-Path (Split-Path $PSScriptRoot -Parent) "agy-rules.ps1"
+}
+. $rulesFile
+
+# 코딩 위임 전후의 git 상태(HEAD · 브랜치 · stash)를 비교해 agy 가 임의로 바꿨으면 응답 맨 위에 경고를 붙이는 안전장치(agy-gitguard.ps1). 테스트: tests\delegate-agy
+$gitGuardFile = Join-Path $PSScriptRoot "agy-gitguard.ps1"
+if (-not (Test-Path $gitGuardFile)) {
+    $gitGuardFile = Join-Path (Split-Path $PSScriptRoot -Parent) "agy-gitguard.ps1"
+}
+. $gitGuardFile
 
 # 핸드오프 "자동 이어가기" 펌프(워처 본체만 씀): 채널에 Claude 가 새 메시지를 보내면 agy 에게 위임하고, 답이 오면 회신 메시지로 기록한다.
 # 못 찾거나 불러오지 못해도 워처의 본래 일(inbox 위임)에는 영향이 없다. 함수 정의는 handoff-pump.ps1 머리말 참고. 테스트: tests\handoff
@@ -1139,6 +1162,20 @@ function ConvertTo-SpaceKey([string]$Path) {
     return $p
 }
 
+# 지금 도는 다른 작업 중 이 폴더들과 겹치는 폴더를 연 것의 수(git 안전장치가 "변화의 원인이 다른 작업일 수 있다"고 알리는 데 쓴다).
+function Get-OverlappingRunningCount([string]$ExceptTaskId, $Cwds) {
+    $n = 0
+    try {
+        if (@($Cwds).Count -eq 0) { return 0 }
+        foreach ($f in @(Get-ChildItem -LiteralPath $RunningDir -Filter "*.json" -File -ErrorAction SilentlyContinue)) {
+            $c = Read-RunningClaim $f.FullName
+            if ($null -eq $c -or [string]$c.task_id -eq $ExceptTaskId -or @($c.cwds).Count -eq 0) { continue }
+            if (Test-SpaceOverlap $Cwds @($c.cwds)) { $n++ }
+        }
+    } catch {}
+    return $n
+}
+
 # 두 작업의 "공간"(작업 폴더들)이 겹치는가: 같은 폴더이거나 한쪽이 다른 쪽의 상위 폴더이면 겹친다.
 # 폴더가 하나도 없는 작업은 폴더로 구분할 수 없으므로 겹치는 것으로 본다(같은 세션끼리 차례로 하는 쪽이 안전하다).
 function Test-SpaceOverlap($CwdsA, $CwdsB) {
@@ -1290,7 +1327,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
 
 
     # @model 검사: 쓸 수 없는 모델이면 agy 를 부르지 않고 바로 실패 처리합니다(@cwd 오류와 같은 방식).
-    $modelCheck = Resolve-RequestedModel $requestedModel $conversationId $knownModel $sessionName
+    $modelCheck = Resolve-RequestedModel $requestedModel $conversationId $knownModel $sessionName ([bool]$directives.Upgrade)
     if ($modelCheck.Error) {
         Set-Content -Path $outFile -Value $modelCheck.Error -Encoding UTF8
         Log "실패: $($modelCheck.Error)"
@@ -1300,6 +1337,18 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
     }
     $requestedModel = $modelCheck.Model
     if ($requestedModel) { Log "  -> 지정 모델(@model): $requestedModel (다른 모델로 자동 전환하지 않음)" }
+
+    # 모델 승격(@upgrade): 이어가던 대화(시작 모델 $knownModel)를 버리고 새 대화로 시작한다. 이전 질문·답 글(최근 2쌍)을 지시문 위에 붙인다.
+    # 새 대화가 성공하면 세션의 대화 ID·모델이 새 값으로 바뀐다. 실패하면 세션은 이전 대화 그대로 남는다(Write-Session 은 성공 때만 부른다).
+    if ($modelCheck.Upgrade) {
+        $oldConversation = $conversationId
+        $history = @()
+        try { $history = @(Get-AgySessionHistory $AgyDbPath $sessionName 2) } catch { $history = @() }
+        $promptText = New-AgyUpgradeContext $history $knownModel $requestedModel $promptText
+        $conversationId = ""
+        $knownModel = ""
+        Log "  -> 모델 승격(@upgrade): 세션 '$sessionName' 의 대화(ID: $oldConversation)를 이어가지 않고 $requestedModel 로 새 대화를 시작합니다(이전 질문·답 $($history.Count)쌍을 지시문에 붙임)"
+    }
 
     # 모델을 지정하지 않았고 새 대화(@session 없음)면 요청 난이도로 노력 단계를 자동 선택한다(agy-autotier.ps1).
     # 분명히 쉬운 일만 low/medium 으로 낮추고, 애매하거나 어려우면 지금처럼 우선순위 목록(high)을 쓴다. 이어가는 세션은 시작할 때의 모델을 유지한다.
@@ -1340,6 +1389,17 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
 
 
 
+    # 폴더(@cwd)가 git 저장소면 agy 를 부르기 전의 HEAD·브랜치·stash 를 기록하고(커밋 안 한 변경은 스냅샷 참조로 보관), 끝난 뒤 비교해 경고한다(agy-gitguard.ps1).
+    $gitGuard = $null
+    $guardConcurrent = 0
+    try {
+        $gitGuard = New-AgyGitGuardState $targetCwds $baseName
+        $guardConcurrent = Get-OverlappingRunningCount $baseName $targetCwds
+        foreach ($gr in @($gitGuard.Repos)) {
+            Log "  -> git 상태 기록: $($gr.Root) (브랜치 $($gr.Branch), HEAD $(if ($gr.Head) { $gr.Head.Substring(0, [math]::Min(8, $gr.Head.Length)) } else { '없음' })$(if ($gr.SnapRef) { ", 미커밋 변경 스냅샷 $($gr.SnapRef)" }))"
+        }
+    } catch { $gitGuard = $null }
+
     $recModel    = $null
     $recAttempts = $null
     $recTried    = ""
@@ -1359,13 +1419,25 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
         if (-not (Test-Path -LiteralPath $promptsDir)) {
             New-Item -ItemType Directory -Force -Path $promptsDir | Out-Null
         }
+        # 폴더(@cwd)를 여는 작업에는 표준 규칙을 붙인다(@raw: true 면 안 붙임). 위임 기록에는 원본 지시문이 남는다(여기서는 agy 에 넘길 프롬프트만 바꾼다).
+        $withRules = Add-AgyStandardRules $promptText (@($targetCwds).Count -gt 0) ([bool]$directives.Raw)
+        $promptForAgy = [string]$withRules.Text
+        if (@($withRules.Added).Count -gt 0) { Log "  -> 표준 규칙 자동 추가: $(@($withRules.Added) -join ', ')" }
         $tempPromptFile = Join-Path $promptsDir "prompt_$baseName.txt"
-        [System.IO.File]::WriteAllText($tempPromptFile, $promptText, (New-Object System.Text.UTF8Encoding($false)))
-        $safePrompt = $promptText -replace '"', '\"'
+        [System.IO.File]::WriteAllText($tempPromptFile, $promptForAgy, (New-Object System.Text.UTF8Encoding($false)))
+        $safePrompt = $promptForAgy -replace '"', '\"'
 
         $agyResult = Invoke-AgyWithFallback -safePrompt $safePrompt -targetCwd $targetCwds -skipPerm:$SkipPermissions -errFile $errFile -conversationId $conversationId -knownModel $knownModel -taskId $baseName -promptFile $tempPromptFile -requestedModel $requestedModel -autoModel $autoModel
 
         $agyStderr = [string]$agyResult.StdErr
+
+        # agy 가 git 상태를 바꿨으면 응답 맨 위에 붙일 경고(없으면 빈 문자열). 자동으로 되돌리지는 않는다.
+        $guardBanner = ""
+        try {
+            $guardBanner = Get-AgyGitGuardBanner $gitGuard ([math]::Max($guardConcurrent, (Get-OverlappingRunningCount $baseName $targetCwds)))
+            if ($guardBanner) { Log "경고: agy 가 git 상태를 바꾼 것으로 보여 응답 맨 위에 경고를 붙였습니다" }
+        } catch { $guardBanner = "" }
+
         if ($agyResult.RawJson) {
             Set-Content -Path (Join-Path $OutboxDir "$baseName.raw.json") -Value $agyResult.RawJson -Encoding UTF8
         }
@@ -1376,7 +1448,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
         $recTried    = $triedStr
 
         if ($agyResult.Success) {
-            Set-Content -Path $outFile -Value $agyResult.Response -Encoding UTF8
+            Set-Content -Path $outFile -Value ($guardBanner + $agyResult.Response) -Encoding UTF8
 
             $elapsedForLog = if ($agyResult.AgyDuration) { [math]::Round([double]$agyResult.AgyDuration, 1) } else { $agyResult.ElapsedSec }
             $timeSrc = if ($agyResult.AgyDuration) { "agy 자체 보고" } else { "워처 측정(폴백 시도 포함 총 시간)" }
@@ -1406,7 +1478,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
             $failMsg = "agy 실행 실패 (시도한 모델: $triedStr) - $($agyResult.ErrorMessage)"
             if ($requestedModel -and -not $conversationId) { $failMsg += " [@model 로 지정한 모델이라 다른 모델로 자동 전환하지 않았습니다]" }
 
-            Set-Content -Path $outFile -Value $failMsg -Encoding UTF8
+            Set-Content -Path $outFile -Value ($guardBanner + $failMsg) -Encoding UTF8
             Log $failMsg
             $recElapsed = $agyResult.ElapsedSec
             Write-UsageRow $baseName $null $recAttempts $recTried $null $null $null $null $recElapsed "ERROR" $sessionName $effectiveSessionId

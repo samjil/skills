@@ -125,6 +125,23 @@ try {
     Assert-Equal "  오래 안 쓴 세션 정리: 1건 지운다" 1 (Remove-AgySessionsOlderThan $dbPath 30)
     Assert-Equal "  방금 쓴 세션은 남는다" "conv-1" (Get-AgySession $dbPath "내 세션/1").conversation_id
 
+    Write-Host "세션의 이전 질문·답 (Get-AgySessionHistory)"
+    foreach ($h in @(
+            @("h1", "2026-10-20 10:00:00", "m-low", "첫 질문", "첫 답", "OK", "결제-작업"),
+            @("h2", "2026-10-20 10:05:00", "m-low", "둘째 질문", "둘째 답", "OK", "결제-작업"),
+            @("h3", "2026-10-20 10:10:00", "m-low", "셋째 질문", "셋째 답", "OK", "결제-작업"),
+            @("h4", "2026-10-20 10:15:00", "m-low", "실패한 질문", "실패 답", "ERROR", "결제-작업"),
+            @("h5", "2026-10-20 10:20:00", "m-x", "다른 세션 질문", "다른 답", "OK", "다른-작업"),
+            @("h6", "2026-10-20 10:25:00", "m-x", "대소문자 질문", "대소문자 답", "OK", "Case-Test"))) {
+        [void](Write-QaRecordToDb $dbPath ([ordered]@{ task_id = $h[0]; timestamp = $h[1]; model = $h[2]; question = $h[3]; answer = $h[4]; status = $h[5]; session = $h[6]; process = @() }) 'Upsert')
+    }
+    $hist = @(Get-AgySessionHistory $dbPath "결제-작업" 2)
+    Assert-Equal "  성공한 최근 2건을 오래된 것부터 돌려준다" "h2,h3" (($hist | ForEach-Object { $_.TaskId }) -join ",")
+    Assert-Equal "  질문·답·모델·시각이 담긴다" "둘째 질문|둘째 답|m-low|2026-10-20 10:05:00" ("{0}|{1}|{2}|{3}" -f $hist[0].Question, $hist[0].Answer, $hist[0].Model, $hist[0].Timestamp)
+    Assert-Equal "  실패한 위임과 다른 세션은 섞이지 않는다" 3 @(Get-AgySessionHistory $dbPath "결제-작업" 10).Count
+    Assert-Equal "  세션 이름은 대소문자를 가리지 않는다" "h6" ((@(Get-AgySessionHistory $dbPath "case-TEST" 2) | ForEach-Object { $_.TaskId }) -join ",")
+    Assert-Equal "  없는 세션·DB 없음·Limit 0 은 빈 배열" "0|0|0" ("{0}|{1}|{2}" -f @(Get-AgySessionHistory $dbPath "없는세션" 2).Count, @(Get-AgySessionHistory (Join-Path $work "없는\agy.db") "x" 2).Count, @(Get-AgySessionHistory $dbPath "결제-작업" 0).Count)
+
     Write-Host "보관 기간 정리"
     [void](Write-QaRecordToDb $dbPath ([ordered]@{ task_id = "ancient"; timestamp = "2019-01-01 00:00:00"; question = "q"; answer = "a" }) 'Upsert')
     Assert-Equal "  12개월이 지난 기록 1건을 지운다" 1 (Remove-QaRecordsOlderThan $dbPath 12)

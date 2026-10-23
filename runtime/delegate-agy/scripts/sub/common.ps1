@@ -118,6 +118,36 @@ function ConvertTo-CwdList($Value) {
 
 # 이번 호출에 쓸 폴더 목록. 이번 지시파일에 @cwd 가 하나라도 있으면 이번 목록만 쓰고(세션의 폴더와 합치지 않는다),
 # 하나도 없으면 세션에 저장된 목록을 이어서 쓴다(sticky). 세션의 값은 문자열(예전 파일)이든 배열이든 읽는다.
+# 모델 승격(@upgrade)으로 새 대화를 시작할 때, 이전 대화의 마지막 질문·답을 글로 지시문 위에 붙인다.
+# 새 대화는 이전 대화에서 agy 가 읽은 파일·도구 기록을 이어받지 못한다(그건 agy 쪽에만 있다). 질문·답 글만 넘기므로 필요한 파일은 agy 가 다시 읽어야 한다.
+#   $History   Get-AgySessionHistory 의 결과(오래된 것부터)   $FromModel/$ToModel 모델 이름(없으면 빈 글자)   $Prompt 이번 지시문 본문
+# 질문의 앞쪽 @지시어 줄은 떼고, 질문은 3000자·답은 6000자에서 자른다.
+function New-AgyUpgradeContext($History, [string]$FromModel, [string]$ToModel, [string]$Prompt, [int]$MaxQuestion = 3000, [int]$MaxAnswer = 6000) {
+    $from = if ($FromModel) { $FromModel } else { "기록 없음" }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("[이전 대화 요약 — 모델을 올리면서($from -> $ToModel) 새 대화로 시작합니다. 이전 대화에서 읽은 파일과 도구 실행 기록은 이어지지 않으니, 필요한 파일은 다시 읽으세요. 아래는 같은 세션의 직전 질문과 답입니다.]")
+    $items = @($History)
+    if ($items.Count -eq 0) { [void]$sb.AppendLine("(이전 질문·답 기록을 찾지 못했습니다.)") }
+    $i = 0
+    foreach ($h in $items) {
+        $i++
+        $q = ([string]$h.Question -replace '^(\s*@\w+:[^\r\n]*\r?\n)+', '').Trim()
+        if ($q.Length -gt $MaxQuestion) { $q = $q.Substring(0, $MaxQuestion) + "`n(... 이하 생략)" }
+        $a = ([string]$h.Answer).Trim()
+        if ($a.Length -gt $MaxAnswer) { $a = $a.Substring(0, $MaxAnswer) + "`n(... 이하 생략)" }
+        [void]$sb.AppendLine("")
+        [void]$sb.AppendLine("### 직전 질문 $i ($($h.Timestamp))")
+        [void]$sb.AppendLine($q)
+        [void]$sb.AppendLine("")
+        [void]$sb.AppendLine("### 직전 답 $i")
+        [void]$sb.AppendLine($a)
+    }
+    [void]$sb.AppendLine("")
+    [void]$sb.AppendLine("[이전 대화 끝 — 아래가 이번 요청입니다]")
+    [void]$sb.AppendLine("")
+    return ($sb.ToString() + $Prompt)
+}
+
 function Resolve-TaskCwds($DirectiveCwds, $SessionCwd) {
     $own = @(ConvertTo-CwdList $DirectiveCwds)
     if ($own.Count -gt 0) { return $own }
