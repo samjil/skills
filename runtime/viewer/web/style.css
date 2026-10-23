@@ -99,31 +99,31 @@
   --soft-surface: #f1f4f6;        /* 바탕과 같은 색: 테두리만으로 구역을 나눈다 */
   --scroll-thumb-hover: #8c9ba7;
 
-  --ink: #16212a;
-  --ink-2: #465664;
-  --ink-3: #5a6b78;
+  --ink: #0e1820;
+  --ink-2: #364552;
+  --ink-3: #4a5966;
 
-  --claude: #7d5600;
+  --claude: #6f4c00;
   --claude-soft: rgba(125, 86, 0, 0.13);
-  --agy: #08706a;
+  --agy: #07665f;
   --agy-soft: rgba(10, 125, 119, 0.12);
 
-  --ok: #26702b;
+  --ok: #1f6624;
   --ok-soft: rgba(38, 112, 43, 0.12);
-  --err: #c23340;
+  --err: #b52a37;
   --err-soft: rgba(194, 51, 64, 0.1);
-  --warn: #8a5f00;
+  --warn: #7b5400;
   --warn-soft: rgba(138, 95, 0, 0.13);
 
   --focus: #0a7d77;
 
-  --ink-strong: #0b141a;
+  --ink-strong: #060d12;
   --veil-rgb: 22, 33, 42;
   --hover-veil: rgba(22, 33, 42, 0.05);
   --agy-rgb: 10, 125, 119;
   --err-rgb: 194, 51, 64;
   --warn-rgb: 138, 95, 0;
-  --err-text: #c23340;
+  --err-text: #b52a37;
   --link: #0858b8;
   --code-bg: #f4f7f9;
   --alert-ink: #25313b;
