@@ -91,6 +91,7 @@ $targets = @(
     "sub\ensure-agy-running.ps1",
     "sub\handoff-pump.ps1",
     "sub\agy-rules.ps1",
+    "sub\agy-gitguard.ps1",
     "sub\log-qa.ps1"
 )
 
