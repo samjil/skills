@@ -304,6 +304,25 @@ function Set-HandoffMessageModel([string]$Path, [string]$Model, [string]$Effort 
     return $true
 }
 
+# 메시지 머리말에 `키: 값` 한 줄을 넣는다(그 키가 이미 있으면 그대로 둔다). 머리말이 없는 파일은 건드리지 않는다. 넣었으면 $true.
+# Claude 가 쓴 c2a 에 어느 세션이 썼는지(`세션:`)를 적는 데 쓴다 — 같은 채널을 세션 둘이 함께 쓸 때 회신이 엉뚱한 세션에 가지 않게 한다.
+function Set-HandoffMessageField([string]$Path, [string]$Key, [string]$Value) {
+    if (-not $Key -or -not $Value -or -not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+    $text = (New-Object System.Text.UTF8Encoding($false)).GetString($bytes, $(if ($hasBom) { 3 } else { 0 }), $bytes.Length - $(if ($hasBom) { 3 } else { 0 }))
+    $m = [regex]::Match($text, '\A(---[ \t]*\r?\n)((?:.*?\r?\n)*?)(---[ \t]*(?:\r?\n|\z))')
+    if (-not $m.Success) { return $false }
+    if ([regex]::IsMatch($m.Groups[2].Value, '(?m)^\s*' + [regex]::Escape($Key) + '\s*[:：]')) { return $false }
+    $eol = if ($m.Groups[1].Value.EndsWith("`r`n")) { "`r`n" } else { "`n" }
+    $new = $m.Groups[1].Value + $m.Groups[2].Value + "${Key}: $Value" + $eol + $m.Groups[3].Value
+    $text = $new + $text.Substring($m.Length)
+    $out = (New-Object System.Text.UTF8Encoding($false)).GetBytes($text)
+    if ($hasBom) { $out = [byte[]](@(0xEF, 0xBB, 0xBF) + $out) }
+    [System.IO.File]::WriteAllBytes($Path, $out)
+    return $true
+}
+
 function Get-HandoffMessageFile([string]$ChannelDir, [string]$Num) {
     $msgDir = Join-Path $ChannelDir "msg"
     if (-not (Test-Path -LiteralPath $msgDir -PathType Container)) { return $null }
@@ -471,9 +490,9 @@ function Get-HandoffRounds($State, [int]$Minutes = 60) {
 # 뷰어용 요약
 # --------------------------------------------------------------------------------------------
 
-# 메시지 파일 머리말에서 뷰어가 쓰는 것만(모델 · 답장대상 · 자동). 파일 수정 시각이 같으면 캐시를 쓴다($Cache 는 호출하는 쪽이 들고 있는 해시테이블).
+# 메시지 파일 머리말에서 뷰어가 쓰는 것만(모델 · 노력 · 답장대상 · 자동 · 세션). 파일 수정 시각이 같으면 캐시를 쓴다($Cache 는 호출하는 쪽이 들고 있는 해시테이블).
 function Get-HandoffMessageMeta([string]$Path, [hashtable]$Cache = $null) {
-    $empty = @{ model = ""; effort = ""; replyTo = ""; auto = $false }
+    $empty = @{ model = ""; effort = ""; replyTo = ""; auto = $false; session = "" }
     if (-not $Path) { return $empty }
     $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
     if (-not $item) { return $empty }
@@ -482,7 +501,7 @@ function Get-HandoffMessageMeta([string]$Path, [hashtable]$Cache = $null) {
     $h = Read-HandoffFrontMatter $Path
     $mdl = [string]$h["모델"]
     if ($mdl -eq "(session)") { $mdl = "" }
-    $meta = @{ model = $mdl; effort = [string]$h["노력"]; replyTo = [string]$h["답장대상"]; auto = ([string]$h["자동"] -eq "예") }
+    $meta = @{ model = $mdl; effort = [string]$h["노력"]; replyTo = [string]$h["답장대상"]; auto = ([string]$h["자동"] -eq "예"); session = [string]$h["세션"] }
     if ($Cache) { $Cache[$Path] = @{ stamp = $stamp; meta = $meta } }
     return $meta
 }
