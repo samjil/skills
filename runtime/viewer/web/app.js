@@ -3695,13 +3695,79 @@
   var mermaidInitialized = false;
   var mermaidCounter = 0;
 
+  // ==========================================================================
+  // 화면 테마: 시스템(기본) / 라이트 / 다크. 첫 그리기 전 결정은 index.html 머리의 theme-init 가 맡고, 여기서는 바꾸기만 한다.
+  // ==========================================================================
+  var THEME_KEY = "samjil-viewer-theme";
+
+  function normalizeThemePref(value) {
+    return value === "light" || value === "dark" ? value : "system";
+  }
+
+  function resolveTheme(pref, systemLight) {
+    var p = normalizeThemePref(pref);
+    if (p === "system") { return systemLight ? "light" : "dark"; }
+    return p;
+  }
+
+  function systemPrefersLight() {
+    try { return Boolean(window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches); } catch (e) { return false; }
+  }
+
+  function applyTheme(pref) {
+    var p = normalizeThemePref(pref);
+    var theme = resolveTheme(p, systemPrefersLight());
+    var root = document.documentElement;
+    root.setAttribute("data-theme", theme);
+    root.setAttribute("data-theme-pref", p);
+    var hd = document.getElementById("hljs-dark");
+    var hl = document.getElementById("hljs-light");
+    if (hd) { hd.disabled = (theme !== "dark"); }
+    if (hl) { hl.disabled = (theme !== "light"); }
+    var buttons = document.querySelectorAll("#theme-switch button[data-theme-pref]");
+    Array.prototype.forEach.call(buttons, function (b) {
+      b.setAttribute("aria-pressed", b.getAttribute("data-theme-pref") === p ? "true" : "false");
+    });
+    // 다음에 그리는 다이어그램부터 새 테마를 쓰도록 다시 초기화하게 한다
+    mermaidInitialized = false;
+  }
+
+  function currentThemePref() {
+    try { return normalizeThemePref(localStorage.getItem(THEME_KEY)); } catch (e) { return "system"; }
+  }
+
+  function setThemePref(pref) {
+    var p = normalizeThemePref(pref);
+    try {
+      if (p === "system") { localStorage.removeItem(THEME_KEY); } else { localStorage.setItem(THEME_KEY, p); }
+    } catch (e) {}
+    applyTheme(p);
+  }
+
+  function initTheme() {
+    applyTheme(currentThemePref());
+    var group = document.getElementById("theme-switch");
+    if (group) {
+      group.addEventListener("click", function (ev) {
+        var btn = ev.target && ev.target.closest ? ev.target.closest("button[data-theme-pref]") : null;
+        if (btn) { setThemePref(btn.getAttribute("data-theme-pref")); }
+      });
+    }
+    // 기기의 밝기 설정이 바뀌면 '시스템'을 고른 경우에만 따라간다
+    try {
+      var mq = window.matchMedia("(prefers-color-scheme: light)");
+      var onChange = function () { if (currentThemePref() === "system") { applyTheme("system"); } };
+      if (mq.addEventListener) { mq.addEventListener("change", onChange); } else if (mq.addListener) { mq.addListener(onChange); }
+    } catch (e) {}
+  }
+
   function ensureMermaidInit() {
     if (mermaidInitialized) return;
     if (window.mermaid && typeof window.mermaid.initialize === "function") {
       try {
         window.mermaid.initialize({
           startOnLoad: false,
-          theme: "dark",
+          theme: document.documentElement.getAttribute("data-theme") === "light" ? "default" : "dark",
           securityLevel: "loose",
           fontFamily: "IBM Plex Sans KR, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
         });
@@ -6290,6 +6356,7 @@
   }
 
   // 초기화 실행
+  initTheme();
   initImagePopups();
   initTreeSortSelects();
   bindEvents();
