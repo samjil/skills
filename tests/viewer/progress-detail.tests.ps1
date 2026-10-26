@@ -180,9 +180,12 @@ $line2 = '{"step_index":2,"source":"MODEL","type":"PLANNER_RESPONSE","input_toke
 [System.IO.File]::AppendAllText($tokFile, $line2, $u8)
 
 $tokProg2 = Get-AgyProgress $tokConvId $null
-Assert-Equal "증분 읽기 후 input_tokens 330 (100 + 200 + 30)" 330 $tokProg2.tokens.input
+Assert-Equal "증분 읽기 후 input_tokens 300 (캐시 밖 100 + 200)" 300 $tokProg2.tokens.input
 Assert-Equal "증분 읽기 후 output_tokens 120 (50 + 70)" 120 $tokProg2.tokens.output
-Assert-Equal "증분 읽기 후 total 450" 450 $tokProg2.tokens.total
+Assert-Equal "증분 읽기 후 cache 30 (캐시 읽기는 입력에 섞지 않고 따로)" 30 $tokProg2.tokens.cache
+Assert-Equal "증분 읽기 후 total 420 (입력 + 출력, 위임 기록과 같은 기준)" 420 $tokProg2.tokens.total
+Assert-Equal "현재 컨텍스트 230 (마지막 턴의 입력 200 + 캐시 30)" 230 $tokProg2.tokens.context
+Assert-Equal "모델 응답 턴 2" 2 $tokProg2.tokens.turns
 
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 $env:AGY_HOME = $null

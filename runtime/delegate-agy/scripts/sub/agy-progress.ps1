@@ -479,3 +479,71 @@ function Read-AgyProcessSteps {
     $res.Steps = @($steps.ToArray())
     return $res
 }
+
+# ==========================================================================
+# 토큰 사용량 집계 (대화 기록 transcript 의 모델 응답 줄)
+#   대화 기록에는 모델이 응답한 턴(과정) 하나마다 usage 가 있는 줄이 하나씩 있다:
+#     step_index, input_tokens(캐시 밖 일반 입력), cache_read_tokens(캐시에서 읽은 입력), output_tokens(출력. 사고 토큰을 포함한다).
+#   도구 실행 결과 줄에는 usage 가 없다. 같은 턴(step_index)의 usage 줄이 또 나오면 더하지 않고 마지막 값으로 덮어쓴다
+#   (스트리밍 기록이 턴 처음부터 지금까지의 누적값을 거듭 내보내도 두 번 세지 않게).
+#   총 토큰 = 입력 + 출력: 위임 기록 DB(agy 가 작업 끝에 알려 주는 값)와 같은 기준이다(모든 기록에서 총 = 입력 + 출력, 사고 <= 출력).
+#   캐시 읽기는 총에 넣지 않고 따로 센다: 단계마다 앞 맥락을 다시 읽어 누적하면 수백만이 되어 진행 중 숫자와 끝난 뒤 숫자가 어긋난다.
+#   현재 컨텍스트 = 가장 마지막 턴이 모델에 보낸 입력의 크기(캐시 밖 입력 + 캐시 읽기).
+# ==========================================================================
+
+# 새 집계 상태. Path 는 대화 기록 파일, Offset 은 다음에 읽을 위치(이어 읽기용), Turns 는 step_index -> @{ In; Cache; Out }.
+function New-AgyUsageState([string]$Path) {
+    return @{ Path = $Path; Offset = [long]0; Turns = @{}; Anon = 0; Touched = (Get-Date) }
+}
+
+# 파일에서 새로 쌓인 줄만 읽어 상태에 반영한다(아직 줄바꿈으로 끝나지 않은 마지막 줄은 다음에). 파일이 없거나 오류면 상태를 그대로 둔다.
+function Update-AgyUsageState($State) {
+    if (-not $State -or -not $State.Path -or -not (Test-Path -LiteralPath $State.Path -PathType Leaf)) { return }
+    $item = Get-Item -LiteralPath $State.Path
+    if ($item.Length -lt $State.Offset) { $State.Offset = [long]0; $State.Turns.Clear() }    # 파일이 줄었으면(새로 쓰임) 처음부터
+    if ($item.Length -le $State.Offset) { return }
+    $fs = [System.IO.File]::Open($State.Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        [void]$fs.Seek($State.Offset, [System.IO.SeekOrigin]::Begin)
+        $want = [int]($fs.Length - $State.Offset)
+        if ($want -le 0) { return }
+        $buf = New-Object byte[] $want
+        $got = $fs.Read($buf, 0, $want)
+        $lastNl = if ($got -gt 0) { [Array]::LastIndexOf($buf, [byte]10, $got - 1) } else { -1 }
+        if ($lastNl -lt 0) { return }
+        $text = [System.Text.Encoding]::UTF8.GetString($buf, 0, $lastNl + 1)
+        foreach ($line in ($text -split "\r?\n")) {
+            if (-not $line) { continue }
+            $hasIn = $line -match '"input_tokens"\s*:\s*(\d+)'
+            $inTok = if ($hasIn) { [int64]$matches[1] } else { [int64]0 }
+            $hasCache = $line -match '"cache_read_tokens"\s*:\s*(\d+)'
+            $cacheTok = if ($hasCache) { [int64]$matches[1] } else { [int64]0 }
+            $hasOut = $line -match '"output_tokens"\s*:\s*(\d+)'
+            $outTok = if ($hasOut) { [int64]$matches[1] } else { [int64]0 }
+            if (-not ($hasIn -or $hasCache -or $hasOut)) { continue }
+            $key = $null
+            if ($line -match '"step_index"\s*:\s*(\d+)') { $key = [int]$matches[1] } else { $State.Anon++; $key = "x" + $State.Anon }
+            $State.Turns[$key] = @{ In = $inTok; Cache = $cacheTok; Out = $outTok }     # 같은 턴은 마지막 값으로 덮어쓴다
+        }
+        $State.Offset = $State.Offset + $lastNl + 1
+    } finally { $fs.Dispose() }
+    $State.Touched = Get-Date
+}
+
+# 상태에서 합계를 낸다. MaxStep 이 0 보다 크면 그 단계 번호까지의 턴만(어느 시점까지의 값이 필요할 때).
+# 반환: @{ Input; Cache; Output; Total; Context; Turns }
+function Get-AgyUsageSummary($State, [int]$MaxStep = 0) {
+    $in = [int64]0; $cache = [int64]0; $out = [int64]0; $turns = 0
+    $ctxStep = -1; $ctx = [int64]0
+    if ($State -and $State.Turns) {
+        foreach ($k in @($State.Turns.Keys)) {
+            $isNum = ($k -is [int])
+            if ($MaxStep -gt 0 -and $isNum -and $k -gt $MaxStep) { continue }
+            if ($MaxStep -gt 0 -and -not $isNum) { continue }
+            $v = $State.Turns[$k]
+            $in += $v.In; $cache += $v.Cache; $out += $v.Out; $turns++
+            if ($isNum -and $k -gt $ctxStep) { $ctxStep = $k; $ctx = $v.In + $v.Cache }
+        }
+    }
+    return @{ Input = $in; Cache = $cache; Output = $out; Total = ($in + $out); Context = $ctx; Turns = $turns }
+}

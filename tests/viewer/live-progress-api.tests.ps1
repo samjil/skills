@@ -30,8 +30,13 @@ function New-Transcript([string]$convId, [int[]]$steps) {
     $lines = @()
     foreach ($n in $steps) {
         $o = [ordered]@{ step_index = $n; source = "MODEL"; type = "PLANNER_RESPONSE"; status = "DONE"; created_at = "2026-10-16T03:00:00Z"
+            input_tokens = (100 * $n); cache_read_tokens = (1000 * $n); output_tokens = (10 * $n)
             tool_calls = @(@{ name = "view_file"; args = @{ AbsolutePath = "C:\work\f$n.txt"; toolAction = "Reading f$n" } }) }
         $lines += ($o | ConvertTo-Json -Compress -Depth 8)
+        if ($convId -eq "conv-running" -and $n -eq 5) {   # 같은 턴의 usage 줄이 누적값으로 한 번 더(스트리밍, 도구 호출 없이): 더하지 않고 덮어써야 한다
+            $dup = [ordered]@{ step_index = $n; source = "MODEL"; type = "PLANNER_RESPONSE"; status = "DONE"; input_tokens = (100 * $n); cache_read_tokens = (1000 * $n); output_tokens = 70 }
+            $lines += ($dup | ConvertTo-Json -Compress -Depth 8)
+        }
     }
     [System.IO.File]::WriteAllText((Join-Path $dir "transcript_full.jsonl"), (($lines -join "`n") + "`n"), $utf8)
     return (Join-Path $dir "transcript_full.jsonl")
@@ -90,6 +95,11 @@ try {
     Assert-Equal "  progress 에도 같은 ID" "conv-running" $run.progress.conversation_id
     Assert-Equal "단계 수(step_count)" 3 $run.progress.step_count
     Assert-Equal "멈춤 기준(stall_seconds) 기본 300" 300 $run.progress.stall_seconds
+    # 토큰: 응답 턴(step 1,3,5)마다 한 번씩. 입력(캐시 밖) 100+300+500=900, 출력 10+30+70(step 5 는 두 줄 중 마지막 값)=110, 캐시 읽기 1000+3000+5000=9000
+    Assert-Equal "실시간 입력(캐시 밖) 900 · 출력 110 · 캐시 읽기 9000" "900|110|9000" ("{0}|{1}|{2}" -f $run.progress.tokens.input, $run.progress.tokens.output, $run.progress.tokens.cache)
+    Assert-Equal "  총 토큰 = 입력 + 출력 = 1010 (캐시 읽기를 넣지 않는다)" 1010 $run.progress.tokens.total
+    Assert-Equal "  현재 컨텍스트 = 마지막 턴의 입력 + 캐시 읽기 = 500 + 5000" 5500 $run.progress.tokens.context
+    Assert-Equal "  모델 응답 턴 수 3 (같은 턴의 중복 줄 · 도구 결과 줄은 세지 않는다)" 3 $run.progress.tokens.turns
     Assert-Equal "백그라운드 도구 대기 아님" $false $run.progress.waiting_background
     Assert-Equal "interrupted 아님" $false $run.interrupted
     Assert-Equal "마지막 활동 시각을 준다" $true ([int64]$run.progress.last_activity_ms -gt 0)

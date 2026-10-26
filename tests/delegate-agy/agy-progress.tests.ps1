@@ -275,6 +275,60 @@ Assert-Equal "Get-AgyTaskLogActivity: 도구 로그가 없으면 `$null" $true (
 Assert-Equal "Get-AgyTaskLogActivity: 있으면 마지막 수정 시각" $true ((Get-AgyTaskLogActivity $home_ $taskId) -eq $capNow.AddSeconds(-2))
 Assert-Equal "Get-AgyTreeCpuSeconds: 지금 프로세스는 CPU 를 쓴 적이 있다" $true ((Get-AgyTreeCpuSeconds $PID) -gt 0)
 Assert-Equal "Get-AgyTreeCpuSeconds: 없는 프로세스는 0" 0 (Get-AgyTreeCpuSeconds 2147000000)
+Write-Host "토큰 집계: New-AgyUsageState / Update-AgyUsageState / Get-AgyUsageSummary"
+$usagePath = Join-Path $home_ "usage-transcript.jsonl"
+function New-UsageLine([int]$Step, [string]$Type, $In, $Cache, $Out) {
+    $o = [ordered]@{ step_index = $Step; source = "MODEL"; type = $Type; status = "DONE" }
+    if ($null -ne $In) { $o.input_tokens = $In; $o.cache_read_tokens = $Cache; $o.output_tokens = $Out }
+    return ($o | ConvertTo-Json -Compress)
+}
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+# 턴 3개(step 1,3,5)의 응답 줄과 도구 실행 결과 줄(step 2,4 — usage 없음). 입력은 캐시 밖 일반 입력이다.
+$uLines = @(
+    (New-UsageLine 1 "PLANNER_RESPONSE" 1000 0 100),
+    (New-UsageLine 2 "TOOL_RESULT" $null $null $null),
+    (New-UsageLine 3 "PLANNER_RESPONSE" 200 1000 80),
+    (New-UsageLine 4 "TOOL_RESULT" $null $null $null),
+    (New-UsageLine 5 "PLANNER_RESPONSE" 150 1200 60)
+)
+[System.IO.File]::WriteAllText($usagePath, (($uLines -join "`n") + "`n"), $utf8NoBom)
+$us = New-AgyUsageState $usagePath
+Update-AgyUsageState $us
+$sum = Get-AgyUsageSummary $us
+Assert-Equal "턴마다 한 번씩 더한다: 입력(캐시 밖) 1350" 1350 $sum.Input
+Assert-Equal "  출력 240" 240 $sum.Output
+Assert-Equal "  캐시 읽기는 따로 2200" 2200 $sum.Cache
+Assert-Equal "  총 토큰 = 입력 + 출력 (캐시를 넣지 않는다)" 1590 $sum.Total
+Assert-Equal "  모델 응답 턴 수 3 (도구 결과 줄은 세지 않는다)" 3 $sum.Turns
+Assert-Equal "  현재 컨텍스트 = 마지막 턴의 입력 + 캐시 읽기 (150 + 1200)" 1350 $sum.Context
+# 같은 턴의 줄이 누적값으로 거듭 나와도(스트리밍) 더하지 않고 마지막 값으로 덮어쓴다
+[System.IO.File]::AppendAllText($usagePath, ((New-UsageLine 5 "PLANNER_RESPONSE" 150 1200 90) + "`n" + (New-UsageLine 5 "PLANNER_RESPONSE" 150 1200 120) + "`n"), $utf8NoBom)
+Update-AgyUsageState $us
+$sum = Get-AgyUsageSummary $us
+Assert-Equal "같은 턴이 다시 나오면 덮어쓴다: 출력 100 + 80 + 120 = 300" 300 $sum.Output
+Assert-Equal "  턴 수는 그대로 3" 3 $sum.Turns
+Assert-Equal "  입력은 그대로 1350" 1350 $sum.Input
+# 이어 읽기: 줄바꿈으로 끝나지 않은 마지막 줄은 다음에
+$partial = (New-UsageLine 7 "PLANNER_RESPONSE" 10 20 5)
+[System.IO.File]::AppendAllText($usagePath, $partial.Substring(0, 30), $utf8NoBom)
+Update-AgyUsageState $us
+Assert-Equal "쓰는 중인 줄은 읽지 않는다(턴 수 그대로)" 3 (Get-AgyUsageSummary $us).Turns
+[System.IO.File]::AppendAllText($usagePath, $partial.Substring(30) + "`n", $utf8NoBom)
+Update-AgyUsageState $us
+Assert-Equal "줄이 완성되면 이어서 읽는다(턴 4, 출력 305)" "4|305" ("{0}|{1}" -f (Get-AgyUsageSummary $us).Turns, (Get-AgyUsageSummary $us).Output)
+Update-AgyUsageState $us
+Assert-Equal "이어 읽기를 거듭해도 그대로(턴 4)" 4 (Get-AgyUsageSummary $us).Turns
+# 단계 번호까지만(한 호출의 몫)
+$upTo = Get-AgyUsageSummary $us 3
+Assert-Equal "MaxStep 3: step 1,3 의 턴만(입력 1200, 출력 180, 캐시 1000)" "1200|180|1000|2" ("{0}|{1}|{2}|{3}" -f $upTo.Input, $upTo.Output, $upTo.Cache, $upTo.Turns)
+Assert-Equal "  그 시점의 현재 컨텍스트 = step 3 의 200 + 1000" 1200 $upTo.Context
+# 파일이 없으면 0
+$none = New-AgyUsageState (Join-Path $home_ "none.jsonl"); Update-AgyUsageState $none
+Assert-Equal "대화 기록이 없으면 모두 0" "0|0|0" ("{0}|{1}|{2}" -f (Get-AgyUsageSummary $none).Total, (Get-AgyUsageSummary $none).Turns, (Get-AgyUsageSummary $none).Context)
+# 파일이 줄어들면(새로 쓰임) 처음부터
+[System.IO.File]::WriteAllText($usagePath, ((New-UsageLine 1 "PLANNER_RESPONSE" 5 0 1) + "`n"), $utf8NoBom)
+Update-AgyUsageState $us
+Assert-Equal "파일이 줄어들면 처음부터 다시 읽는다(총 6)" 6 (Get-AgyUsageSummary $us).Total
 Remove-Item -LiteralPath $home_ -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""
 Write-Host ("통과 {0} / 실패 {1}" -f $script:Passed, $script:Failed)
