@@ -90,6 +90,7 @@
     chipQaModels:         document.getElementById("chip-qa-models"),
     chipQaStatus:         document.getElementById("chip-qa-status"),
     chipQaTime:           document.getElementById("chip-qa-time"),
+    chipQaSaved:          document.getElementById("chip-qa-saved"),
     cards:                document.getElementById("cards"),
     loadMoreBtn:          document.getElementById("loadmore"),
 
@@ -582,6 +583,7 @@
       });
       allItems = items;
       qaSeq = (res && typeof res.seq === "number") ? res.seq : qaSeq;
+      requestSavedFileSizes(items).then(function (got) { if (got) { refreshSavedViews(); } });
       return { changed: true };
     });
   }
@@ -2694,6 +2696,196 @@
     return n >= 10000 ? (n / 10000).toFixed(1) + "만" : n.toLocaleString();
   }
 
+  // ==========================================================================
+  // 아낀 Claude 토큰(예상)
+  //   Claude 가 쓴 토큰은 이 도구가 잴 수 없다. agy 의 토큰 수는 방식이 달라(입력이 단계마다 맥락을 다시 읽는 누적) 그대로 쓰지 않고,
+  //   "같은 일을 Claude 가 직접 했다면" 필요했을 분량을 agy 가 남긴 과정(읽은 파일 · 쓴 파일 · 실행한 명령 · 생각)에서 어림한다:
+  //     읽기  : 읽은 파일(같은 파일은 한 번)의 크기를 토큰으로(파일이 없으면 기본값, 한 파일 상한 있음)
+  //     쓰기  : 새로 쓴 파일의 크기 / 고친 곳은 한 군데당 어림값
+  //     명령  : 명령 글자 + 출력 어림값
+  //     생각  : 과정에 남은 생각 글의 길이 × 2(요약본이라 실제 생각은 더 길다)
+  //     단계마다 도구 호출 형식 몫
+  //   거기서 위임하느라 Claude 가 쓴 질문(Claude 가 쓴 글)을 뺀다. 최종 답은 Claude 가 직접 했어도 써야 하고 위임해도 읽어야 해서 서로 상쇄된다.
+  //   성공한 위임만 세고, 과정이 없는 기록(MCP 호출 등)은 어림할 근거가 없어 센 값이 없다.
+  // ==========================================================================
+  var SAVED_READ_CAP_TOKENS = 30000;     // 한 파일을 읽는 데 드는 토큰 상한
+  var SAVED_READ_DEFAULT_TOKENS = 2500;  // 크기를 모르는 읽은 파일
+  var SAVED_WRITE_DEFAULT_TOKENS = 1500; // 크기를 모르는 쓴 파일
+  var SAVED_EDIT_TOKENS = 600;           // 파일 한 군데를 고치는 도구 호출(바꿀 부분 + 앞뒤)
+  var SAVED_CMD_RESULT_TOKENS = 300;     // 명령 하나의 출력
+  var SAVED_STEP_TOKENS = 80;            // 도구 호출 하나의 형식(이름 · 인자 틀)
+
+  var SAVED_READ_TOOLS = { view_file: 1, read_file: 1 };
+  var SAVED_WRITE_TOOLS = { write_to_file: 1, write_file: 1 };
+  var SAVED_EDIT_TOOLS = { replace_file_content: 1, edit_file: 1, multi_replace_file_content: 1 };
+
+  // 글자 수를 토큰으로 어림: 영문·숫자·기호는 4자에 1토큰, 한글 등은 1.5자에 1토큰.
+  function estimateTextTokens(s) {
+    var str = String(s == null ? "" : s);
+    var ascii = 0, other = 0;
+    for (var i = 0; i < str.length; i++) { if (str.charCodeAt(i) < 128) { ascii++; } else { other++; } }
+    return Math.ceil(ascii / 4 + other / 1.5);
+  }
+
+  // 파일 바이트 수를 토큰으로 어림(코드·한글이 섞인 글은 3.2바이트에 1토큰 안팎).
+  function bytesToTokens(bytes) { return Math.ceil((Number(bytes) || 0) / 3.2); }
+
+  function tokenRecordKey(r) { return r && r.task_id ? String(r.task_id) : "t:" + String(r && r.timestamp || ""); }
+
+  // 과정의 detail 이 파일 경로로 보이는가(절대 경로만). 글 내용이 들어 있는 경우(write_file 의 본문 등)는 거른다.
+  function savedLooksLikePath(s) {
+    var v = String(s == null ? "" : s);
+    if (v.length === 0 || v.length > 400 || v.indexOf("\n") >= 0) { return false; }
+    return /^[A-Za-z]:[\\/]/.test(v) || v.charAt(0) === "/";
+  }
+
+  // agy 자신의 작업 파일(지시문 파일 · 내부 기록)은 일의 분량이 아니라서 센 값에서 뺀다.
+  function savedIsInternalPath(p) {
+    return /[\\/]\.gemini[\\/]|[\\/]antigravity-cli[\\/]|[\\/]delegate-agy[\\/]runtime[\\/]|[\\/]\.samjil[\\/]delegate-agy[\\/]/i.test(String(p));
+  }
+
+  function savedNormPath(p) { return String(p).replace(/\\/g, "/"); }
+
+  // 한 위임 기록의 과정에서 일의 종류별 양을 뽑는다. 과정이 없으면 null.
+  function analyzeSavedWork(r) {
+    var steps = r && Array.isArray(r.process) ? r.process : [];
+    if (steps.length === 0) { return null; }
+    var w = { reads: [], writes: [], writesNoPath: 0, edits: 0, commands: [], thinkChars: 0, steps: 0 };
+    var readSeen = {}, writeSeen = {};
+    steps.forEach(function (st) {
+      if (!st) { return; }
+      var tool = String(st.tool || "");
+      var detail = String(st.detail == null ? "" : st.detail);
+      w.thinkChars += String(st.think == null ? "" : st.think).length;
+      if (SAVED_READ_TOOLS[tool]) {
+        w.steps++;
+        if (savedLooksLikePath(detail) && !savedIsInternalPath(detail)) {
+          var rp = savedNormPath(detail);
+          if (!readSeen[rp]) { readSeen[rp] = true; w.reads.push(rp); }
+        }
+      } else if (SAVED_WRITE_TOOLS[tool]) {
+        w.steps++;
+        if (savedLooksLikePath(detail)) {
+          if (!savedIsInternalPath(detail)) {
+            var wp = savedNormPath(detail);
+            if (!writeSeen[wp]) { writeSeen[wp] = true; w.writes.push(wp); }
+          }
+        } else { w.writesNoPath++; }
+      } else if (SAVED_EDIT_TOOLS[tool]) {
+        w.steps++;
+        if (!(savedLooksLikePath(detail) && savedIsInternalPath(detail))) { w.edits++; }
+      } else if (tool === "run_command") {
+        w.steps++;
+        w.commands.push(detail);
+      }
+      // manage_task · schedule 등 기다림·관리용 호출은 일의 분량이 아니라서 세지 않는다.
+    });
+    return w;
+  }
+
+  // 분석 결과와 파일 크기 지도(경로 -> 바이트, -1 은 없음)로 "Claude 가 직접 했다면" 쓸 토큰을 부분별로 어림한다.
+  function estimateDirectTokens(work, sizes) {
+    sizes = sizes || {};
+    var read = 0;
+    work.reads.forEach(function (p) {
+      var sz = sizes[p];
+      read += (typeof sz === "number" && sz >= 0) ? Math.min(bytesToTokens(sz), SAVED_READ_CAP_TOKENS) : SAVED_READ_DEFAULT_TOKENS;
+    });
+    var write = 0;
+    work.writes.forEach(function (p) {
+      var sz = sizes[p];
+      write += (typeof sz === "number" && sz >= 0) ? bytesToTokens(sz) : SAVED_WRITE_DEFAULT_TOKENS;
+    });
+    write += work.writesNoPath * SAVED_WRITE_DEFAULT_TOKENS;
+    var edit = work.edits * SAVED_EDIT_TOKENS;
+    var cmd = 0;
+    work.commands.forEach(function (c) { cmd += estimateTextTokens(c) + SAVED_CMD_RESULT_TOKENS; });
+    var think = Math.ceil(work.thinkChars / 4) * 2;   // 생각 글은 대부분 영문이라 4자에 1토큰, 요약본이라 × 2
+    var steps = work.steps * SAVED_STEP_TOKENS;
+    return { read: read, write: write, edit: edit, cmd: cmd, think: think, steps: steps, total: read + write + edit + cmd + think + steps };
+  }
+
+  // 파일 크기 지도. 서버(/api/qa/file-sizes)에서 받아 채운다. 받기 전에는 기본값으로 어림하고, 받으면 다시 그린다.
+  var savedFileSizes = {};
+  var savedSizeRequested = {};
+  function savedMissingPaths(records) {
+    var out = [];
+    (Array.isArray(records) ? records : []).forEach(function (r) {
+      if (!isOkStatus(r)) { return; }
+      var w = analyzeSavedWork(r);
+      if (!w) { return; }
+      w.reads.concat(w.writes).forEach(function (p) {
+        if (!Object.prototype.hasOwnProperty.call(savedFileSizes, p) && !savedSizeRequested[p]) { savedSizeRequested[p] = true; out.push(p); }
+      });
+    });
+    return out;
+  }
+  function requestSavedFileSizes(records) {
+    var paths = savedMissingPaths(records);
+    if (paths.length === 0 || typeof fetch !== "function") { return Promise.resolve(false); }
+    var chunks = [];
+    for (var i = 0; i < paths.length; i += 300) { chunks.push(paths.slice(i, i + 300)); }
+    return Promise.all(chunks.map(function (chunk) {
+      return fetch("/api/qa/file-sizes", { method: "POST", headers: { "X-Samjil-Viewer": "1", "Content-Type": "application/json" }, body: JSON.stringify({ paths: chunk }) })
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (data) {
+          var got = data && data.sizes ? data.sizes : {};
+          chunk.forEach(function (p) { savedFileSizes[p] = typeof got[p] === "number" ? got[p] : -1; });
+          return true;
+        })
+        .catch(function () { chunk.forEach(function (p) { savedSizeRequested[p] = false; }); return false; });
+    })).then(function (rs) { return rs.some(Boolean); });
+  }
+
+  // 성공한 위임 한 건의 아낀 Claude 토큰 어림. 어림할 수 없으면(실패 · 과정 없음) null.
+  function savedTokensOf(r) {
+    if (!isOkStatus(r)) { return null; }
+    var w = analyzeSavedWork(r);
+    if (!w) { return null; }
+    var d = estimateDirectTokens(w, savedFileSizes);
+    var asked = estimateTextTokens(r.question);
+    return { saved: Math.max(0, d.total - asked), direct: d.total, asked: asked, parts: d, reads: w.reads.length, writes: w.writes.length + w.writesNoPath, edits: w.edits, commands: w.commands.length };
+  }
+
+  // 여러 건의 합. 센 건수와 함께 돌려준다.
+  function sumSavedTokens(items) {
+    var saved = 0, count = 0;
+    (Array.isArray(items) ? items : []).forEach(function (r) {
+      var s = savedTokensOf(r);
+      if (s) { saved += s.saved; count++; }
+    });
+    return { saved: saved, count: count };
+  }
+
+  // 합계가 커질 수 있어(누적 수백만) 단위를 키운다: 1만 미만 쉼표 숫자 · 1천만 미만 "2.4만" · 1억 미만 "1,676만" · 그 이상 "1.68억".
+  function savedTokenShort(n) {
+    n = Math.round(Number(n) || 0);
+    if (n < 10000) { return n.toLocaleString(); }
+    if (n < 10000000) { return (n / 10000).toFixed(1) + "만"; }
+    if (n < 100000000) { return Math.round(n / 10000).toLocaleString() + "만"; }
+    return (n / 100000000).toFixed(2) + "억";
+  }
+  function savedTokensText(n) { return "아낀 Claude 토큰 ≈ " + savedTokenShort(n) + " (예상)"; }
+  var SAVED_TOKENS_NOTE = "같은 일을 Claude 가 직접 했다면 쓸 분량을 agy 가 남긴 과정(읽은 파일·쓴 파일·명령·생각)에서 어림하고, 위임하느라 쓴 질문 분량을 뺀 예상값입니다. 실제 Claude 사용량은 이 도구가 잴 수 없습니다.";
+  function savedTokensDetail(sv) {
+    return SAVED_TOKENS_NOTE + " 직접 했다면 약 " + sv.direct.toLocaleString() + " (읽기 " + sv.parts.read.toLocaleString() + " · 쓰기 " + (sv.parts.write + sv.parts.edit).toLocaleString() +
+      " · 명령 " + sv.parts.cmd.toLocaleString() + " · 생각 " + sv.parts.think.toLocaleString() + " · 도구 호출 " + sv.parts.steps.toLocaleString() + ") − 질문 약 " + sv.asked.toLocaleString() +
+      " · 읽은 파일 " + sv.reads + "개 · 쓴 파일 " + sv.writes + "개 · 고친 곳 " + sv.edits + "곳 · 명령 " + sv.commands + "회";
+  }
+
+  // 파일 크기가 도착해 값이 바뀌면 지금 화면의 아낀 토큰 표시(카드 · 칩 · 대시보드)를 다시 계산한다.
+  function refreshSavedViews() {
+    var byKey = {};
+    allItems.forEach(function (r) { byKey[tokenRecordKey(r)] = r; });
+    var nodes = document.querySelectorAll("[data-saved-task]");
+    for (var i = 0; i < nodes.length; i++) {
+      var r = byKey[nodes[i].getAttribute("data-saved-task")];
+      var sv = r ? savedTokensOf(r) : null;
+      if (sv) { nodes[i].textContent = savedTokensText(sv.saved); nodes[i].title = savedTokensDetail(sv); }
+    }
+    if (currentNav === "dashboard") { renderStats(); } else if (currentNav === "qa") { updateQaHeader(); }
+  }
+
   // 한 채널의 핸드오프 위임 기록(위임 완료 레코드)에서 "메시지 번호 -> 그 호출이 쓴 토큰"을 만든다.
   // 레코드의 task_id 는 handoff_<채널>_<c2a 번호>_<시각> 이다. agy 는 채널마다 대화 하나를 이어 쓰고 usage 는 그 대화의 누적값이라,
   // 같은 대화(session_id)의 앞 호출과의 차이를 "이번 호출이 쓴 양"으로 본다. 앞 호출보다 줄었거나 앞 호출이 없으면(새 대화) 그 값이 곧 이번 호출이다.
@@ -3211,10 +3403,16 @@
     var elapsedItemCount = 0;
     var todayKey = localDateKey(new Date());
     var modelUsage = {};
+    var savedAll = 0, savedToday = 0, savedCount = 0;
 
     allItems.forEach(function (r) {
       if (isOkStatus(r)) { okCount++; } else if (r.status) { errCount++; }
       if (r.timestamp && String(r.timestamp).slice(0, 10) === todayKey) { todayCount++; }
+      var sv = savedTokensOf(r);
+      if (sv) {
+        savedAll += sv.saved; savedCount++;
+        if (r.timestamp && String(r.timestamp).slice(0, 10) === todayKey) { savedToday += sv.saved; }
+      }
       if (r.elapsed_sec && !isNaN(Number(r.elapsed_sec))) {
         totalElapsed += Number(r.elapsed_sec);
         elapsedItemCount++;
@@ -3236,11 +3434,13 @@
         ["오늘", todayCount + "건"],
         ["성공률", successRate],
         ["평균 소요", avgSec],
+        ["아낀 Claude 토큰(예상)", savedCount > 0 ? "≈ " + savedTokenShort(savedAll) : "-", SAVED_TOKENS_NOTE + " 성공한 위임 " + savedCount.toLocaleString() + "건 기준"],
+        ["오늘 아낀 토큰(예상)", savedCount > 0 ? "≈ " + savedTokenShort(savedToday) : "-", SAVED_TOKENS_NOTE],
         ["협의 채널", handoffProjects.length + "개"],
         ["메시지", totalHandoffMsgs.toLocaleString() + "개"]
       ];
       els.dashStats.innerHTML = stats.map(function (s) {
-        return '<div><dt>' + s[0] + '</dt><dd>' + escapeHtml(s[1]) + '</dd></div>';
+        return '<div' + (s[2] ? ' title="' + escapeHtml(s[2]) + '"' : '') + '><dt>' + s[0] + '</dt><dd>' + escapeHtml(s[1]) + '</dd></div>';
       }).join("");
     }
 
@@ -3553,6 +3753,11 @@
     if (els.chipQaStatus) {
       var sVal = els.statusFilter ? els.statusFilter.value : "";
       els.chipQaStatus.textContent = "상태: " + (sVal || "전체");
+    }
+    if (els.chipQaSaved) {
+      var sumSv = sumSavedTokens(filteredQa);
+      els.chipQaSaved.textContent = sumSv.count > 0 ? savedTokensText(sumSv.saved) : "아낀 Claude 토큰: -";
+      els.chipQaSaved.title = SAVED_TOKENS_NOTE + (sumSv.count > 0 ? " 지금 보이는 성공한 위임 " + sumSv.count.toLocaleString() + "건의 합계" : "");
     }
   }
 
@@ -4483,6 +4688,12 @@
       if (!p[1] || isNaN(n)) return;
       row.appendChild(metaItem(p[0] + " " + n.toLocaleString(), "mono", p[2]));
     });
+    var sv = savedTokensOf(r);
+    if (sv) {
+      var svEl = metaItem(savedTokensText(sv.saved), "mono saved-tokens", savedTokensDetail(sv));
+      svEl.setAttribute("data-saved-task", tokenRecordKey(r));
+      row.appendChild(svEl);
+    }
     return row.childNodes.length ? row : null;
   }
 
