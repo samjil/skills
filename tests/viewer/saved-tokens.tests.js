@@ -1,4 +1,4 @@
-// 아낀 Claude 토큰(예상) 계산 테스트.
+// Claude 토큰 절약(예상) 계산 테스트.
 //   node tests/viewer/saved-tokens.tests.js
 // runtime/viewer/web/app.js 에서 함수 원문을 꺼내 그대로 실행합니다. 실패가 하나라도 있으면 종료 코드 1을 돌려줍니다.
 // 계산은 agy 의 토큰 수를 쓰지 않고, agy 가 남긴 과정(읽은 파일 · 쓴 파일 · 명령 · 생각)에서 "Claude 가 직접 했다면" 쓸 분량을 어림한다.
@@ -89,7 +89,7 @@ api.sizes["D:/app/new.js"] = 3200;          // 1000토큰
 const r1 = rec({ task_id: "a", question: "가".repeat(300), process: proc });   // 질문 200토큰
 const sv = api.savedTokensOf(r1);
 eq("직접 했다면 - 질문: (읽기 10000 + 쓰기 1000+1500 + 고침 600 + 명령 305 + 생각 4 + 단계 640) - 200", [10000 + 2500 + 600 + 305 + 4 + 640, 200], [sv.direct, sv.asked]);
-eq("아낀 토큰 = 직접 했다면 - 질문", sv.direct - 200, sv.saved);
+eq("절약 토큰 = 직접 했다면 - 질문", sv.direct - 200, sv.saved);
 eq("agy 가 쓴 토큰 수는 계산에 쓰지 않는다(값이 달라도 같다)", sv.saved, api.savedTokensOf(Object.assign({}, r1, { total_tokens: "9999999", input_tokens: "9", output_tokens: "9" })).saved);
 eq("실패한 위임은 null", null, api.savedTokensOf(Object.assign({}, r1, { status: "ERROR" })));
 eq("과정이 없는 기록(MCP 호출 등)은 null", null, api.savedTokensOf(rec({ process: [] })));
@@ -107,7 +107,7 @@ eq("이미 물은 경로는 다시 묻지 않는다", [], api.savedMissingPaths(
 
 console.log("\n표시 글자");
 eq("큰 합계는 단위를 키운다(9,999 / 2.4만 / 1,676만 / 1.68억)", ["9,999", "2.4만", "1,676만", "1.68억"], [api.savedTokenShort(9999), api.savedTokenShort(24000), api.savedTokenShort(16760000), api.savedTokenShort(168000000)]);
-eq("표시 글자: ≈ 와 (예상)이 붙는다", "아낀 Claude 토큰 ≈ 2.1만 (예상)", api.savedTokensText(21000));
+eq("표시 글자: ≈ 와 (예상)이 붙는다", "Claude 토큰 절약 ≈ 2.1만 (예상)", api.savedTokensText(21000));
 
 console.log("\n통과 " + passed + " / 실패 " + failed);
 process.exit(failed ? 1 : 0);

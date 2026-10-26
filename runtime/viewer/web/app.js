@@ -2697,7 +2697,7 @@
   }
 
   // ==========================================================================
-  // 아낀 Claude 토큰(예상)
+  // Claude 토큰 절약(예상)
   //   Claude 가 쓴 토큰은 이 도구가 잴 수 없다. agy 의 토큰 수는 방식이 달라(입력이 단계마다 맥락을 다시 읽는 누적) 그대로 쓰지 않고,
   //   "같은 일을 Claude 가 직접 했다면" 필요했을 분량을 agy 가 남긴 과정(읽은 파일 · 쓴 파일 · 실행한 명령 · 생각)에서 어림한다:
   //     읽기  : 읽은 파일(같은 파일은 한 번)의 크기를 토큰으로(파일이 없으면 기본값, 한 파일 상한 있음)
@@ -2837,7 +2837,7 @@
     })).then(function (rs) { return rs.some(Boolean); });
   }
 
-  // 성공한 위임 한 건의 아낀 Claude 토큰 어림. 어림할 수 없으면(실패 · 과정 없음) null.
+  // 성공한 위임 한 건의 Claude 토큰 절약 어림. 어림할 수 없으면(실패 · 과정 없음) null.
   function savedTokensOf(r) {
     if (!isOkStatus(r)) { return null; }
     var w = analyzeSavedWork(r);
@@ -2865,7 +2865,7 @@
     if (n < 100000000) { return Math.round(n / 10000).toLocaleString() + "만"; }
     return (n / 100000000).toFixed(2) + "억";
   }
-  function savedTokensText(n) { return "아낀 Claude 토큰 ≈ " + savedTokenShort(n) + " (예상)"; }
+  function savedTokensText(n) { return "Claude 토큰 절약 ≈ " + savedTokenShort(n) + " (예상)"; }
   var SAVED_TOKENS_NOTE = "같은 일을 Claude 가 직접 했다면 쓸 분량을 agy 가 남긴 과정(읽은 파일·쓴 파일·명령·생각)에서 어림하고, 위임하느라 쓴 질문 분량을 뺀 예상값입니다. 실제 Claude 사용량은 이 도구가 잴 수 없습니다.";
   function savedTokensDetail(sv) {
     return SAVED_TOKENS_NOTE + " 직접 했다면 약 " + sv.direct.toLocaleString() + " (읽기 " + sv.parts.read.toLocaleString() + " · 쓰기 " + (sv.parts.write + sv.parts.edit).toLocaleString() +
@@ -2873,7 +2873,7 @@
       " · 읽은 파일 " + sv.reads + "개 · 쓴 파일 " + sv.writes + "개 · 고친 곳 " + sv.edits + "곳 · 명령 " + sv.commands + "회";
   }
 
-  // 파일 크기가 도착해 값이 바뀌면 지금 화면의 아낀 토큰 표시(카드 · 칩 · 대시보드)를 다시 계산한다.
+  // 파일 크기가 도착해 값이 바뀌면 지금 화면의 토큰 절약 표시(카드 · 칩 · 대시보드)를 다시 계산한다.
   function refreshSavedViews() {
     var byKey = {};
     allItems.forEach(function (r) { byKey[tokenRecordKey(r)] = r; });
@@ -3434,8 +3434,8 @@
         ["오늘", todayCount + "건"],
         ["성공률", successRate],
         ["평균 소요", avgSec],
-        ["아낀 Claude 토큰(예상)", savedCount > 0 ? "≈ " + savedTokenShort(savedAll) : "-", SAVED_TOKENS_NOTE + " 성공한 위임 " + savedCount.toLocaleString() + "건 기준"],
-        ["오늘 아낀 토큰(예상)", savedCount > 0 ? "≈ " + savedTokenShort(savedToday) : "-", SAVED_TOKENS_NOTE],
+        ["Claude 토큰 절약(예상)", savedCount > 0 ? "≈ " + savedTokenShort(savedAll) : "-", SAVED_TOKENS_NOTE + " 성공한 위임 " + savedCount.toLocaleString() + "건 기준"],
+        ["오늘 토큰 절약(예상)", savedCount > 0 ? "≈ " + savedTokenShort(savedToday) : "-", SAVED_TOKENS_NOTE],
         ["협의 채널", handoffProjects.length + "개"],
         ["메시지", totalHandoffMsgs.toLocaleString() + "개"]
       ];
@@ -3756,7 +3756,7 @@
     }
     if (els.chipQaSaved) {
       var sumSv = sumSavedTokens(filteredQa);
-      els.chipQaSaved.textContent = sumSv.count > 0 ? savedTokensText(sumSv.saved) : "아낀 Claude 토큰: -";
+      els.chipQaSaved.textContent = sumSv.count > 0 ? savedTokensText(sumSv.saved) : "Claude 토큰 절약: -";
       els.chipQaSaved.title = SAVED_TOKENS_NOTE + (sumSv.count > 0 ? " 지금 보이는 성공한 위임 " + sumSv.count.toLocaleString() + "건의 합계" : "");
     }
   }
