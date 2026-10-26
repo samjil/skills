@@ -1597,6 +1597,58 @@ try {
                 $response.ContentLength64 = $bytes.Length
                 $response.OutputStream.Write($bytes, 0, $bytes.Length)
 
+            } elseif ($urlPath -eq "/api/qa/file-sizes") {
+
+                # 위임 기록의 과정에 나온 파일의 크기(바이트). "아낀 Claude 토큰" 예상에서 읽은 파일·쓴 파일의 분량을 어림하는 데 쓴다.
+                # 본문: {"paths": ["D:/a/b.html", ...]}. 없는 파일·폴더·상대 경로·네트워크 경로는 -1. 크기만 알려 주고 내용은 읽지 않는다.
+                # 파일 존재 여부를 알려 주는 동작이라 다른 쓰기 API 와 같이 POST + 전용 헤더만 받는다.
+                $fsCode = 200
+                $fsPayload = $null
+                if ($request.HttpMethod -ne "POST") {
+                    $fsCode = 405; $response.Headers.Add("Allow", "POST")
+                } elseif ($request.Headers["X-Samjil-Viewer"] -ne "1") {
+                    $fsCode = 403
+                } else {
+                    $fsBody = ""
+                    try {
+                        $fsReader = New-Object System.IO.StreamReader($request.InputStream, (New-Object System.Text.UTF8Encoding($false)))
+                        $fsBody = $fsReader.ReadToEnd()
+                    } catch { $fsBody = "" }
+                    $fsReq = $null
+                    if ($fsBody.Length -gt 0 -and $fsBody.Length -le 262144) { try { $fsReq = $fsBody | ConvertFrom-Json } catch { $fsReq = $null } }
+                    if ($null -eq $fsReq -or $null -eq $fsReq.paths) {
+                        $fsCode = 400
+                    } else {
+                        $fsSizes = [ordered]@{}
+                        $fsCount = 0
+                        foreach ($fp in @($fsReq.paths)) {
+                            if ($fsCount -ge 500) { break }
+                            $fpText = [string]$fp
+                            if (-not $fpText -or $fsSizes.Contains($fpText)) { continue }
+                            $fsCount++
+                            $fsSize = -1
+                            try {
+                                if ([System.IO.Path]::IsPathRooted($fpText) -and -not $fpText.StartsWith("\\") -and -not $fpText.StartsWith("//") -and [System.IO.File]::Exists($fpText)) {
+                                    $fsSize = [long](New-Object System.IO.FileInfo($fpText)).Length
+                                }
+                            } catch { $fsSize = -1 }
+                            $fsSizes[$fpText] = $fsSize
+                        }
+                        $fsPayload = @{ sizes = $fsSizes }
+                    }
+                }
+                $response.StatusCode = $fsCode
+                if ($fsPayload) {
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($fsPayload | ConvertTo-Json -Depth 4 -Compress))
+                    $response.ContentType = "application/json; charset=utf-8"
+                    $response.Headers.Add("Cache-Control", "no-store")
+                } else {
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($(if ($fsCode -eq 403) { "Forbidden" } elseif ($fsCode -eq 405) { "Method Not Allowed" } else { "Bad Request" }))
+                    $response.ContentType = "text/plain; charset=utf-8"
+                }
+                $response.ContentLength64 = $bytes.Length
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
+
             } elseif ($urlPath -eq "/api/delegate/translate") {
 
                 # 과정 창의 "한글로 번역". GET 은 상태와 번역해 둔 것을 읽고, POST 는 번역을 시작한다.
