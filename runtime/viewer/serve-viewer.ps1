@@ -579,50 +579,26 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt, [string]$TaskId = 
         if ($say.Length -gt 300) { $say = $say.Substring(0, 300) + "…" }
         $last = $item.LastWriteTime
 
-        # 실시간 누적 토큰 집계 (transcript.jsonl 우선, 없으면 transcript_full.jsonl — 오프셋 기반 증분 읽기)
-        $tInSum = [int64]0; $tOutSum = [int64]0
+        # 실시간 토큰 집계 (transcript.jsonl 우선, 없으면 transcript_full.jsonl — 오프셋 기반 증분 읽기)
+        # 끝난 뒤 위임 기록과 같은 기준: 총 = 입력(캐시 밖) + 출력. 같은 턴의 줄은 덮어쓰고, 캐시 읽기는 따로 센다. 계산은 agy-progress.ps1 의 공용 함수.
+        $tIn = [int64]0; $tOut = [int64]0; $tCache = [int64]0; $tCtx = [int64]0; $tTurns = 0
         $compactTf = Join-Path $agyHome ("brain\{0}\.system_generated\logs\transcript.jsonl" -f $ConversationId)
         $targetTokenFile = if (Test-Path -LiteralPath $compactTf) { $compactTf } else { $tf }
-        $tItem = Get-Item -LiteralPath $targetTokenFile -ErrorAction SilentlyContinue
-        if ($tItem) {
+        if ($targetTokenFile -and (Get-Command Update-AgyUsageState -ErrorAction SilentlyContinue)) {
             try {
-                if ($null -eq $script:TokenCache) { $script:TokenCache = @{} }
-                $tc = $script:TokenCache[$ConversationId]
-                if (-not $tc -or $tc.Path -ne $targetTokenFile -or $tItem.Length -lt $tc.Offset) {
-                    $tc = @{ Path = $targetTokenFile; Offset = [long]0; InSum = [int64]0; OutSum = [int64]0; Touched = (Get-Date) }
-                    $script:TokenCache[$ConversationId] = $tc
-                    if ($script:TokenCache.Count -gt 16) {
-                        $oldestT = $script:TokenCache.GetEnumerator() | Sort-Object { $_.Value.Touched } | Select-Object -First 1
-                        if ($oldestT) { $script:TokenCache.Remove($oldestT.Key) }
+                if ($null -eq $script:UsageCache) { $script:UsageCache = @{} }
+                $us = $script:UsageCache[$ConversationId]
+                if (-not $us -or $us.Path -ne $targetTokenFile) {
+                    $us = New-AgyUsageState $targetTokenFile
+                    $script:UsageCache[$ConversationId] = $us
+                    if ($script:UsageCache.Count -gt 16) {
+                        $oldestU = $script:UsageCache.GetEnumerator() | Sort-Object { $_.Value.Touched } | Select-Object -First 1
+                        if ($oldestU) { $script:UsageCache.Remove($oldestU.Key) }
                     }
                 }
-                $tc.Touched = Get-Date
-                if ($tItem.Length -gt $tc.Offset) {
-                    $tStream = [System.IO.File]::Open($targetTokenFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-                    try {
-                        [void]$tStream.Seek($tc.Offset, [System.IO.SeekOrigin]::Begin)
-                        $lenToRead = [int]($tStream.Length - $tc.Offset)
-                        if ($lenToRead -gt 0) {
-                            $tBuf = New-Object byte[] $lenToRead
-                            $tRead = $tStream.Read($tBuf, 0, $lenToRead)
-                            $lastNl = if ($tRead -gt 0) { [Array]::LastIndexOf($tBuf, [byte]10, $tRead - 1) } else { -1 }
-                            if ($lastNl -ge 0) {
-                                $chunkText = [System.Text.Encoding]::UTF8.GetString($tBuf, 0, $lastNl + 1)
-                                foreach ($tLine in ($chunkText -split "\r?\n")) {
-                                    if (-not $tLine) { continue }
-                                    if ($tLine -match '"input_tokens"\s*:\s*(\d+)') { $tc.InSum += [int64]$matches[1] }
-                                    if ($tLine -match '"cache_read_tokens"\s*:\s*(\d+)') { $tc.InSum += [int64]$matches[1] }
-                                    if ($tLine -match '"output_tokens"\s*:\s*(\d+)') { $tc.OutSum += [int64]$matches[1] }
-                                }
-                                $tc.Offset += ($lastNl + 1)
-                            }
-                        }
-                    } finally {
-                        $tStream.Dispose()
-                    }
-                }
-                $tInSum = $tc.InSum
-                $tOutSum = $tc.OutSum
+                Update-AgyUsageState $us
+                $sum = Get-AgyUsageSummary $us
+                $tIn = $sum.Input; $tOut = $sum.Output; $tCache = $sum.Cache; $tCtx = $sum.Context; $tTurns = $sum.Turns
             } catch {}
         }
 
@@ -651,9 +627,12 @@ function Get-AgyProgress([string]$ConversationId, $StartedAt, [string]$TaskId = 
             thinking        = $thinking
             say             = $say
             tokens          = [PSCustomObject]@{
-                input  = $tInSum
-                output = $tOutSum
-                total  = ($tInSum + $tOutSum)
+                input   = $tIn
+                output  = $tOut
+                total   = ($tIn + $tOut)
+                cache   = $tCache
+                context = $tCtx
+                turns   = $tTurns
             }
             last_activity   = $last.ToString("yyyy-MM-dd HH:mm:ss")
             last_activity_ms = [int64]([DateTimeOffset]$last).ToUnixTimeMilliseconds()
@@ -1644,6 +1623,73 @@ try {
                     $response.Headers.Add("Cache-Control", "no-store")
                 } else {
                     $bytes = [System.Text.Encoding]::UTF8.GetBytes($(if ($fsCode -eq 403) { "Forbidden" } elseif ($fsCode -eq 405) { "Method Not Allowed" } else { "Bad Request" }))
+                    $response.ContentType = "text/plain; charset=utf-8"
+                }
+                $response.ContentLength64 = $bytes.Length
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
+
+            } elseif ($urlPath -eq "/api/qa/contexts") {
+
+                # 끝난 위임 카드의 "캐시 읽기"와 "현재 컨텍스트"(그 호출의 마지막 턴이 모델에 보낸 입력 크기). 위임 기록 DB 에는 없는 값이라 대화 기록에서 계산한다.
+                # 본문: {"items": [{"id": "<대화 id>", "max": <그 호출의 마지막 단계 번호, 0 이면 전체>}, ...]} -> {"results": {"<id>|<max>": {cache, context, turns}}}
+                # 대화 기록을 읽는 동작이라 다른 쓰기 API 와 같이 POST + 전용 헤더만 받는다.
+                $cxCode = 200
+                $cxPayload = $null
+                if ($request.HttpMethod -ne "POST") {
+                    $cxCode = 405; $response.Headers.Add("Allow", "POST")
+                } elseif ($request.Headers["X-Samjil-Viewer"] -ne "1") {
+                    $cxCode = 403
+                } else {
+                    $cxBody = ""
+                    try {
+                        $cxReader = New-Object System.IO.StreamReader($request.InputStream, (New-Object System.Text.UTF8Encoding($false)))
+                        $cxBody = $cxReader.ReadToEnd()
+                    } catch { $cxBody = "" }
+                    $cxReq = $null
+                    if ($cxBody.Length -gt 0 -and $cxBody.Length -le 262144) { try { $cxReq = $cxBody | ConvertFrom-Json } catch { $cxReq = $null } }
+                    if ($null -eq $cxReq -or $null -eq $cxReq.items) {
+                        $cxCode = 400
+                    } else {
+                        if ($null -eq $script:ContextCache) { $script:ContextCache = @{} }
+                        $cxHome = if ($env:AGY_HOME) { $env:AGY_HOME } else { Join-Path $env:USERPROFILE ".gemini\antigravity-cli" }
+                        $cxResults = [ordered]@{}
+                        $cxCount = 0
+                        foreach ($cxItem in @($cxReq.items)) {
+                            if ($cxCount -ge 400) { break }
+                            $cxId = [string]$cxItem.id
+                            $cxMax = 0
+                            try { $cxMax = [int]$cxItem.max } catch { $cxMax = 0 }
+                            $cxKey = "$cxId|$cxMax"
+                            if (-not $cxId -or $cxResults.Contains($cxKey)) { continue }
+                            $cxCount++
+                            if (-not (Get-Command Get-AgyTranscriptPath -ErrorAction SilentlyContinue)) { continue }
+                            $cxFull = Get-AgyTranscriptPath $cxHome $cxId
+                            if (-not $cxFull) { continue }
+                            $cxCompact = Join-Path (Split-Path -Parent $cxFull) "transcript.jsonl"
+                            $cxFile = if (Test-Path -LiteralPath $cxCompact) { $cxCompact } else { $cxFull }
+                            if (-not (Test-Path -LiteralPath $cxFile -PathType Leaf)) { continue }
+                            $cxStamp = [string](Get-Item -LiteralPath $cxFile).Length + "|" + [string](Get-Item -LiteralPath $cxFile).LastWriteTimeUtc.Ticks
+                            $cached = $script:ContextCache[$cxKey]
+                            if ($cached -and $cached.Stamp -eq $cxStamp) { $cxResults[$cxKey] = $cached.Value; continue }
+                            try {
+                                $cxState = New-AgyUsageState $cxFile
+                                Update-AgyUsageState $cxState
+                                $cxSum = Get-AgyUsageSummary $cxState $cxMax
+                                $cxVal = @{ cache = [int64]$cxSum.Cache; context = [int64]$cxSum.Context; turns = [int]$cxSum.Turns }
+                                $script:ContextCache[$cxKey] = @{ Stamp = $cxStamp; Value = $cxVal }
+                                $cxResults[$cxKey] = $cxVal
+                            } catch {}
+                        }
+                        $cxPayload = @{ results = $cxResults }
+                    }
+                }
+                $response.StatusCode = $cxCode
+                if ($cxPayload) {
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($cxPayload | ConvertTo-Json -Depth 5 -Compress))
+                    $response.ContentType = "application/json; charset=utf-8"
+                    $response.Headers.Add("Cache-Control", "no-store")
+                } else {
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($(if ($cxCode -eq 403) { "Forbidden" } elseif ($cxCode -eq 405) { "Method Not Allowed" } else { "Bad Request" }))
                     $response.ContentType = "text/plain; charset=utf-8"
                 }
                 $response.ContentLength64 = $bytes.Length

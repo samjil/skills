@@ -584,6 +584,7 @@
       allItems = items;
       qaSeq = (res && typeof res.seq === "number") ? res.seq : qaSeq;
       requestSavedFileSizes(items).then(function (got) { if (got) { refreshSavedViews(); } });
+      requestRecordContexts(items).then(function (got) { if (got) { refreshTokenMetas(); } });
       return { changed: true };
     });
   }
@@ -4673,28 +4674,97 @@
     return s;
   }
 
-  // 위임 한 건의 토큰 줄(총 토큰 + 입력/출력/사고). 기록에 값이 있는 항목만 보여 주고, 하나도 없으면 줄 자체를 만들지 않는다.
-  function buildTokenMeta(r) {
-    var parts = [
-      ["총 토큰", r.total_tokens, "총 토큰"],
-      ["입력", r.input_tokens, "입력 토큰"],
-      ["출력", r.output_tokens, "출력 토큰"],
-      ["사고", r.thinking_tokens, "사고(thinking) 토큰"]
-    ];
-    var row = document.createElement("div");
-    row.className = "meta token-meta";
-    parts.forEach(function (p) {
-      var n = Number(p[1]);
-      if (!p[1] || isNaN(n)) return;
-      row.appendChild(metaItem(p[0] + " " + n.toLocaleString(), "mono", p[2]));
-    });
+  // 위임 한 건의 토큰 줄. 기록에 값이 있는 항목만 보여 주고, 하나도 없으면 줄 자체를 만들지 않는다.
+  //   총 토큰 = 누적 입력 + 누적 출력(출력에는 사고 토큰이 이미 들어 있다. 그래서 따로 더하지 않고 "응답 · 사고"로 나눠 보여 준다).
+  //   누적 입력의 "(캐시 X)" 와 "현재 컨텍스트"(그 호출의 마지막 턴이 보낸 입력 크기)는 위임 기록 DB 에 없어 서버가 대화 기록에서 계산해 준다(받은 뒤에 채운다).
+  var recordContexts = {};        // "<대화 id>|<마지막 단계 번호>" -> { cache, context }
+  var recordContextRequested = {};
+
+  function recordLastStep(r) {
+    var steps = r && Array.isArray(r.process) ? r.process : [];
+    var max = 0;
+    steps.forEach(function (st) { var n = Number(st && st.n); if (!isNaN(n) && n > max) { max = n; } });
+    // 과정의 마지막 단계는 마지막 도구 호출이다. 그 결과(+1) 다음의 최종 응답 턴(+2)까지가 이 호출의 몫이다(위임 기록의 입력·출력 합과 같아진다).
+    return max > 0 ? max + 2 : 0;
+  }
+  function recordContextKey(r) { return r && r.session_id ? String(r.session_id) + "|" + recordLastStep(r) : ""; }
+
+  function tokenMetaItems(r) {
+    var num = function (v) { var n = Number(v); return (!v || isNaN(n)) ? 0 : n; };
+    var total = num(r.total_tokens), input = num(r.input_tokens), output = num(r.output_tokens), thinking = num(r.thinking_tokens);
+    var ctxInfo = recordContexts[recordContextKey(r)] || null;
+    var items = [];
+    if (total) { items.push({ text: "총 토큰 " + total.toLocaleString(), title: "총 토큰 = 누적 입력 + 누적 출력(캐시 읽기와 사고는 따로 더하지 않습니다)" }); }
+    if (input) {
+      var inText = "누적 입력 " + input.toLocaleString() + (ctxInfo && ctxInfo.cache > 0 ? " (캐시 " + ctxInfo.cache.toLocaleString() + ")" : "");
+      items.push({ text: inText, title: "단계마다 앞 맥락을 다시 보내 쌓인 입력 토큰(캐시 밖). 괄호는 캐시에서 읽은 입력으로 총 토큰에는 넣지 않습니다." });
+    }
+    if (output) {
+      var outText = "누적 출력 " + output.toLocaleString();
+      if (thinking > 0) { outText += " (응답 " + Math.max(0, output - thinking).toLocaleString() + " · 사고 " + thinking.toLocaleString() + ")"; }
+      items.push({ text: outText, title: "출력 토큰. 사고(thinking) 토큰이 이미 들어 있어서 응답과 사고로 나눠 보여 줍니다." });
+    }
+    if (ctxInfo && ctxInfo.context > 0) {
+      items.push({ text: "현재 컨텍스트 " + Number(ctxInfo.context).toLocaleString(), title: "이 호출의 마지막 턴이 모델에 보낸 입력 하나의 크기(캐시 포함). 누적 토큰과 다른, 지금 대화의 크기입니다." });
+    }
+    return items;
+  }
+
+  function fillTokenMeta(row, r) {
+    while (row.firstChild) { row.removeChild(row.firstChild); }
+    tokenMetaItems(r).forEach(function (it) { row.appendChild(metaItem(it.text, "mono", it.title)); });
     var sv = savedTokensOf(r);
     if (sv) {
       var svEl = metaItem(savedTokensText(sv.saved), "mono saved-tokens", savedTokensDetail(sv));
       svEl.setAttribute("data-saved-task", tokenRecordKey(r));
       row.appendChild(svEl);
     }
+  }
+
+  function buildTokenMeta(r) {
+    var row = document.createElement("div");
+    row.className = "meta token-meta";
+    row.setAttribute("data-token-task", tokenRecordKey(r));
+    fillTokenMeta(row, r);
     return row.childNodes.length ? row : null;
+  }
+
+  // 끝난 위임의 캐시 읽기·현재 컨텍스트를 서버(/api/qa/contexts)에 묻는다. 받으면 화면의 토큰 줄을 다시 채운다.
+  function requestRecordContexts(records) {
+    var items = [];
+    (Array.isArray(records) ? records : []).forEach(function (r) {
+      if (!r || !r.session_id || !Number(r.total_tokens)) { return; }
+      var key = recordContextKey(r);
+      if (!key || recordContexts[key] || recordContextRequested[key]) { return; }
+      recordContextRequested[key] = true;
+      items.push({ id: String(r.session_id), max: recordLastStep(r) });
+    });
+    if (items.length === 0 || typeof fetch !== "function") { return Promise.resolve(false); }
+    var chunks = [];
+    for (var i = 0; i < items.length; i += 200) { chunks.push(items.slice(i, i + 200)); }
+    return Promise.all(chunks.map(function (chunk) {
+      return fetch("/api/qa/contexts", { method: "POST", headers: { "X-Samjil-Viewer": "1", "Content-Type": "application/json" }, body: JSON.stringify({ items: chunk }) })
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (data) {
+          var got = data && data.results ? data.results : {};
+          chunk.forEach(function (it) {
+            var key = it.id + "|" + it.max;
+            if (got[key]) { recordContexts[key] = { cache: Number(got[key].cache) || 0, context: Number(got[key].context) || 0 }; }
+          });
+          return true;
+        })
+        .catch(function () { chunk.forEach(function (it) { recordContextRequested[it.id + "|" + it.max] = false; }); return false; });
+    })).then(function (rs) { return rs.some(Boolean); });
+  }
+
+  function refreshTokenMetas() {
+    var byKey = {};
+    allItems.forEach(function (r) { byKey[tokenRecordKey(r)] = r; });
+    var nodes = document.querySelectorAll(".token-meta[data-token-task]");
+    for (var i = 0; i < nodes.length; i++) {
+      var r = byKey[nodes[i].getAttribute("data-token-task")];
+      if (r) { fillTokenMeta(nodes[i], r); }
+    }
   }
 
   // 세션 이름과, 클릭하면 전체 세션 ID를 복사하는 짧은 ID
@@ -5735,6 +5805,19 @@
       buildNarrationHtml("pg", pg.say, pg.thinking);
   }
 
+  // 진행 중 카드의 토큰 세부: "입력 X (캐시 C) · 출력 Y · 현재 컨텍스트 K". 총 토큰은 끝난 뒤 위임 기록과 같은 기준(입력 + 출력)이다.
+  function liveTokenDetail(tk) {
+    var parts = ["입력 " + tokenShort(tk.input) + (Number(tk.cache) > 0 ? " (캐시 " + tokenShort(tk.cache) + ")" : ""), "출력 " + tokenShort(tk.output)];
+    if (Number(tk.context) > 0) { parts.push("현재 컨텍스트 " + tokenShort(tk.context)); }
+    return parts.join(" · ");
+  }
+  function liveTokenTitle(tk) {
+    return "실시간 토큰 " + Number(tk.total).toLocaleString() + " = 입력 " + Number(tk.input || 0).toLocaleString() + " + 출력 " + Number(tk.output || 0).toLocaleString() +
+      (Number(tk.cache) > 0 ? " (캐시에서 읽은 입력 " + Number(tk.cache).toLocaleString() + " 은 따로, 총에 넣지 않습니다)" : "") +
+      (Number(tk.context) > 0 ? " · 현재 컨텍스트 " + Number(tk.context).toLocaleString() + "(마지막 턴이 보낸 입력의 크기)" : "") +
+      (Number(tk.turns) > 0 ? " · 모델 응답 " + Number(tk.turns) + "번" : "");
+  }
+
   function buildProgressHtml(pg, cwd) {
     if (!pg) return "";
     var parts = [];
@@ -5749,10 +5832,9 @@
     }
     if (pg.tokens && pg.tokens.total > 0) {
       var tot = Number(pg.tokens.total);
-      var inTok = Number(pg.tokens.input || 0);
-      var outTok = Number(pg.tokens.output || 0);
       var tokText = (tot >= 10000 ? (tot / 10000).toFixed(1) + '만' : tot.toLocaleString()) + ' 토큰';
-      parts.push('<span class="pg-tokens" style="color: var(--ink); font-weight: 500;" title="실시간 누적 토큰: ' + tot.toLocaleString() + ' (입력 ' + inTok.toLocaleString() + ' / 출력 ' + outTok.toLocaleString() + ')">⚡ 실시간 ' + tokText + '</span>');
+      parts.push('<span class="pg-tokens" style="color: var(--ink); font-weight: 500;" title="' + escapeHtml(liveTokenTitle(pg.tokens)) + '">⚡ 실시간 ' + tokText + '</span>');
+      parts.push('<span class="pg-token-detail" title="' + escapeHtml(liveTokenTitle(pg.tokens)) + '">' + escapeHtml(liveTokenDetail(pg.tokens)) + '</span>');
     }
     var action = buildProgressActionHtml(pg, cwd);
     return '<div class="pending-progress">' + (parts.length ? '<div class="pg-line">' + parts.join('<span class="pg-sep">·</span>') + '</div>' : "") + action + '</div>';
@@ -6002,10 +6084,8 @@
       // 3. 실시간 토큰 사용량 배지 (진행 중일 때 토큰 정보가 있으면 상단 메타에 표시)
       if (p.progress && p.progress.tokens && p.progress.tokens.total > 0) {
         var pTot = Number(p.progress.tokens.total);
-        var pIn = Number(p.progress.tokens.input || 0);
-        var pOut = Number(p.progress.tokens.output || 0);
         var tokLabel = "⚡ " + (pTot >= 10000 ? (pTot / 10000).toFixed(1) + "만 토큰" : pTot.toLocaleString() + " 토큰");
-        meta.appendChild(metaItem(tokLabel, "live-tokens", "실시간 누적 토큰: " + pTot.toLocaleString() + " (입력 " + pIn.toLocaleString() + " / 출력 " + pOut.toLocaleString() + ")"));
+        meta.appendChild(metaItem(tokLabel, "live-tokens", liveTokenTitle(p.progress.tokens)));
       }
     } else if (!p.interrupted) {
       // 대기 중인 카드는 대기 경과 시간 표시
