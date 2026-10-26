@@ -2882,7 +2882,10 @@
     for (var i = 0; i < nodes.length; i++) {
       var r = byKey[nodes[i].getAttribute("data-saved-task")];
       var sv = r ? savedTokensOf(r) : null;
-      if (sv) { nodes[i].textContent = savedTokensText(sv.saved); nodes[i].title = savedTokensDetail(sv); }
+      if (sv) {
+        if (nodes[i].classList.contains("tok-item")) { setTokItem(nodes[i], "Claude 토큰 절약", "≈ " + savedTokenShort(sv.saved), "예상"); } else { nodes[i].textContent = savedTokensText(sv.saved); }
+        nodes[i].title = savedTokensDetail(sv);
+      }
     }
     if (currentNav === "dashboard") { renderStats(); } else if (currentNav === "qa") { updateQaHeader(); }
   }
@@ -4694,28 +4697,44 @@
     var total = num(r.total_tokens), input = num(r.input_tokens), output = num(r.output_tokens), thinking = num(r.thinking_tokens);
     var ctxInfo = recordContexts[recordContextKey(r)] || null;
     var items = [];
-    if (total) { items.push({ text: "총 토큰 " + total.toLocaleString(), title: "총 토큰 = 누적 입력 + 누적 출력(캐시 읽기와 사고는 따로 더하지 않습니다)" }); }
+    // 항목마다: label(이름) · value(값) · sub(덧붙임. 없으면 빈 글자) · text(셋을 합친 글자) · title(설명) · cls(항목 모양)
+    var add = function (label, value, sub, title, cls) { items.push({ label: label, value: value, sub: sub, text: label + " " + value + (sub ? " (" + sub + ")" : ""), title: title, cls: cls || "" }); };
+    if (total) { add("총 토큰", total.toLocaleString(), "", "총 토큰 = 누적 입력 + 누적 출력(캐시 읽기와 사고는 따로 더하지 않습니다)", "tok-total"); }
     if (input) {
-      var inText = "누적 입력 " + input.toLocaleString() + (ctxInfo && ctxInfo.cache > 0 ? " (캐시 " + ctxInfo.cache.toLocaleString() + ")" : "");
-      items.push({ text: inText, title: "단계마다 앞 맥락을 다시 보내 쌓인 입력 토큰(캐시 밖). 괄호는 캐시에서 읽은 입력으로 총 토큰에는 넣지 않습니다." });
+      add("누적 입력", input.toLocaleString(), ctxInfo && ctxInfo.cache > 0 ? "캐시 " + ctxInfo.cache.toLocaleString() : "",
+        "단계마다 앞 맥락을 다시 보내 쌓인 입력 토큰(캐시 밖). 괄호는 캐시에서 읽은 입력으로 총 토큰에는 넣지 않습니다.");
     }
     if (output) {
-      var outText = "누적 출력 " + output.toLocaleString();
-      if (thinking > 0) { outText += " (응답 " + Math.max(0, output - thinking).toLocaleString() + " · 사고 " + thinking.toLocaleString() + ")"; }
-      items.push({ text: outText, title: "출력 토큰. 사고(thinking) 토큰이 이미 들어 있어서 응답과 사고로 나눠 보여 줍니다." });
+      add("누적 출력", output.toLocaleString(), thinking > 0 ? "응답 " + Math.max(0, output - thinking).toLocaleString() + " · 사고 " + thinking.toLocaleString() : "",
+        "출력 토큰. 사고(thinking) 토큰이 이미 들어 있어서 응답과 사고로 나눠 보여 줍니다.");
     }
     if (ctxInfo && ctxInfo.context > 0) {
-      items.push({ text: "현재 컨텍스트 " + Number(ctxInfo.context).toLocaleString(), title: "이 호출의 마지막 턴이 모델에 보낸 입력 하나의 크기(캐시 포함). 누적 토큰과 다른, 지금 대화의 크기입니다." });
+      add("현재 컨텍스트", Number(ctxInfo.context).toLocaleString(), "", "이 호출의 마지막 턴이 모델에 보낸 입력 하나의 크기(캐시 포함). 누적 토큰과 다른, 지금 대화의 크기입니다.");
     }
     return items;
   }
 
+  // 토큰 줄의 항목 하나: 이름(흐리게) · 값(진하게) · 덧붙임(작고 흐리게)을 나눠 그려 눈으로 구분되게 한다.
+  function setTokItem(el, label, value, sub) {
+    while (el.firstChild) { el.removeChild(el.firstChild); }
+    var l = document.createElement("span"); l.className = "tok-label"; l.textContent = label; el.appendChild(l);
+    var v = document.createElement("b"); v.className = "tok-val"; v.textContent = value; el.appendChild(v);
+    if (sub) { var s = document.createElement("span"); s.className = "tok-sub"; s.textContent = sub; el.appendChild(s); }
+  }
+  function buildTokItem(label, value, sub, title, cls) {
+    var el = document.createElement("span");
+    el.className = "tok-item" + (cls ? " " + cls : "");
+    if (title) { el.title = title; }
+    setTokItem(el, label, value, sub);
+    return el;
+  }
+
   function fillTokenMeta(row, r) {
     while (row.firstChild) { row.removeChild(row.firstChild); }
-    tokenMetaItems(r).forEach(function (it) { row.appendChild(metaItem(it.text, "mono", it.title)); });
+    tokenMetaItems(r).forEach(function (it) { row.appendChild(buildTokItem(it.label, it.value, it.sub, it.title, it.cls)); });
     var sv = savedTokensOf(r);
     if (sv) {
-      var svEl = metaItem(savedTokensText(sv.saved), "mono saved-tokens", savedTokensDetail(sv));
+      var svEl = buildTokItem("Claude 토큰 절약", "≈ " + savedTokenShort(sv.saved), "예상", savedTokensDetail(sv), "saved-tokens");
       svEl.setAttribute("data-saved-task", tokenRecordKey(r));
       row.appendChild(svEl);
     }
