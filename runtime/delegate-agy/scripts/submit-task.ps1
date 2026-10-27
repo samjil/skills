@@ -134,6 +134,18 @@ if ($ids.Count -eq 0) {
         $text = (Read-AllStdin).TrimStart([char]0xFEFF)
     }
     if (-not $text -or -not $text.Trim()) { Stop-WithCode 3 "지시문이 비었습니다. 표준입력(heredoc)이나 -File 로 지시문을 주세요." }
+    # 브리프 점검(경고만): 검증 방법·범위 제한·대상 파일이 빠졌거나 너무 길면 보내기 전에 알린다. 위임은 그대로 진행한다. AGY_BRIEF_LINT=off 로 끈다.
+    try {
+        $lintLib = Join-Path $PSScriptRoot "sub\agy-brief-lint.ps1"
+        if (Test-Path -LiteralPath $lintLib) {
+            . $lintLib
+            if (Test-AgyBriefLintEnabled) {
+                $briefWarnings = @(Get-AgyBriefWarnings $text)
+                foreach ($bw in $briefWarnings) { [Console]::Error.WriteLine("[브리프 점검] " + $bw) }
+                if ($briefWarnings.Count -gt 0) { [Console]::Error.WriteLine("[브리프 점검] 위 항목은 경고일 뿐이라 위임은 그대로 진행합니다. 다음 위임부터 반영하거나, 빠진 것을 바로 채워 다시 보내려면 이 작업을 취소하세요.") }
+            }
+        }
+    } catch {}
     $id = "claude_{0}_{1}" -f ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()), (Get-Random -Minimum 0 -Maximum 32768)
     # 쓰는 도중의 파일을 워처가 읽지 않게 임시 이름으로 쓰고 바꿔치기한다(.tmp 는 워처가 보지 않는다)
     $tmp = Join-Path $inboxDir "$id.md.tmp"
