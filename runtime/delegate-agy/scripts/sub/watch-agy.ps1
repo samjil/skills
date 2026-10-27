@@ -1450,8 +1450,11 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
         if ($agyResult.Success) {
             Set-Content -Path $outFile -Value ($guardBanner + $agyResult.Response) -Encoding UTF8
 
-            $elapsedForLog = if ($agyResult.AgyDuration) { [math]::Round([double]$agyResult.AgyDuration, 1) } else { $agyResult.ElapsedSec }
-            $timeSrc = if ($agyResult.AgyDuration) { "agy 자체 보고" } else { "워처 측정(폴백 시도 포함 총 시간)" }
+            # 이어가는 세션에서 agy 가 보고하는 duration_seconds 는 그 대화를 처음 연 때부터의 누적이라(사이에 쉰 시간 포함) 이번 호출의 시간이 아니다.
+            # 그래서 이어가는 호출은 워처가 잰 이번 호출의 시간을 쓴다.
+            $useAgyDuration = [bool]$agyResult.AgyDuration -and -not $conversationId
+            $elapsedForLog = if ($useAgyDuration) { [math]::Round([double]$agyResult.AgyDuration, 1) } else { $agyResult.ElapsedSec }
+            $timeSrc = if ($useAgyDuration) { "agy 자체 보고" } elseif ($conversationId) { "워처 측정(이어가는 세션이라 agy 보고는 누적값)" } else { "워처 측정(폴백 시도 포함 총 시간)" }
             $thinkPart = if ($agyResult.ThinkTok) { "/사고:$($agyResult.ThinkTok)" } else { "" }
             $tokStr  = if ($agyResult.TotTok) { "$($agyResult.TotTok) (입력:$($agyResult.InTok)/출력:$($agyResult.OutTok)$thinkPart)" } else { "확인불가" }
             $attemptNote = if ($agyResult.Attempts -gt 1) { " (시도: $triedStr)" } else { "" }
