@@ -28,6 +28,7 @@ function Start-Submit([string[]]$ArgList, [string]$Stdin = "", [hashtable]$Env =
     $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
     $psi.StandardOutputEncoding = [Text.Encoding]::UTF8
+    $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
     $psi.EnvironmentVariables["AGY_HOME"] = $agyHome
     $psi.EnvironmentVariables["USERPROFILE"] = $work
     foreach ($k in $Env.Keys) { $psi.EnvironmentVariables[$k] = [string]$Env[$k] }
@@ -60,6 +61,19 @@ try {
     $r2 = Run-Submit @("-NoWait") "두 번째"
     $id2 = [regex]::Match($r2.Out, 'submitted: (\S+)').Groups[1].Value
     Assert-Equal "  연달아 넣어도 ID 가 다르다" $true ($id1 -ne $id2)
+
+    Write-Host "브리프 점검 (경고만, 위임은 그대로)"
+    $weak = "@cwd: C:`\project`n버튼 색 바꿔 줘."
+    $rw = Run-Submit @("-NoWait") $weak
+    Assert-Equal "빠진 것이 많은 @cwd 브리프도 그대로 넣는다(종료 코드 0, submitted 출력)" "0|True" ("{0}|{1}" -f $rw.Exit, ($rw.Out -match "submitted: claude_"))
+    Assert-Equal "  표준 오류에 [브리프 점검] 경고가 나온다(검증·범위·파일)" $true (($rw.Err -match "\[브리프 점검\].*검증 방법") -and ($rw.Err -match "범위 제한") -and ($rw.Err -match "그대로 진행"))
+    Assert-Equal "  표준 출력은 경고로 오염되지 않는다" $false ($rw.Out -match "브리프 점검")
+    $idW = [regex]::Match($rw.Out, 'submitted: (claude_\d+_\d+)').Groups[1].Value
+    Assert-Equal "  inbox 파일 내용은 보낸 그대로(경고가 지시문을 바꾸지 않는다)" $weak ([IO.File]::ReadAllText((Join-Path $rt "inbox\$idW.md"), $utf8))
+    $rg = Run-Submit @("-NoWait") "@cwd: C:`\project`n[1. 목표] 로그인 버튼 색 변경(파일 수정)`n[2. 대상] src/login.css:12 의 .btn 색 #888 -> #0a84ff`n[3. 범위] 다른 화면은 건드리지 말 것.`n[4. 검증] npm test 후 [상태 · 변경 파일:줄 · 검증 한 줄 · 우려] 로 보고."
+    Assert-Equal "갖춘 브리프는 경고가 없다" "0|" ("{0}|{1}" -f $rg.Exit, $rg.Err.Trim())
+    $rn = Wait-Submit (Start-Submit (@("-RuntimeDir", ('"' + $rt + '"'), "-NoWait")) $weak @{ AGY_BRIEF_LINT = "off" })
+    Assert-Equal "AGY_BRIEF_LINT=off 면 경고하지 않는다" "0|" ("{0}|{1}" -f $rn.Exit, $rn.Err.Trim())
 
     Write-Host "지시문 파일(-File) · 입력 오류"
     $tf = Join-Path $work "task.md"; Write-Utf8 $tf "파일에서 읽은 지시문" $true
