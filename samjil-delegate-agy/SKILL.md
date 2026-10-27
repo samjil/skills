@@ -228,7 +228,7 @@ echo "found: $BASE"
 워처가 시작할 때 적는 PID 잠금 파일로 판단하는 `ensure-agy-running.ps1 -CheckOnly`를 쓴다(켜지는 않는다).
 
 ```bash
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -CheckOnly -StaleThresholdSeconds 0
+powershell.exe -NoProfile -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -CheckOnly -StaleThresholdSeconds 0
 echo "exit=$?"
 ```
 
@@ -272,11 +272,11 @@ echo "exit=$?"
 
 ```bash
 rm -f "$BASE/logs/manual_stop.flag"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -ConfirmDelaySeconds 0 -StaleThresholdSeconds 0
+powershell.exe -NoProfile -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -ConfirmDelaySeconds 0 -StaleThresholdSeconds 0
 # 대시보드 뷰어도 창·브라우저 탭 없이 켠다(이미 떠 있으면 그대로 둔다. 뷰어는 켜질 때 워처도 창 없이 함께 켠다)
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\viewer\ensure-viewer-running.ps1"
+powershell.exe -NoProfile -File "$USERPROFILE\.samjil\viewer\ensure-viewer-running.ps1"
 for i in $(seq 1 10); do
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -CheckOnly -StaleThresholdSeconds 0 | grep -q ALIVE && echo "켜짐" && break
+  powershell.exe -NoProfile -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -CheckOnly -StaleThresholdSeconds 0 | grep -q ALIVE && echo "켜짐" && break
   sleep 3
 done
 ```
@@ -413,7 +413,7 @@ agy는 기본적으로 매번 빈 상태로 시작한다(이 스킬 맨 위 "직
 지시문은 **따옴표 붙은 heredoc**(`<<'CLAUDE_TASK_EOF'`)으로 표준입력에 준다(`$` · backtick 이 셸에서 해석되지 않게).
 
 ```bash
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1" <<'CLAUDE_TASK_EOF'
+powershell.exe -NoProfile -File "$USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1" <<'CLAUDE_TASK_EOF'
 @cwd: C:\Users\username\workspace\my-project
 @model: gemini-3.8-flash-medium
 <지시문 - 자기완결적으로. 필요한 맥락은 명시적으로 다 포함할 것>
@@ -436,7 +436,7 @@ CLAUDE_TASK_EOF
   `접수 기록 없음`은 작업 ID 가 틀렸다는 뜻이다.
 
 ```bash
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1" -Poll claude_1790000000_123
+powershell.exe -NoProfile -File "$USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1" -Poll claude_1790000000_123
 ```
 
 **여러 개를 한 번에 위임**할 수도 있다(서로 독립적인 작업일 때). 먼저 `-NoWait` 로 각각 넣어 ID 만 받고(`submitted: <ID>`), 한 번에 `-Poll` 로 기다린다(쉼표나 공백으로 여러 ID).
@@ -444,7 +444,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$USERPROFILE\.samjil\de
 (같은 `@session` 이름을 서로 다른 폴더에서 동시에 쓰면 agy 대화는 하나라서 서로 섞일 수 있으니, 폴더가 다르면 세션 이름도 다르게 짓는 것이 안전하다.)
 
 ```bash
-S="powershell.exe -NoProfile -ExecutionPolicy Bypass -File $USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1"
+S="powershell.exe -NoProfile -File $USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1"
 $S -NoWait <<'EOF_A'
 <작업 1>
 EOF_A
