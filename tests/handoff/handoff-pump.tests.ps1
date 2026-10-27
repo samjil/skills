@@ -67,7 +67,10 @@ try {
     $text = [IO.File]::ReadAllText($tasks[0].FullName, [Text.Encoding]::UTF8)
     $dir = ConvertFrom-TaskDirectives $text
     Assert-Equal "  워처가 읽는 지시어: 세션 handoff-my-app" "handoff-my-app" $dir.Session
-    Assert-Equal "  @raw: true(워처가 표준 규칙을 덧붙이지 않는다)" $true ([bool]$dir.Raw)
+    Assert-Equal "  @raw 를 쓰지 않는다(워처가 표준 규칙을 덧붙인다)" $false ([bool]$dir.Raw)
+    $withRules = Add-AgyStandardRules $dir.Prompt (@($dir.Cwd).Count -gt 0) ([bool]$dir.Raw)
+    Assert-Equal "  표준 규칙 4개(커밋 금지·포그라운드·필요한 파일만·한글 답변)가 모두 붙는다" "no-commit,foreground,touch-only,korean" (@($withRules.Added) -join ",")
+    Assert-Equal "  붙은 프롬프트에 DO NOT COMMIT 이 있다" $true ($withRules.Text -match "DO NOT COMMIT")
     Assert-Equal "  @cwd 두 곳(채널 폴더 + 저장소)" 2 @($dir.Cwd).Count
     Assert-Equal "  @cwd 에 채널 폴더와 저장소가 있다" $true ((@($dir.Cwd) -contains $ch) -and (@($dir.Cwd) -contains $repo))
     Assert-Equal "  본문에 메시지 전문과 번호·제목이 들어간다" $true (($dir.Prompt -match "본문 상세 내용 ABC") -and ($dir.Prompt -match "#0001") -and ($dir.Prompt -match "로그인 버튼 색 고치기"))

@@ -61,8 +61,8 @@ function New-HandoffDispatchText([string]$ChannelName, [string]$ChannelDir, [str
     [void]$lines.Add("@session: $(Get-HandoffSessionName $safe $Auto)")
     # 낮은 단계(low/medium)로 자동 선택했으면 그 모델을 지정한다. high 는 지정하지 않아 기본 우선순위(쿼터 초과 때 폴백)를 그대로 쓴다.
     if ($Auto -and [string]$Auto.Tier -ne "high" -and [string]$Auto.Model) { [void]$lines.Add("@model: $($Auto.Model)") }
-    # 이 지시문은 자기 규칙을 직접 담고 있으므로 워처가 표준 규칙(agy-rules.ps1)을 덧붙이지 않게 한다
-    [void]$lines.Add("@raw: true")
+    # @raw 를 쓰지 않는다: 워처가 표준 규칙(DO NOT COMMIT · 포그라운드 실행 · 필요한 파일만 수정 · 한글 답변, agy-rules.ps1)을 이 지시문 끝에 붙인다.
+    # 핸드오프 agy 는 저장소 폴더를 열고 소스를 고치므로 위임 때와 같은 안전 규칙이 필요하다. 이 지시문이 이미 같은 뜻의 문장을 담고 있으면 그 규칙만 건너뛴다.
     [void]$lines.Add("@cwd: $ChannelDir")
     if ($RepoPath) { [void]$lines.Add("@cwd: $RepoPath") }
     $body = [string]$MsgText

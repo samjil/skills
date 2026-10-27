@@ -93,10 +93,10 @@ try {
     $tHigh = New-HandoffDispatchText "my-app" "C:\ch\my-app" "C:\code\my-app" $row "C:\ch\my-app\msg\0003-c2a-x.md" "## 요약`n- 설계 부탁" $high
     $tNone = New-HandoffDispatchText "my-app" "C:\ch\my-app" "C:\code\my-app" $row "C:\ch\my-app\msg\0003-c2a-x.md" "## 요약`n- 부탁"
     $first = { param($t, $n) (($t -split "`n") | Select-Object -First $n) -join "|" }
-    Assert-Equal "low: @session 과 @model 이 맨 위에 있다(@raw: true 로 표준 규칙 자동 추가를 막는다)" "@session: handoff-my-app-low|@model: gemini-3.8-flash-low|@raw: true|@cwd: C:\ch\my-app|@cwd: C:\code\my-app" (& $first $tLow 5)
+    Assert-Equal "low: @session 과 @model 이 맨 위에 있다(@raw 는 쓰지 않아 워처가 표준 규칙을 붙인다)" "@session: handoff-my-app-low|@model: gemini-3.8-flash-low|@cwd: C:\ch\my-app|@cwd: C:\code\my-app" (& $first $tLow 4)
     Assert-Equal "  medium" "@session: handoff-my-app-medium|@model: gemini-3.8-flash-medium" (& $first $tMed 2)
-    Assert-Equal "  high: @model 은 쓰지 않는다(기본 우선순위로 폴백 가능)" "@session: handoff-my-app|@raw: true|@cwd: C:\ch\my-app|@cwd: C:\code\my-app" (& $first $tHigh 4)
-    Assert-Equal "  자동 선택 없음(null): 예전과 같은 첫 줄들(@raw: true 만 추가)" "@session: handoff-my-app|@raw: true|@cwd: C:\ch\my-app" (& $first $tNone 3)
+    Assert-Equal "  high: @model 은 쓰지 않는다(기본 우선순위로 폴백 가능)" "@session: handoff-my-app|@cwd: C:\ch\my-app|@cwd: C:\code\my-app" (& $first $tHigh 3)
+    Assert-Equal "  자동 선택 없음(null): @model 없이 세션과 폴더 줄만" "@session: handoff-my-app|@cwd: C:\ch\my-app" (& $first $tNone 2)
     Assert-Equal "  지시문 본문(처리 방법)은 단계와 상관없이 같다" $true (($tLow -match "## 처리 방법") -and ($tHigh -match "## 처리 방법"))
     Assert-Equal "  @model 줄은 한 번만" 1 @(($tLow -split "`n") | Where-Object { $_ -like "@model:*" }).Count
 
