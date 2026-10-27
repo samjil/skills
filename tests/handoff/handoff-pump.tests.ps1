@@ -255,6 +255,49 @@ try {
     Assert-Equal "  halted 는 false" $false (Read-HandoffAutoState $ch4).halted
     Remove-Item Env:\AGY_HANDOFF_MAX_ROUNDS -ErrorAction SilentlyContinue
 
+    Write-Host "머리말의 위임모델 (자동 단계 선택보다 우선)"
+    . (Join-Path $subDir "agy-autotier.ps1")
+    Remove-Item Env:\AGY_AUTO_MODEL -ErrorAction SilentlyContinue
+    # 코드 블록 둘 + 번호 단계 + 검증 명령이 든 잘 쓴 명세: 자동 선택은 high 로 본다
+    $specBody = "## 요약`n- 버튼 색 교체`n`n``````css`n/* AS-IS */`n.btn { color: #888; }`n``````n``````css`n/* TO-BE */`n.btn { color: #0a84ff; }`n``````n`n1. a.css 를 연다`n2. 색을 바꾼다`n3. 저장한다`n`n검증: 화면에서 확인"
+    function New-OverrideChannel([string]$Name, [string]$Override) {
+        $d = Join-Path $root $Name
+        New-Item -ItemType Directory -Force -Path (Join-Path $d "msg") | Out-Null
+        Set-Content -LiteralPath (Join-Path $d "INDEX.md") -Value "# INDEX`n| 번호 | 시각 | 방향 | 제목 | 상태 |`n|---|---|---|---|---|" -Encoding UTF8
+        $num = Add-HandoffMessage $d "c2a" "버튼 색 교체 명세" $specBody
+        if ($Override) { [void](Set-HandoffMessageField (Get-HandoffMessageFile $d $num).FullName "위임모델" $Override) }
+        return $d
+    }
+    function Get-OverrideTask([string]$Name) {
+        $f = @(Get-InboxTasks | Where-Object { $_.Name -like "handoff_$Name`_*" } | Select-Object -First 1)
+        if ($f.Count -eq 0 -or -not $f[0]) { return $null }
+        return (ConvertFrom-TaskDirectives ([IO.File]::ReadAllText($f[0].FullName, [Text.Encoding]::UTF8)))
+    }
+    $chNone = New-OverrideChannel "ovr-none" ""
+    $chMed = New-OverrideChannel "ovr-med" "gemini-3.8-flash-medium"
+    $chLow = New-OverrideChannel "ovr-low" "low"
+    $chHigh = New-OverrideChannel "ovr-high" "High"
+    $chBad = New-OverrideChannel "ovr-bad" "gpt-5"
+    Invoke-HandoffPump $ctx
+    $dNone = Get-OverrideTask "ovr-none"; $dMed = Get-OverrideTask "ovr-med"; $dLow = Get-OverrideTask "ovr-low"; $dHigh = Get-OverrideTask "ovr-high"; $dBad = Get-OverrideTask "ovr-bad"
+    Assert-Equal "위임모델이 없으면 자동 선택: 코드 블록·번호 단계가 든 명세는 high(@model 줄 없음)" "handoff-ovr-none|" ("{0}|{1}" -f $dNone.Session, $dNone.Model)
+    Assert-Equal "위임모델: gemini-3.8-flash-medium 이면 같은 명세도 medium 으로 보낸다" "gemini-3.8-flash-medium|handoff-ovr-med-medium" ("{0}|{1}" -f $dMed.Model, $dMed.Session)
+    Assert-Equal "  단계 이름(low)만 써도 된다 -> gemini-3.8-flash-low, low 전용 세션" "gemini-3.8-flash-low|handoff-ovr-low-low" ("{0}|{1}" -f $dLow.Model, $dLow.Session)
+    Assert-Equal "  high(대소문자 무관)는 @model 줄 없이 기본 우선순위·기존 세션" "handoff-ovr-high|" ("{0}|{1}" -f $dHigh.Session, $dHigh.Model)
+    Assert-Equal "  모르는 값(gpt-5)은 무시하고 자동 선택(high)으로 간다" "handoff-ovr-bad|" ("{0}|{1}" -f $dBad.Session, $dBad.Model)
+    Assert-Equal "  모르는 값은 로그로 알린다" $true (@($script:LogLines | Where-Object { $_ -match "위임모델 'gpt-5'" }).Count -ge 1)
+    Assert-Equal "  AUTO.json 의 위임 기록에 단계(tier)가 남는다" "medium|low|high" ("{0}|{1}|{2}" -f (Read-HandoffAutoState $chMed).dispatches[0].tier, (Read-HandoffAutoState $chLow).dispatches[0].tier, (Read-HandoffAutoState $chHigh).dispatches[0].tier)
+    $env:AGY_AUTO_MODEL = "off"
+    $chOff = New-OverrideChannel "ovr-off" "medium"
+    Invoke-HandoffPump $ctx
+    $dOff = Get-OverrideTask "ovr-off"
+    Assert-Equal "자동 선택을 꺼 둬도 명시한 위임모델은 따른다" "gemini-3.8-flash-medium|handoff-ovr-off-medium" ("{0}|{1}" -f $dOff.Model, $dOff.Session)
+    Remove-Item Env:\AGY_AUTO_MODEL -ErrorAction SilentlyContinue
+    Assert-Equal "Get-HandoffModelOverride: 값 해석(공백·대소문자·ID/단계)" "medium|gemini-3.8-flash-low|" ("{0}|{1}|{2}" -f (Get-HandoffModelOverride " Medium ").Tier, (Get-HandoffModelOverride "GEMINI-3.8-FLASH-LOW").Model, (Get-HandoffModelOverride "gemini-3.9-flash-high"))
+    Assert-Equal "  빈 값은 null" $true ($null -eq (Get-HandoffModelOverride ""))
+    $dispatchText = New-HandoffDispatchText "my-app" $ch $repo (Get-Row $ch "0001") "" "본문" $null
+    Assert-Equal "지시문에 '화면을 볼 수 없다'는 낡은 문구가 없고 브라우저 도구 안내가 있다" $true (($dispatchText -notmatch "화면을 볼 수 없") -and ($dispatchText -match "chrome-devtools-mcp"))
+
     Write-Host "워처 연결 (정적 확인)"
     $watchText = [IO.File]::ReadAllText((Join-Path $subDir "watch-agy.ps1"), [Text.Encoding]::UTF8)
     Assert-Equal "메인 루프가 Invoke-HandoffPump 을 5초 간격으로 부른다" $true (($watchText -match "Invoke-HandoffPump @\{") -and ($watchText -match "TotalSeconds -ge 5"))
