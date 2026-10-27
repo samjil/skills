@@ -3,7 +3,7 @@
 # 새로 쓰지 않아도 되게 하려는 것입니다(출력 토큰 절약, 스크립트 실수 방지).
 #
 # 사용법 (지시문은 표준입력으로 받습니다):
-#   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1" <<'EOF'
+#   powershell.exe -NoProfile -File "$env:USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1" <<'EOF'
 #   @cwd: C:\project
 #   <지시문>
 #   EOF
