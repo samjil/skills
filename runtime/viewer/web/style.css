@@ -1143,20 +1143,19 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .pg-saved-wrap[hidden] { display: none; }   /* 진행 중 카드의 토큰 세부(입력 · 출력 · 현재 컨텍스트) */
 .saved-tokens { color: var(--ok); }   /* Claude 토큰 절약(예상): 절약을 알리는 초록 */
 
-/* 위임 카드의 토큰 줄: 항목마다 이름(흐리게) · 값(크게) · 덧붙임(작게)을 한 줄에 놓고, 왼쪽의 가는 세로 막대로 칸을 가른다.
-   글자 굵기가 아니라 크기 · 색 단계 · 막대로 구분한다. 한 줄 높이만 차지하고, 폭이 모자라면 칸 단위로 다음 줄로 넘어간다 */
-.token-meta { gap: 4px 16px; align-items: center; margin-top: 4px; }
-.tok-item { display: inline-flex; align-items: baseline; gap: 6px; padding-left: 8px; border-left: 3px solid var(--line-strong); white-space: nowrap; line-height: 1.5; }
-.tok-label { color: var(--ink-3); font-size: 11px; }
-.tok-val { color: var(--ink); font-family: var(--font-mono); font-size: 14px; font-weight: 400; font-variant-numeric: tabular-nums; }
-.tok-sub { color: var(--ink-3); font-size: 11px; }
+/* 위임 카드의 토큰 줄: 진행 중 카드의 토큰 줄과 같은 모양. 항목을 "·" 로 이어 한 줄로 흘리고(폭이 모자라면 줄바꿈),
+   총 토큰만 진하게, 나머지는 흐린 작은 글씨로 둔다. Claude 토큰 절약(예상)은 초록 */
+.meta.token-meta { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0; row-gap: 2px; margin-top: 4px; font-size: var(--fs-xs); color: var(--ink-3); }
+.tok-item { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; line-height: 1.6; }
+.tok-item + .tok-item::before { content: "·"; color: var(--ink-3); margin: 0 7px; }
+.tok-label, .tok-val, .tok-sub { color: var(--ink-3); font-family: inherit; font-size: var(--fs-xs); font-weight: 400; font-variant-numeric: tabular-nums; }
 .tok-sub:empty { display: none; }
-.tok-total { border-left-color: var(--ink-2); }
-.tok-total .tok-val { font-size: 15px; }
-.tok-item.saved-tokens { border-left-color: var(--ok); }
+.tok-sub { margin-left: 2px; }
+.tok-total .tok-label::before { content: "\26A1"; margin-right: 3px; font-weight: 400; }
+.tok-total .tok-label, .tok-total .tok-val { color: var(--ink); font-weight: 500; }
 .tok-item.saved-tokens .tok-label,
-.tok-item.saved-tokens .tok-val { color: var(--ok); }
-.tok-item.saved-tokens .tok-sub { color: var(--ok); opacity: 0.85; }
+.tok-item.saved-tokens .tok-val,
+.tok-item.saved-tokens .tok-sub { color: var(--ok); }
 .party-legend { display: inline-flex; align-items: center; gap: 6px; }
 
 .qa-session-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
