@@ -97,6 +97,8 @@ Assert-Equal "read_url_content: 주소" "https://x.y/z" (New-Progress "read_url_
 Assert-Equal "manage_task: 동작과 작업 ID" "status conv/task-12" (New-Progress "manage_task" (With-Label @{ Action = "status"; TaskId = "conv/task-12" })).detail
 Assert-Equal "schedule: 초와 메시지" "1초 · Check task-79" (New-Progress "schedule" (With-Label @{ DurationSeconds = "1"; Prompt = "Check task-79"; TimerCondition = "c/task-79" })).detail
 Assert-Equal "generate_image: 이미지 이름" "weather_icon" (New-Progress "generate_image" (With-Label @{ ImageName = "weather_icon"; Prompt = "긴 프롬프트" })).detail
+Assert-Equal "call_mcp_tool: 도구 이름과 핵심 인자" "navigate_page pageId=1 type=url url=http://localhost:5173/demo/#/select" (New-Progress "call_mcp_tool" (With-Label @{ ServerName = "chrome-devtools-mcp"; ToolName = "navigate_page"; Arguments = [pscustomobject]@{ pageId = 1; type = "url"; url = "http://localhost:5173/demo/#/select" } })).detail
+Assert-Equal "call_mcp_tool: 인자가 없으면 도구 이름만" "list_pages" (New-Progress "call_mcp_tool" (With-Label @{ ServerName = "chrome-devtools-mcp"; ToolName = "list_pages"; Arguments = [pscustomobject]@{} })).detail
 
 Write-Host "run_command 부가 정보"
 $bg = New-Progress "run_command" (With-Label @{ CommandLine = "npm run build"; Cwd = "C:\app"; IsDaemon = $true })

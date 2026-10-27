@@ -381,6 +381,25 @@ function Get-AgyToolDetail($call) {
             if ($pr) { $d = ($d + " · " + $pr).Trim(' ', '·') }
         }
         'generate_image'       { $d = & $get 'ImageName' }
+        'call_mcp_tool' {
+            # 서버 이름만으로는 무엇을 했는지 알 수 없어 "도구 이름 + 핵심 인자"를 보인다(예: navigate_page url=http://localhost:5173/demo/#/select).
+            $d = & $get 'ToolName'
+            if (-not $d) { $d = & $get 'ServerName' }
+            $mcpArgs = $a.Arguments
+            if ($null -ne $mcpArgs -and $mcpArgs -isnot [string]) {
+                $kv = @()
+                foreach ($prop in $mcpArgs.PSObject.Properties) {
+                    $v = $prop.Value
+                    if ($null -eq $v -or $v -is [bool] -and -not $v) { continue }
+                    $s = if ($v -is [string] -or $v -is [ValueType]) { [string]$v } else { ($v | ConvertTo-Json -Compress -Depth 3) }
+                    $s = ($s -replace '\s+', ' ').Trim()
+                    if ($s.Length -gt 80) { $s = $s.Substring(0, 80) + "…" }
+                    if ($s) { $kv += ("{0}={1}" -f $prop.Name, $s) }
+                    if ($kv.Count -ge 3) { break }
+                }
+                if ($kv.Count) { $d = ($d + " " + ($kv -join " ")).Trim() }
+            }
+        }
         default {
             # 모르는 도구: 라벨이 아닌 첫 문자열 인자를 대상으로 본다
             foreach ($prop in $a.PSObject.Properties) {
