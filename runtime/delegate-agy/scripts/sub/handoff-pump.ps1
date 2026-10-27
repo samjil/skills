@@ -25,6 +25,21 @@ function ConvertTo-HandoffSafeName([string]$Name) {
     return $s
 }
 
+# 메시지 머리말의 `위임모델:` 값을 모델 단계로 해석한다. low|medium|high 또는 gemini-3.8-flash-low|medium|high 만 받는다.
+# 자동 단계 선택(agy-autotier.ps1)은 코드 블록·번호 단계·검증 명령이 든 잘 쓴 명세를 "복잡한 일"로 보고 high 로 보내는데,
+# 명세가 이미 정해진 구현이면 보내는 쪽(Claude)이 단계를 직접 정할 수 있게 한다. 값이 없거나 모르는 값이면 $null(자동 선택으로 넘어간다).
+# 반환: @{ Tier; Model; Reason } ($Auto 와 같은 모양)
+function Get-HandoffModelOverride([string]$Value) {
+    $v = ([string]$Value).Trim().ToLowerInvariant()
+    if (-not $v) { return $null }
+    $tier = ""
+    $model = ""
+    if ($v -match '^(low|medium|high)$') { $tier = $v; $model = "gemini-3.8-flash-$v" }
+    elseif ($v -match '^gemini-3\.8-flash-(low|medium|high)$') { $tier = $Matches[1]; $model = $v }
+    else { return $null }
+    return @{ Tier = $tier; Model = $model; Reason = "메시지 머리말 위임모델: $($Value.Trim())" }
+}
+
 function Get-HandoffMaxAgeHours {
     if ($env:AGY_HANDOFF_MAX_AGE_HOURS -match '^\d+(\.\d+)?$' -and [double]$env:AGY_HANDOFF_MAX_AGE_HOURS -gt 0) { return [double]$env:AGY_HANDOFF_MAX_AGE_HOURS }
     return 2.0
@@ -80,7 +95,7 @@ $body
    (이하 근거·상세)
 
 6. 요구가 모호하거나 사용자가 정해야 하는 것이 있으면 작업을 멈추고, 최종 답변의 첫 줄에 [사용자 확인 필요] 와 질문을 적으세요. 이때는 Claude 가 사용자에게 물어야 합니다.
-7. 당신은 화면을 볼 수 없습니다. 눈으로 봐야 알 수 있는 것은 "화면에서 확인할 것"에 적으세요.
+7. 화면을 확인해야 하는 일이면 브라우저 도구(chrome-devtools-mcp: 페이지 열기·스크린샷·DOM 스냅샷)로 로컬 화면을 직접 열어 1차 확인·실측하고, 확인한 값과 사용자가 교차 확인할 곳을 "화면에서 확인할 것"에 적으세요.
 "@
     [void]$lines.Add($text)
     return (($lines.ToArray()) -join "`n")
@@ -255,8 +270,16 @@ function Invoke-HandoffPumpChannel([string]$ChannelDir, $Ctx) {
         if (-not $msgText) { $msgText = "(메시지 파일 msg\$($row.Num)-*.md 를 읽지 못했습니다. 제목만 보고 판단하지 말고 파일을 직접 읽으세요.)" }
         $repo = Get-HandoffRepoPath $ChannelDir
         # 메시지 내용(제목 + 본문)으로 노력 단계를 자동 선택한다. 채널은 늘 폴더를 열므로 폴더 있음으로 본다(파일을 바꾸는 일이면 high).
+        # 메시지 머리말에 `위임모델:` 이 있으면 자동 선택보다 그것을 따른다(자동 선택을 꺼 둔 때도 명시한 값은 따른다).
         $auto = $null
-        if ((Get-Command Test-AgyAutoTierEnabled -ErrorAction SilentlyContinue) -and (Test-AgyAutoTierEnabled)) {
+        if ($msgFile) {
+            try {
+                $overrideRaw = [string](Read-HandoffFrontMatter $msgFile.FullName)["위임모델"]
+                $auto = Get-HandoffModelOverride $overrideRaw
+                if (-not $auto -and $overrideRaw.Trim()) { Write-HandoffLog "핸드오프 [$name] #$($row.Num) 머리말의 위임모델 '$overrideRaw' 은(는) low|medium|high 또는 gemini-3.8-flash-<단계> 가 아니라서 무시하고 자동 선택합니다" }
+            } catch { $auto = $null }
+        }
+        if (-not $auto -and (Get-Command Test-AgyAutoTierEnabled -ErrorAction SilentlyContinue) -and (Test-AgyAutoTierEnabled)) {
             try { $auto = Get-AgyAutoTier ("$($row.Title)`n$msgText") $true } catch { $auto = $null }
         }
         $text = New-HandoffDispatchText $name $ChannelDir $repo $row $(if ($msgFile) { $msgFile.FullName } else { "" }) $msgText $auto
