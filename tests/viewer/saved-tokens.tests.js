@@ -23,13 +23,14 @@ function extractVarLines(prefix) {
   return appJs.split("\n").filter((l) => l.trim().startsWith("var " + prefix)).map((l) => l.replace(/\s\/\/.*$/, "")).join("\n");
 }
 
-const names = ["tokenShort", "isOkStatus", "estimateTextTokens", "bytesToTokens", "tokenRecordKey", "savedLooksLikePath", "savedIsInternalPath", "savedNormPath",
+const names = ["pendingProcessOpts", "liveSavedOf", "tokenShort", "isOkStatus", "estimateTextTokens", "bytesToTokens", "tokenRecordKey", "savedLooksLikePath", "savedIsInternalPath", "savedNormPath",
   "analyzeSavedWork", "estimateDirectTokens", "savedMissingPaths", "savedTokensOf", "sumSavedTokens", "savedTokenShort", "savedTokensText"];
 const make = new Function(
   extractVarLines("SAVED_") + "\n" +
   "var savedFileSizes = {}; var savedSizeRequested = {};\n" +
+  "var liveProc = {}; function cwdListOf(c) { return Array.isArray(c) ? c : (c ? [c] : []); } function extractImagesFromText() { return { cwds: [] }; }\n" +
   names.map(extractFunction).join("\n") +
-  "\nreturn { estimateTextTokens, bytesToTokens, savedLooksLikePath, savedIsInternalPath, analyzeSavedWork, estimateDirectTokens, savedMissingPaths, savedTokensOf, sumSavedTokens, savedTokenShort, savedTokensText, sizes: savedFileSizes };"
+  "\nreturn { estimateTextTokens, bytesToTokens, savedLooksLikePath, savedIsInternalPath, analyzeSavedWork, estimateDirectTokens, savedMissingPaths, savedTokensOf, sumSavedTokens, savedTokenShort, savedTokensText, liveSavedOf, liveProc, sizes: savedFileSizes };"
 );
 
 let passed = 0, failed = 0;
@@ -104,6 +105,19 @@ api = make();
 const miss1 = api.savedMissingPaths([r1, rec({ task_id: "x", status: "ERROR", process: [step("view_file", "D:/err.html")] })]);
 eq("성공한 위임의 읽은·쓴 파일만, 중복 없이", ["D:/app/index.html", "D:/app/new.js"], miss1);
 eq("이미 물은 경로는 다시 묻지 않는다", [], api.savedMissingPaths([r1]));
+
+console.log("\n진행 중인 위임: liveSavedOf");
+api = make();
+api.sizes["D:/app/index.html"] = 32000;     // 10000토큰
+const pend = (o) => Object.assign({ task_id: "claude_1_2", state: "processing", conversation_id: "conv-live", question: "가".repeat(300), cwd: [] }, o);
+eq("과정(단계)이 아직 없으면 null", null, api.liveSavedOf(pend({})));
+api.liveProc["conv-live"] = { steps: [step("view_file", "D:/app/index.html"), step("run_command", "ls")], lastN: 3, busy: false };
+const lv = api.liveSavedOf(pend({}));
+eq("단계가 모이면 끝난 카드와 같은 계산: 읽기 10000 + 명령 301 + 도구 호출 160 - 질문 200", [10000 + 301 + 160, 200, 10000 + 301 + 160 - 200], [lv.direct, lv.asked, lv.saved]);
+api.liveProc["conv-live"].steps.push(step("write_to_file", "D:/app/out.js"));
+eq("단계가 늘면 값도 는다(쓴 파일은 크기를 모르면 기본 1500 + 도구 호출 80)", lv.saved + 1500 + 80, api.liveSavedOf(pend({})).saved);
+eq("대화 ID 가 없는 작업(대기 중)은 null", null, api.liveSavedOf(pend({ state: "queued", conversation_id: "" })));
+eq("작업이 null 이면 null", null, api.liveSavedOf(null));
 
 console.log("\n표시 글자");
 eq("큰 합계는 단위를 키운다(9,999 / 2.4만 / 1,676만 / 1.68억)", ["9,999", "2.4만", "1,676만", "1.68억"], [api.savedTokenShort(9999), api.savedTokenShort(24000), api.savedTokenShort(16760000), api.savedTokenShort(168000000)]);

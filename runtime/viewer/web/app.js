@@ -2874,6 +2874,30 @@
       " · 읽은 파일 " + sv.reads + "개 · 쓴 파일 " + sv.writes + "개 · 고친 곳 " + sv.edits + "곳 · 명령 " + sv.commands + "회";
   }
 
+  // 진행 중인 위임의 절약 예상: 지금까지 모은 과정(liveProc 의 단계)과 질문으로 끝난 카드와 같은 방식으로 어림한다. 단계가 아직 없으면 null.
+  function liveSavedOf(p) {
+    if (!p) { return null; }
+    var opts = pendingProcessOpts(p, []);
+    var steps = opts && Array.isArray(opts.steps) ? opts.steps : [];
+    if (steps.length === 0) { return null; }
+    return savedTokensOf({ status: "OK", question: p.question, process: steps });
+  }
+
+  // 새 단계나 파일 크기가 들어오면 진행 중 카드의 절약 표시를 제자리에서 고친다(카드를 다시 그리지 않는다).
+  function refreshLiveSaved() {
+    var nodes = document.querySelectorAll("[data-saved-live]");
+    for (var i = 0; i < nodes.length; i++) {
+      var id = nodes[i].getAttribute("data-saved-live");
+      var p = null;
+      for (var j = 0; j < pendingItems.length; j++) { if (pendingItems[j] && pendingItems[j].task_id === id) { p = pendingItems[j]; break; } }
+      var sv = liveSavedOf(p);
+      if (!sv) { continue; }
+      var inner = nodes[i].querySelector(".pg-saved");
+      if (inner) { inner.textContent = savedTokensText(sv.saved); inner.title = savedTokensDetail(sv); }
+      nodes[i].hidden = false;
+    }
+  }
+
   // 파일 크기가 도착해 값이 바뀌면 지금 화면의 토큰 절약 표시(카드 · 칩 · 대시보드)를 다시 계산한다.
   function refreshSavedViews() {
     var byKey = {};
@@ -2887,6 +2911,7 @@
         nodes[i].title = savedTokensDetail(sv);
       }
     }
+    refreshLiveSaved();
     if (currentNav === "dashboard") { renderStats(); } else if (currentNav === "qa") { updateQaHeader(); }
   }
 
@@ -5104,6 +5129,8 @@
         if (lp.steps.length !== before || (res && res.reset)) {
           renderProcessDialog();
           updateProcessButtons();
+          refreshLiveSaved();
+          requestSavedFileSizes([{ status: "OK", process: lp.steps }]).then(function (got) { if (got) { refreshLiveSaved(); } });
         }
       })
       .catch(function () {})
@@ -5837,7 +5864,7 @@
       (Number(tk.turns) > 0 ? " · 모델 응답 " + Number(tk.turns) + "번" : "");
   }
 
-  function buildProgressHtml(pg, cwd) {
+  function buildProgressHtml(pg, cwd, saved, taskId) {
     if (!pg) return "";
     var parts = [];
     if (pg.step != null) {
@@ -5855,8 +5882,14 @@
       parts.push('<span class="pg-tokens" style="color: var(--ink); font-weight: 500;" title="' + escapeHtml(liveTokenTitle(pg.tokens)) + '">⚡ 실시간 ' + tokText + '</span>');
       parts.push('<span class="pg-token-detail" title="' + escapeHtml(liveTokenTitle(pg.tokens)) + '">' + escapeHtml(liveTokenDetail(pg.tokens)) + '</span>');
     }
+    // Claude 토큰 절약(예상): 끝난 카드와 같은 방식. 단계가 모이기 전에는 숨겨 두고(자리만 만들어) 값이 생기면 제자리에서 채운다.
+    var savedHtml = "";
+    if (taskId) {
+      savedHtml = '<span class="pg-saved-wrap" data-saved-live="' + escapeHtml(taskId) + '"' + (saved ? "" : " hidden") + '><span class="pg-sep">·</span><span class="pg-saved saved-tokens"' +
+        (saved ? ' title="' + escapeHtml(savedTokensDetail(saved)) + '">' + escapeHtml(savedTokensText(saved.saved)) : ">") + '</span></span>';
+    }
     var action = buildProgressActionHtml(pg, cwd);
-    return '<div class="pending-progress">' + (parts.length ? '<div class="pg-line">' + parts.join('<span class="pg-sep">·</span>') + '</div>' : "") + action + '</div>';
+    return '<div class="pending-progress">' + (parts.length ? '<div class="pg-line">' + parts.join('<span class="pg-sep">·</span>') + savedHtml + '</div>' : "") + action + '</div>';
   }
 
   // ==========================================================================
@@ -6191,7 +6224,7 @@
        p.interrupted ? '  <span>이 작업은 실행 중이라는 표시 파일만 남아 있고 작업자 프로세스는 없습니다. 아래는 마지막으로 확인된 진행 상황입니다.</span>' :
                       '  <span>동시에 돌릴 수 있는 수(기본 3개)를 넘었거나, 같은 세션·폴더의 앞 작업이 있어 기다리고 있습니다. 조건이 풀리면' + modelText + ' 자동으로 실행됩니다.</span>'),
       '</div>',
-      ((isProcessing || p.interrupted) ? buildProgressHtml(p.progress, effCwds) : "")
+      ((isProcessing || p.interrupted) ? buildProgressHtml(p.progress, effCwds, isProcessing ? liveSavedOf(p) : null, isProcessing ? p.task_id : "") : "")
     ].join("");
     da.appendChild(ab);
     card.appendChild(da);
@@ -6422,7 +6455,7 @@
 
     if (live.pending && live.pending.progress) {
       var wrap = document.createElement("div");
-      wrap.innerHTML = buildProgressHtml(live.pending.progress, cwdListOf(live.pending.cwd));
+      wrap.innerHTML = buildProgressHtml(live.pending.progress, cwdListOf(live.pending.cwd), liveSavedOf(live.pending), live.pending.task_id);
       while (wrap.firstChild) { el.appendChild(wrap.firstChild); }
     }
     return el;
