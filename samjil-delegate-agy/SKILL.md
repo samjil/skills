@@ -1,6 +1,6 @@
 ---
 name: samjil-delegate-agy
-description: "사용자가 'agy 에게 …해 줘 / 물어봐 / 시켜 / 맡겨' 처럼 agy 에게 직접 일을 시키는 말을 하면 반드시 이 스킬로 처리한다(ask_antigravity MCP 도구나 agy.exe 직접 실행으로 처리하면 위임 기록이 남지 않으므로 쓰지 않는다). 사용자 컴퓨터에 agy 워처(~/.samjil/delegate-agy/scripts/start-agy.ps1)가 떠 있으면, 작업을 난이도로 나눠서 Claude는 '설계'와 '가장 어려운 수준'만 직접 처리하고 나머지(약간 어려움 이하의 구현·디자인 구현·글쓰기·분석 등)는 Antigravity CLI(agy)에 파일 기반으로 위임해서 Claude quota를 아낀다. 코딩뿐 아니라 디자인도 같은 기준(디자인 방향·시스템 설계는 직접, 그 명세대로의 구현은 위임)이다. agy 결과는 반드시 검토하고, Claude가 직접 했을 때의 수준에 못 미치면 그대로 쓰지 않고 피드백을 담아 만족할 때까지 재위임한다. 그 밖의 직접 처리 예외는 맥락 필요/실수 비용 큼/Claude 전용 도구 필요/아주 사소한 것(바뀌는 코드 약 40줄 미만·파일 둘 이하·새 요소 없음을 모두 만족)이다. 코딩은 첫 위임 전에 `@cwd` 폴더와 워처 상태를 확인하고(대화당 한 번) 이후 자동 위임하며, 후속 수정마다 분류를 한 줄로 적고 직접 처리했을 때도 사유를 한 줄로 밝힌다. agy 모델은 난이도에 따라 `@model:`로 고르고(지정하지 않으면 기본 우선순위), 지정한 모델이 실패하면 임의로 바꾸지 않고 사용자에게 묻는다. 위임 사실은 매번 짧게 밝히고, 워처가 꺼져 있을 때, 사용자가 agy 를 직접 지목했으면 묻지 않고 켜고, 스킬이 스스로 위임하려는 경우에만 켜도 되는지 먼저 묻는다(거절하거나 켜지지 않으면 직접 처리로 폴백한다). superpower 등 다른 스킬이 하위 작업을 서브에이전트(Agent/Task 도구)로 열려는 시점에도 이 분담 판단이 서브에이전트 스폰보다 먼저 적용된다."
+description: "Antigravity CLI(agy) 파일 기반 작업 위임 및 오케스트레이션 규약. (1) 사용자가 'agy에게 해줘/물어봐/맡겨' 등 agy를 직접 지목할 때(MCP나 agy.exe 직접 호출 금지, 반드시 이 스킬의 워처 통로 사용), (2) 일반 코딩·디자인 구현·문서·분석 작업에서 설계와 최고 난이도를 제외한 하위 구현을 agy로 위임해 Claude 쿼터를 절약할 때, (3) superpowers 등 다른 스킬이 서브에이전트(Agent/Task 도구)를 생성하려 할 때 스폰에 앞서 위임 여부를 먼저 판정할 때 활성화한다."
 ---
 
 # samjil-delegate-agy: Antigravity CLI 위임 (설계·최고 난이도는 직접, 나머지는 위임 + 필수 검토)
@@ -70,6 +70,10 @@ Claude가 스스로 서브에이전트를 열려는 경우도 같다 — 서브�
   (= 설계도 가장 어려운 수준도 아니면), Claude 서브에이전트(Agent 도구) 대신 agy에
   위임한다 — 하위 작업의 지시문과 필요한 맥락을 그대로 agy 위임 지시문으로 옮기면 된다.
 - 설계나 가장 어려운 수준의 하위 작업은 Claude가 직접(또는 Claude 서브에이전트로) 처리한다.
+- **Claude 서브에이전트를 쓰는 것이 맞을 때의 모델·Effort 기준**:
+  - 단순 파일 탐색 · 로그 요약: `haiku` (또는 `sonnet` + `low` effort)
+  - 명세가 확정된 일반 분석 · 구현: `sonnet` + `medium` effort. **Sonnet 에서 `high`/`max` effort 는 출력 토큰만 2배 이상 늘고 불필요한 하위 에이전트 팬아웃을 일으키니 쓰지 않는다.**
+  - 복잡한 아키텍처 설계 · agy 반환 결과물의 최종 검증 게이트: `opus` + `medium`~`high` effort
 - 대상 4번("Claude 전용 도구가 필요한 것")은 그 하위 작업 자체가 웹 검색/로그인된 브라우저/
   데스크탑 제어/MCP 커넥터/아티팩트 등 Claude 전용 도구를 실제로 써야 할 때만
   해당한다. 단지 "지금 서브에이전트 구조로 짜여 있다"는 이유만으로는 예외가 아니다.
@@ -188,32 +192,8 @@ Claude가 스스로 서브에이전트를 열려는 경우도 같다 — 서브�
   작업을 수행하기 전, `~/.samjil/delegate-agy/scripts/sub/watch-agy.ps1` 또는 `start-agy.ps1`이 존재하는지 확인합니다.
   만약 존재하지 않는다면(스킬 규약만 단독 설치된 경우), 에이전트가 임의로 외부 스크립트를 내려받거나 실행하지 않고, 사용자에게 런타임 환경 구성이 필요함을 안내합니다:
   > "Antigravity 위임 워처 런타임(~/.samjil/delegate-agy/)이 감지되지 않았습니다. 저장소의 install.ps1을 실행하여 런타임을 구성해 주세요."
-- **위임 런타임 폴더(`~/.samjil/delegate-agy/runtime`)를 찾는다.**
-  독립 스킬 구조에서는 사용자 홈 디렉터리의 `~/.samjil/delegate-agy/runtime`을 사용한다.
-  (원격 장치 마운트 환경에서는 `~/mnt/` 아래를 자동 탐색한다.)
-  **`submit-task.ps1`(아래 "실행 방법")은 런타임 폴더를 스스로 찾으므로 이 탐색이 필요 없다.** 아래 탐색은 스크립트가 없는 낡은 설치이거나(설치본을 갱신하라고 사용자에게 알린다)
-  워처 켜기 절차처럼 `$BASE`가 필요한 블록에서만 쓴다. 코드 블록은 각각 독립된 `device_bash` 호출이라 변수가 이어지지 않으므로, `$BASE`가 필요한 블록마다 맨 앞에 넣는다.
-
-```bash
-BASE=""
-[ -d "$HOME/.samjil/delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/samjil-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/samjil-delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/agent-delegate-agy/runtime/inbox" ] && BASE="$HOME/.samjil/agent-delegate-agy/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.samjil/delegate/runtime/inbox" ] && BASE="$HOME/.samjil/delegate/runtime"
-[ -z "$BASE" ] && [ -d "$HOME/.agent-delegate/runtime/inbox" ] && BASE="$HOME/.agent-delegate/runtime"
-if [ -z "$BASE" ]; then
-  BASE=$(find ~/mnt -maxdepth 6 -type d \( -path "*/.samjil/delegate-agy/runtime" -o -path "*/.samjil/samjil-delegate-agy/runtime" -o -path "*/.samjil/agent-delegate-agy/runtime" -o -path "*/.samjil/delegate/runtime" -o -path "*/.agent-delegate/runtime" \) 2>/dev/null | head -1)
-fi
-if [ -z "$BASE" ]; then
-  for f in $(find ~/mnt -maxdepth 6 -type f -path "*/watch-agy.ps1" 2>/dev/null); do
-    r="$(dirname "$(dirname "$f")")"; [ -d "$r/runtime/inbox" ] && BASE="$r/runtime" && break
-  done
-fi
-[ -z "$BASE" ] && echo "위임 런타임 폴더(~/.samjil/delegate-agy/runtime)를 찾지 못함" && exit 1
-echo "found: $BASE"
-```
-
-  찾지 못하면(마운트가 안 됐거나 워처가 없으면) 위임 없이 바로 직접 처리로 폴백한다.
+- **위임 런타임 폴더는 `~/.samjil/delegate-agy/runtime` 이다.** `submit-task.ps1`(아래 "실행 방법")이 스스로 찾으므로 따로 탐색하지 않는다.
+  스크립트가 없거나 폴더를 못 찾으면(낡은 설치) 설치본을 갱신해 달라고 사용자에게 알리고, 이번 작업은 위임 없이 직접 처리로 폴백한다.
 
 ## 워처가 꺼져 있을 때: 스킬이 스스로 위임하려는 경우에만 켜도 되는지 묻는다
 
@@ -268,10 +248,9 @@ echo "exit=$?"
 **묻는 경우:** 사용자는 agy 를 지목하지 않았는데 이 스킬의 분담 판단(난이도에 따른 자동 위임)으로 Claude 가 스스로 위임하려는 때만 묻는다. 그럴 것 같다는 짐작은 허락이 아니다.
 
 **3. 승인하면 켜고, 켜졌는지 확인한다.** `MANUAL_STOP`이었다면 사용자가 켜라고 한 것이므로 수동 정지 표시를 지운다. 재확인 대기 없이(0초) 창 없이 켠다.
-(맨 앞에 위 `BASE` 탐색을 넣는다.)
 
 ```bash
-rm -f "$BASE/logs/manual_stop.flag"
+powershell.exe -NoProfile -Command 'Remove-Item -LiteralPath "$env:USERPROFILE\.samjil\delegate-agy\runtime\logs\manual_stop.flag" -Force -ErrorAction SilentlyContinue'
 powershell.exe -NoProfile -File "$USERPROFILE\.samjil\delegate-agy\scripts\sub\ensure-agy-running.ps1" -ConfirmDelaySeconds 0 -StaleThresholdSeconds 0
 # 대시보드 뷰어도 창·브라우저 탭 없이 켠다(이미 떠 있으면 그대로 둔다. 뷰어는 켜질 때 워처도 창 없이 함께 켠다)
 powershell.exe -NoProfile -File "$USERPROFILE\.samjil\viewer\ensure-viewer-running.ps1"
@@ -412,13 +391,32 @@ agy는 기본적으로 매번 빈 상태로 시작한다(이 스킬 맨 위 "직
 위임은 **`submit-task.ps1` 한 번 호출**이다. 런타임 폴더 찾기 · 작업 ID 만들기 · inbox 기록 · 결과 기다리기를 스크립트가 모두 한다 — 긴 bash 나 폴링 루프를 직접 쓰지 않는다.
 지시문은 **따옴표 붙은 heredoc**(`<<'CLAUDE_TASK_EOF'`)으로 표준입력에 준다(`$` · backtick 이 셸에서 해석되지 않게).
 
+지시문은 **아래 4단 브리프**로 쓴다. agy 는 매번 빈 상태로 시작하고 호출마다 고정 비용이 있어서, 브리프가 자기완결적이어야 첫 번에 맞고 재위임이 줄어든다.
+Claude 를 어떤 모델·Effort 로 돌리든 같은 수준의 명세가 나오게 하려는 틀이니, 항목을 빼먹지 않는다(해당 없는 항목은 "없음"으로 적는다).
+
 ```bash
 powershell.exe -NoProfile -File "$USERPROFILE\.samjil\delegate-agy\scripts\submit-task.ps1" <<'CLAUDE_TASK_EOF'
 @cwd: C:\Users\username\workspace\my-project
 @model: gemini-3.8-flash-medium
-<지시문 - 자기완결적으로. 필요한 맥락은 명시적으로 다 포함할 것>
+[1. 목표 및 작업 모드]
+- 작업 목적: <1~2줄 요약 (읽기 전용 분석인지 파일 수정인지 명시)>
+
+[2. 대상 파일 및 상세 명세]
+- 대상 경로: <파일 전체를 붙여넣지 말고, 실제 존재를 확인한 파일 경로:줄번호 또는 git diff 범위만 지정>
+- 구현/수정 내용: <모호한 표현 없이 구체적인 값, 함수명, AS-IS -> TO-BE 규칙 명시>
+
+[3. 프로젝트 규칙 및 범위 제한 (Non-Goals)]
+- 핵심 규칙: <CLAUDE.md / BRIEF.md 중 이 작업에 해당하는 규칙 2~3줄 요약>
+- 접근 금지: <현재 Claude가 편집 중인 파일이나 이번 변경과 무관한 레거시 코드는 절대 수정·지적하지 말 것>
+
+[4. 검증 및 답변 형식 (DIGEST)]
+- 검증 명령: <실행할 테스트/타입체크/빌드 명령어>
+- 보고 형식: 상세 실행 로그가 길면 `<보고서 경로>`에 따로 적고, 최종 답변 본문에는 [상태 · 변경 파일:줄 · 테스트/검증 실측 1줄 요약 · 우려 사항]만 간결하게 작성할 것.
 CLAUDE_TASK_EOF
 ```
+
+- **폴더 접근이 필요 없는 작업**(번역·글쓰기 등)은 `@cwd:` 줄을 빼고 1·2단만 짧게 써도 된다. 3·4단의 파일 범위·검증 항목은 폴더를 여는 작업에서 특히 중요하다.
+- 브리프에 **agy 의 능력을 추측한 금지**(예: "브라우저를 열지 마라")를 쓰지 않는다. 금지 조항은 실제로 위험한 것(범위 밖 수정, git 상태 변경)에만 둔다.
 
 폴더 접근이 필요 없는 작업이면 `@cwd:` 줄만 빼면 된다. 출력과 종료 코드:
 
@@ -427,7 +425,7 @@ CLAUDE_TASK_EOF
 | `===RESULT=== <ID>` + 본문 | 0 | 응답 파일이 생겼다(**실패 사유도 응답 본문으로 올 수 있으니 본문을 읽는다**) | 아래 "결과 처리"로 검토 |
 | `===ERROR=== <ID>` + 본문 | 1 | 응답 없이 오류 로그만 있다 | 오류를 읽고 판단 |
 | `===PENDING=== <ID> 진행 중 · 경과 N분 · 모델 … · 마지막 단계 …` | 2 | 170초 안에 안 끝났다. **작업은 계속 돌고 있다** | **다시 제출하지 말고** `-Poll <ID>` 로 기다린다 |
-| (안내 문장) | 3 | 런타임 폴더를 못 찾음 · 지시문이 비었음 등 | 아래 BASE 탐색(스크립트를 못 찾는 경우)이나 직접 처리 |
+| (안내 문장) | 3 | 런타임 폴더를 못 찾음 · 지시문이 비었음 등 | 설치본 갱신을 요청하거나 직접 처리 |
 
 - `device_bash` 한 호출은 최대 3분이라 스크립트는 기본 170초만 기다리고 진행 상태를 돌려준다(`-WaitSeconds` 로 바꿀 수 있다). 대기 간격은 스크립트 안에서 돌아 Claude 토큰을 쓰지 않는다.
 - **`PENDING` 이후**: `high` 모델 위임은 약 9~12분이라 보통 서너 번 확인하게 된다. 한 번 확인할 때마다 한 턴이 드니, 그 사이에 위임과 무관한 다른 일(검토 준비, 다음 조각 설계)을 하고 돌아온다.
