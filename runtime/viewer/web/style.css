@@ -2271,3 +2271,5 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
   font-size: var(--fs-sm);
   color: var(--ink);
 }
+.tree-session.fork-child { margin-left: calc(14px * var(--fork-depth, 1)); position: relative; }
+.tree-session.fork-child::before { content: "\2514"; position: absolute; left: -12px; top: 8px; color: var(--ink-3); font-size: var(--fs-xs); }   /* 포크한 세션: 원본 밑에 들여 쓴다 */
