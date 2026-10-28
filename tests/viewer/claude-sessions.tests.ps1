@@ -250,6 +250,22 @@ try {
     # config 복원
     [System.IO.File]::WriteAllText($cfgFile, (ConvertTo-Json -InputObject $validConfig -Depth 6), $utf8NoBom)
 
+    # 포크한 세션: 자기 배정이 없어도 원본(과 원본의 원본)의 그룹을 따르고, forkOf 로 원본을 알린다
+    $forkMeta = @{ sessionId = "local_fork1"; cliSessionId = "cli-fork-1"; title = "[포크]"; cwd = "D:\work\repo1"; createdAt = 1790000000000; lastActivityAt = 1790500000000; isArchived = $false; forkedFromSessionId = "local_s1" }
+    $fork2Meta = @{ sessionId = "local_fork2"; cliSessionId = "cli-fork-2"; title = "[포크의 포크]"; cwd = "D:\work\repo1"; createdAt = 1791000000000; lastActivityAt = 1791500000000; isArchived = $false; forkedFromSessionId = "local_fork1" }
+    $orphanMeta = @{ sessionId = "local_fork3"; cliSessionId = "cli-fork-3"; title = "[원본 없는 포크]"; cwd = "D:\work\x"; createdAt = 1792000000000; lastActivityAt = 1792500000000; isArchived = $false; forkedFromSessionId = "local_gone" }
+    foreach ($m in @($forkMeta, $fork2Meta, $orphanMeta)) { [System.IO.File]::WriteAllText((Join-Path $sessionsDir ($m.sessionId + '.json')), (ConvertTo-Json -InputObject $m), $utf8NoBom) }
+    $treeFork = Get-ClaudeSessionTree -DesktopDir $desktopDir
+    $cg1Fork = @(@($treeFork.Projects) | Where-Object { $_.id -eq "cg-1" })[0]
+    $forkRow = @($cg1Fork.sessions | Where-Object { $_.id -eq "cli-fork-1" })[0]
+    $fork2Row = @($cg1Fork.sessions | Where-Object { $_.id -eq "cli-fork-2" })[0]
+    Assert-Equal "포크는 원본의 그룹(cg-1)에 들어간다" "cli-fork-1" $forkRow.id
+    Assert-Equal "  forkOf 는 원본의 CLI 세션 id" "cli-session-1" $forkRow.forkOf
+    Assert-Equal "포크의 포크도 같은 그룹이고 forkOf 는 바로 위 원본" "cli-fork-1" $fork2Row.forkOf
+    Assert-True "원본이 없는 포크는 그룹 없음에 남는다" (@($treeFork.Ungrouped | ForEach-Object { $_.id }) -contains "cli-fork-3")
+    Assert-True "  그 포크의 forkOf 는 비어 있다" (-not (@($treeFork.Ungrouped | Where-Object { $_.id -eq "cli-fork-3" })[0].forkOf))
+    foreach ($m in @($forkMeta, $fork2Meta, $orphanMeta)) { Remove-Item -LiteralPath (Join-Path $sessionsDir ($m.sessionId + '.json')) -Force }
+
     # ---------------------------------------------------------
     # 3. Update-ClaudeLinkIndex & Read-ClaudeLinkIndex 시험
     # ---------------------------------------------------------
