@@ -2271,5 +2271,13 @@ code.inline-image-ref { cursor: zoom-in; text-decoration: underline dotted var(-
   font-size: var(--fs-sm);
   color: var(--ink);
 }
-.tree-session.fork-child { margin-left: calc(14px * var(--fork-depth, 1)); position: relative; }
-.tree-session.fork-child::before { content: "\2514"; position: absolute; left: -12px; top: 8px; color: var(--ink-3); font-size: var(--fs-xs); }   /* 포크한 세션: 원본 밑에 들여 쓴다 */
+/* 포크한 세션: 그룹의 세로선과 점 줄은 그대로 두고, 점만 깊이만큼 안쪽으로 옮겨 가는 가지선으로 세로선에 잇는다 */
+.session-item.tree-session.fork-child { --fork-indent: calc(14px * var(--fork-depth, 1)); padding-left: calc(16px + var(--fork-indent)); }
+.session-item.tree-session.fork-child::before { left: calc(var(--fork-indent) - 4px); border-radius: 2px; transform: rotate(45deg); }   /* 마름모 점으로 원본의 동그란 점과 구분 */
+.session-item.tree-session.fork-child,
+.session-item.tree-session.fork-child.active {
+  background-image: linear-gradient(var(--line-strong), var(--line-strong));
+  background-repeat: no-repeat;
+  background-position: 0 50%;
+  background-size: calc(var(--fork-indent) - 4px) 1px;
+}
