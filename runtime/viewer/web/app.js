@@ -814,6 +814,7 @@
               errors: 0,
               latestTime: "",
               archived: Boolean(s.archived),
+              forkOf: s.forkOf || "",
               lastActivity: s.lastActivity || ""
             };
             pNode.sessions.push(sNode);
@@ -1266,7 +1267,7 @@
         return itemA.idx - itemB.idx;
       });
 
-      return list.map(function (it) {
+      var copies = list.map(function (it) {
         var copy = {};
         for (var k in it.s) {
           if (Object.prototype.hasOwnProperty.call(it.s, k)) {
@@ -1275,6 +1276,27 @@
         }
         return copy;
       });
+      // 포크한 세션은 같은 목록에 원본이 있으면 원본 바로 밑으로 묶는다(Claude Desktop 과 같은 모양). 원본이 목록에 없으면 제자리.
+      var present = {};
+      copies.forEach(function (c) { present[c.id] = true; });
+      var kids = {};
+      var roots = [];
+      copies.forEach(function (c) {
+        if (c.forkOf && c.forkOf !== c.id && present[c.forkOf]) { (kids[c.forkOf] = kids[c.forkOf] || []).push(c); }
+        else { roots.push(c); }
+      });
+      var ordered = [];
+      var seen = {};
+      var place = function (c, depth) {
+        if (seen[c.id]) return;
+        seen[c.id] = true;
+        c.forkDepth = depth;
+        ordered.push(c);
+        (kids[c.id] || []).forEach(function (k) { place(k, depth + 1); });
+      };
+      roots.forEach(function (c) { place(c, 0); });
+      copies.forEach(function (c) { place(c, 0); });   // 고리(서로가 서로의 원본)로 빠진 것이 있어도 잃지 않는다
+      return ordered;
     }
 
     function cloneNode(p, sm) {
@@ -1600,6 +1622,7 @@
               waiting: 0,
               latestTime: "",
               archived: Boolean(s.archived),
+              forkOf: s.forkOf || "",
               lastActivity: s.lastActivity || ""
             };
             pNode.sessions.push(sNode);
@@ -2143,7 +2166,8 @@
         p.sessions.forEach(function (s) {
           var isSessionActive = (currentQaProject === p.id && currentQaSession === s.id);
           var sItem = document.createElement("div");
-          sItem.className = "session-item tree-session" + (isSessionActive ? " active" : "");
+          sItem.className = "session-item tree-session" + (isSessionActive ? " active" : "") + (s.forkDepth ? " fork-child" : "");
+          if (s.forkDepth) { sItem.style.setProperty("--fork-depth", String(Math.min(s.forkDepth, 3))); sItem.title = "포크한 세션"; }
           sItem.dataset.session = s.id;
           sItem.setAttribute("role", "treeitem");
 
@@ -6649,7 +6673,7 @@
       var sessions = Array.isArray(p.sessions) ? p.sessions : [];
       for (var j = 0; j < sessions.length; j++) {
         var s = sessions[j] || {};
-        sParts.push([s.id || "", s.title || "", s.cwd || "", s.lastActivity || "", s.archived ? 1 : 0].join("~"));
+        sParts.push([s.id || "", s.title || "", s.cwd || "", s.lastActivity || "", s.archived ? 1 : 0, s.forkOf || ""].join("~"));
       }
       pParts.push((p.id || "") + ":" + (p.name || "") + "[" + sParts.join(",") + "]");
     }
