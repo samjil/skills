@@ -58,9 +58,14 @@ function Read-ClaudeDesktopSessions([string]$DesktopDir) {
             if ($null -ne $json.sessionId) { $localIdStr = [string]$json.sessionId }
             elseif ($file.BaseName.StartsWith('local_')) { $localIdStr = $file.BaseName }
 
+            # 포크(대화 갈라내기)한 세션은 원본의 local id 를 가리킨다. Desktop 은 이런 세션을 원본 밑에 묶어 보이지만 그룹 배정 파일에는 따로 적지 않는다.
+            $forkedFromStr = ''
+            if ($null -ne $json.forkedFromSessionId) { $forkedFromStr = [string]$json.forkedFromSessionId }
+
             $results.Add(@{
                 id             = [string]$json.cliSessionId
                 localId        = $localIdStr
+                forkedFrom     = $forkedFromStr
                 title          = $titleStr
                 cwd            = $cwdStr
                 createdAt      = $createdAtLong
@@ -240,6 +245,10 @@ function Get-ClaudeSessionTree([string]$DesktopDir) {
     }
     $ungroupedSessions = [System.Collections.Generic.List[hashtable]]::new()
 
+    # local id -> 세션(포크의 원본을 찾는 용도)
+    $byLocalId = @{}
+    foreach ($s in $rawSessions) { if (-not [string]::IsNullOrEmpty($s.localId)) { $byLocalId[$s.localId] = $s } }
+
     foreach ($s in $rawSessions) {
         $createdStr = ''
         if ($s.createdAt -gt 0) {
@@ -260,13 +269,24 @@ function Get-ClaudeSessionTree([string]$DesktopDir) {
             _lastActivityAt = [long]$s.lastActivityAt
         }
 
-        $localId = $s.localId
+        # 자기 배정이 없는 포크는 원본(원본의 원본까지)의 그룹을 따른다. 원본의 CLI 세션 id 는 forkOf 로 알려 화면이 원본 밑에 묶을 수 있게 한다.
+        $forkParent = $null
+        if (-not [string]::IsNullOrEmpty($s.forkedFrom) -and $byLocalId.ContainsKey($s.forkedFrom)) {
+            $forkParent = $byLocalId[$s.forkedFrom]
+            $sessionObj.forkOf = [string]$forkParent.id
+        }
+
         $targetGid = $null
-        if (-not [string]::IsNullOrEmpty($localId) -and $assignments.ContainsKey($localId)) {
-            $assignedGid = $assignments[$localId]
-            if (-not [string]::IsNullOrEmpty($assignedGid) -and $knownGroupIds.ContainsKey($assignedGid)) {
-                $targetGid = $assignedGid
+        $probe = $s
+        for ($hop = 0; ($null -ne $probe) -and ($hop -lt 8); $hop++) {
+            $probeLocal = $probe.localId
+            if (-not [string]::IsNullOrEmpty($probeLocal) -and $assignments.ContainsKey($probeLocal)) {
+                $assignedGid = $assignments[$probeLocal]
+                if (-not [string]::IsNullOrEmpty($assignedGid) -and $knownGroupIds.ContainsKey($assignedGid)) { $targetGid = $assignedGid; break }
             }
+            $next = $null
+            if (-not [string]::IsNullOrEmpty($probe.forkedFrom) -and $byLocalId.ContainsKey($probe.forkedFrom)) { $next = $byLocalId[$probe.forkedFrom] }
+            $probe = $next
         }
 
         if ($null -ne $targetGid -and $groupSessionsMap.ContainsKey($targetGid)) {
@@ -292,6 +312,7 @@ function Get-ClaudeSessionTree([string]$DesktopDir) {
                     created      = $item.created
                     lastActivity = $item.lastActivity
                     archived     = $item.archived
+                    forkOf       = $item.forkOf
                 })
             }
             $projects.Add(@{
@@ -312,6 +333,7 @@ function Get-ClaudeSessionTree([string]$DesktopDir) {
             created      = $item.created
             lastActivity = $item.lastActivity
             archived     = $item.archived
+            forkOf       = $item.forkOf
         })
     }
 
