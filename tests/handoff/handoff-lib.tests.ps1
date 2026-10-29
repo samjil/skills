@@ -179,7 +179,7 @@ try {
     Assert-Equal "INDEX.md 가 없으면 머리줄과 함께 새로 만든다" "0001" $nf
     Assert-Equal "  (표 머리줄이 있다)" $true ((Read-Raw (Join-Path $fresh "INDEX.md")) -match "\| 번호 \| 시각 \| 방향 \| 제목 \| 상태 \|")
 
-    Write-Host "자동 이어가기 상태 (AUTO.json / AUTO.off)"
+    Write-Host "자동 이어가기 상태 (핸드오프 DB / AUTO.off)"
     $st = Read-HandoffAutoState $proj
     Assert-Equal "상태 파일이 없으면 빈 상태" "0|False" ("{0}|{1}" -f @($st.dispatches).Count, $st.halted)
     $now = Get-Date
@@ -196,12 +196,20 @@ try {
     Assert-Equal "  훅이 막은 횟수" 2 $back.hook_blocks["0003"]
     Assert-Equal "  60분 창 안의 위임 수는 2 (90분 전 것은 뺀다)" 2 (Get-HandoffRounds $back 60)
     Assert-Equal "  창을 120분으로 하면 3" 3 (Get-HandoffRounds $back 120)
-    Assert-Equal "  임시 파일(.tmp)이 남지 않는다" $false (Test-Path (Join-Path $proj "AUTO.json.tmp"))
+    Assert-Equal "  상태는 파일이 아니라 DB 에 있다(AUTO.json 을 만들지 않는다)" $false (Test-Path (Join-Path $proj "AUTO.json"))
     $one = @{ dispatches = @(@{ num = "0009"; task_id = "t9"; at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"); done = $false }); halted = $false; halted_at = ""; halted_reason = ""; hook_blocks = @{} }
     Write-HandoffAutoState $proj $one
     Assert-Equal "위임이 한 건뿐이어도 배열로 읽는다(5.1 배열 풀림 방지)" 1 @((Read-HandoffAutoState $proj).dispatches).Count
+    # 예전 AUTO.json: 읽히면 DB 로 옮기고 .migrated 로 바꾼다. 깨졌으면 무시하고 DB 상태를 그대로 쓴다.
     Set-Content -LiteralPath (Join-Path $proj "AUTO.json") -Value "{ 깨진 json" -Encoding UTF8
-    Assert-Equal "깨진 AUTO.json 은 빈 상태로 읽는다" 0 @((Read-HandoffAutoState $proj).dispatches).Count
+    Assert-Equal "깨진 예전 AUTO.json 은 무시하고 DB 상태를 읽는다" 1 @((Read-HandoffAutoState $proj).dispatches).Count
+    Remove-Item (Join-Path $proj "AUTO.json") -Force
+    $legacyCh = New-Channel "legacy-auto"
+    $legacyJson = '{ "dispatches": [ { "num": "0003", "task_id": "tL", "at": "2026-10-23 15:31:14", "done": true, "tier": "high" } ], "halted": true, "halted_at": "a", "halted_reason": "r", "hook_blocks": { "0003": 2 } }'
+    [IO.File]::WriteAllText((Join-Path $legacyCh "AUTO.json"), $legacyJson, (New-Object Text.UTF8Encoding($false)))
+    $imp = Read-HandoffAutoState $legacyCh
+    Assert-Equal "예전 AUTO.json 은 처음 읽을 때 DB 로 옮긴다(위임 1건 · halted · 막은 횟수)" "1|True|r|2" ("{0}|{1}|{2}|{3}" -f @($imp.dispatches).Count, $imp.halted, $imp.halted_reason, $imp.hook_blocks["0003"])
+    Assert-Equal "  옮긴 파일은 AUTO.json.migrated 로 바뀐다" "False|True" ("{0}|{1}" -f (Test-Path (Join-Path $legacyCh "AUTO.json")), (Test-Path (Join-Path $legacyCh "AUTO.json.migrated")))
     Assert-Equal "AUTO.off 가 없으면 켜짐" $false (Test-HandoffAutoDisabled $proj)
     New-Item -ItemType File -Force -Path (Join-Path $proj "AUTO.off") | Out-Null
     Assert-Equal "채널의 AUTO.off 가 있으면 꺼짐" $true (Test-HandoffAutoDisabled $proj)
@@ -209,6 +217,33 @@ try {
     New-Item -ItemType File -Force -Path (Join-Path $root "AUTO.off") | Out-Null
     Assert-Equal "루트의 AUTO.off 는 모든 채널을 끈다" $true (Test-HandoffAutoDisabled $proj)
     Remove-Item (Join-Path $root "AUTO.off") -Force
+    Write-Host "원장은 DB 에 두고 INDEX.md 는 보기다"
+    $led = New-Channel "ledger-app"
+    $n1 = Add-HandoffMessage $led "c2a" "첫 메시지" "## 요약`n본문"
+    $dbRows = Invoke-HandoffLedger $led { param($db, $key) return @($db.Query("SELECT num, status FROM messages WHERE channel = ? ORDER BY num", [object[]]@($key))) }
+    $mine = @($dbRows | Where-Object { [string]$_["num"] -eq $n1 })
+    Assert-Equal "새 메시지는 DB 에 행으로 들어간다(상태 보냄)" "1|보냄" ("{0}|{1}" -f $mine.Count, [string]$mine[0]["status"])
+    Assert-Equal "  INDEX.md 에도 보기로 나타난다" $true ((Read-Raw (Join-Path $led "INDEX.md")) -match "\| $n1 \|")
+    # 손으로 고친 INDEX.md 는 다음에 읽을 때 DB 로 흡수된다
+    $raw = Read-Raw (Join-Path $led "INDEX.md")
+    [IO.File]::WriteAllText((Join-Path $led "INDEX.md"), ($raw.TrimEnd() + "`n| 0009 | 2026-10-10 09:00 | a2c | 손으로 쓴 줄 | 읽음 |`n"), (New-Object Text.UTF8Encoding($false)))
+    Assert-Equal "손으로 덧붙인 줄을 DB 가 흡수한다" "0009|읽음" ((Read-HandoffIndex $led | Where-Object { $_.Num -eq "0009" } | ForEach-Object { "{0}|{1}" -f $_.Num, $_.Status }) -join "")
+    Assert-Equal "  다음 번호는 흡수한 번호 뒤" "0010" ("{0:D4}" -f (Get-HandoffNextNumber $led))
+    Assert-Equal "상태를 바꾸면 보기에도 반영" "True|True" ("{0}|{1}" -f (Set-HandoffStatus $led "0009" "처리됨"), ((Read-Raw (Join-Path $led "INDEX.md")) -match "\| 0009 \|[^\n]*처리됨 \|"))
+
+    Write-Host "보관 기간(3개월) 정리"
+    $ret = New-Channel "retention-app"
+    $old = Add-HandoffMessage $ret "c2a" "아주 오래된" "## 요약`n본문"
+    $new = Add-HandoffMessage $ret "a2c" "최근" "## 요약`n본문"
+    $oldTs = (Get-Date).AddMonths(-4).ToString("yyyy-MM-dd HH:mm")
+    $script:__retTs = $oldTs; $script:__retNum = $old
+    Invoke-HandoffLedger $ret { param($db, $key) [void]$db.Execute("UPDATE messages SET ts = ? WHERE channel = ? AND num = ?", [object[]]@($script:__retTs, $key, $script:__retNum)) } | Out-Null
+    $gone = Remove-HandoffOlderThan 3
+    Assert-Equal "3개월이 지난 메시지 1건을 지운다" 1 $gone
+    Assert-Equal "  파일과 원장 행이 없어지고 최근 것은 남는다" "False|True|0|1" ("{0}|{1}|{2}|{3}" -f [bool](Get-HandoffMessageFile $ret $old), [bool](Get-HandoffMessageFile $ret $new), @(Read-HandoffIndex $ret | Where-Object { $_.Num -eq $old }).Count, @(Read-HandoffIndex $ret | Where-Object { $_.Num -eq $new }).Count)
+    $after = Add-HandoffMessage $ret "c2a" "그 뒤" "## 요약`n본문"
+    Assert-Equal "  지워진 번호는 다시 쓰지 않는다" $true ([int]$after -gt [int]$new)
+
     Write-Host "뷰어용 요약 (Get-HandoffMessageMeta / Get-HandoffAutoSummary / Set-HandoffAutoAction)"
     $cache = @{}
     $metaFile = (Get-HandoffMessageFile $proj "0003").FullName
@@ -222,7 +257,7 @@ try {
     Assert-Equal "  머리말이 없는 옛 메시지는 모델 빈 값" "||False" ("{0}|{1}|{2}" -f $m3.model, $m3.replyTo, $m3.auto)
     Assert-Equal "  없는 파일도 빈 값(오류 없음)" "" (Get-HandoffMessageMeta (Join-Path $work "nope.md") $cache).model
 
-    Remove-Item (Join-Path $proj "AUTO.json") -Force -ErrorAction SilentlyContinue
+    Write-HandoffAutoState $proj @{ dispatches = @(); halted = $false; halted_at = ""; halted_reason = ""; hook_blocks = @{} }
     $sum = Get-HandoffAutoSummary $proj
     Assert-Equal "요약: 기본은 켜짐, 멈춤 아님, 왕복 0/6, 60분 창" "True|False|0|6|60" ("{0}|{1}|{2}|{3}|{4}" -f $sum.enabled, $sum.halted, $sum.rounds, $sum.maxRounds, $sum.windowMinutes)
     Assert-Equal "  AUTO 끄기: off -> enabled False" "True|False" ("{0}|{1}" -f (Set-HandoffAutoAction $proj "off"), (Get-HandoffAutoSummary $proj).enabled)

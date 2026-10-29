@@ -11,6 +11,9 @@
 
 $script:HandoffStatusWords = @("보냄", "읽음", "처리됨", "확인함", "보류")
 
+# 원장 · 자동 이어가기 상태를 담는 SQLite 모듈(핸드오프 DB). 이 파일의 함수들이 그것을 거쳐 읽고 쓴다.
+. (Join-Path $PSScriptRoot "handoff-db.ps1")
+
 function Write-HandoffLog([string]$Message) {
     if (Get-Command Log -CommandType Function -ErrorAction SilentlyContinue) { Log $Message }
 }
@@ -21,16 +24,22 @@ function Write-HandoffLog([string]$Message) {
 
 # 채널 루트: 환경변수 AGENT_HANDOFF_ROOT -> ~/.samjil/handoff -> (예전) ~/.samjil/samjil-handoff. 있는 첫 곳, 없으면 기본 경로.
 function Get-HandoffRootDir {
-    $cands = @()
-    if ($env:AGENT_HANDOFF_ROOT) { $cands += $env:AGENT_HANDOFF_ROOT }
+    # 시험 · 특수 배치: 환경변수 AGENT_HANDOFF_ROOT 가 채널들이 들어 있는 폴더를 직접 가리킨다.
+    if ($env:AGENT_HANDOFF_ROOT) { return $env:AGENT_HANDOFF_ROOT }
     $home_ = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
-    if ($home_) {
-        $cands += (Join-Path $home_ ".samjil/handoff")
-        $cands += (Join-Path $home_ ".samjil/samjil-handoff")
+    if (-not $home_) { return "" }
+    $hh = Join-Path $home_ ".samjil/handoff"
+    $channels = Join-Path $hh "channels"
+    # 옛 배치(~/.samjil/handoff/<채널>)가 남아 있으면 이 프로세스에서 한 번 channels\ 로 옮긴다.
+    if (-not $script:HandoffLayoutChecked) {
+        $script:HandoffLayoutChecked = $true
+        try { [void](Move-HandoffLegacyLayout $hh) } catch {}
     }
-    foreach ($c in $cands) { if (Test-Path -LiteralPath $c -PathType Container) { return $c } }
-    if ($cands.Count -gt 0) { return $cands[0] }
-    return ""
+    if (Test-Path -LiteralPath $channels -PathType Container) { return $channels }
+    # (예전) ~/.samjil/samjil-handoff 를 쓰던 채널
+    $old = Join-Path $home_ ".samjil/samjil-handoff"
+    if (Test-Path -LiteralPath $old -PathType Container) { return $old }
+    return $channels
 }
 
 function Find-HandoffChannelDir([string]$Name) {
@@ -48,7 +57,7 @@ function Get-HandoffChannelDirs {
     if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { return @() }
     $out = @()
     foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
-        if (@("templates", "viewer", "scripts") -contains $d.Name) { continue }
+        if (@("templates", "viewer", "scripts", "data") -contains $d.Name -or $d.Name.StartsWith(".")) { continue }
         if (Test-Path -LiteralPath (Join-Path $d.FullName "INDEX.md") -PathType Leaf) { $out += $d.FullName }
     }
     return @($out)
@@ -173,19 +182,17 @@ function ConvertFrom-HandoffIndexLine([string]$Line) {
 }
 
 function Read-HandoffIndex([string]$ChannelDir) {
-    $p = Join-Path $ChannelDir "INDEX.md"
-    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return @() }
-    $rows = @()
-    $text = $null
+    $idx = Join-Path $ChannelDir "INDEX.md"
+    if (-not (Test-Path -LiteralPath $idx -PathType Leaf)) { return @() }
     try {
-        $fs = New-Object System.IO.FileStream($p, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-        try { $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8, $true); $text = $sr.ReadToEnd() } finally { $fs.Dispose() }
+        $rows = Invoke-HandoffLedger $ChannelDir {
+            param($db, $key)
+            return @($db.Query("SELECT num, ts, dir, title, status FROM messages WHERE channel = ? ORDER BY num", [object[]]@($key)) | ForEach-Object {
+                [pscustomobject]@{ Num = [string]$_["num"]; Time = [string]$_["ts"]; Dir = [string]$_["dir"]; Title = [string]$_["title"]; Status = [string]$_["status"] }
+            })
+        }
+        return @($rows)
     } catch { return @() }
-    foreach ($line in @($text -split "\r?\n")) {
-        $r = ConvertFrom-HandoffIndexLine $line
-        if ($r) { $rows += [pscustomobject]$r }
-    }
-    return @($rows)
 }
 
 # 원장 파일을 "읽고 바로 쓰는" 한 번의 작업으로 고친다. $Mutator 는 줄 목록(List[string])을 받아 고치고 $true(바뀜)/$false 를 돌려준다.
@@ -231,27 +238,18 @@ function Edit-HandoffIndexFile([string]$IndexPath, [scriptblock]$Mutator) {
 # 메시지 한 건의 상태 칸만 바꾼다. 바꿨으면 $true(이미 그 상태이거나 행이 없으면 $false).
 function Set-HandoffStatus([string]$ChannelDir, [string]$Num, [string]$Status) {
     if ($script:HandoffStatusWords -notcontains $Status) { return $false }
-    $idx = Join-Path $ChannelDir "INDEX.md"
-    if (-not (Test-Path -LiteralPath $idx -PathType Leaf)) { return $false }
+    if (-not (Test-Path -LiteralPath (Join-Path $ChannelDir "INDEX.md") -PathType Leaf)) { return $false }
     $script:__hoNum = $Num; $script:__hoStatus = $Status
-    # 잠금 블록은 자식 범위라 안에서 대입한 값은 밖에 남지 않는다. 블록의 출력으로 돌려받는다.
-    $result = Invoke-HandoffLock $ChannelDir {
-        Edit-HandoffIndexFile $idx {
-            param($lines)
-            $hit = $false
-            for ($i = 0; $i -lt $lines.Count; $i++) {
-                $r = ConvertFrom-HandoffIndexLine $lines[$i]
-                if (-not $r -or $r.Num -ne $script:__hoNum) { continue }
-                if ($r.Status -eq $script:__hoStatus) { return $false }
-                $cells = $lines[$i].Split([char]124)           # '' | 번호 | 시각 | 방향 | 제목 | 상태 | ''
-                $cells[$cells.Length - 2] = " " + $script:__hoStatus + " "
-                $lines[$i] = ($cells -join "|")
-                $hit = $true
-                break
-            }
-            return $hit
+    try {
+        $result = Invoke-HandoffLedger $ChannelDir {
+            param($db, $key)
+            $row = @($db.Query("SELECT status FROM messages WHERE channel = ? AND num = ?", [object[]]@($key, $script:__hoNum)))
+            if ($row.Count -eq 0 -or [string]$row[0]["status"] -eq $script:__hoStatus) { return $false }
+            [void]$db.Execute("UPDATE messages SET status = ? WHERE channel = ? AND num = ?", [object[]]@($script:__hoStatus, $key, $script:__hoNum))
+            Write-HandoffIndexView $script:__hlDir $db
+            return $true
         }
-    }
+    } catch { return $false }
     return [bool]$result
 }
 
@@ -348,6 +346,11 @@ function Get-HandoffNextNumber([string]$ChannelDir) {
         }
     }
     foreach ($r in @(Read-HandoffIndex $ChannelDir)) { $n = [int]$r.Num; if ($n -gt $max) { $max = $n } }
+    # 오래된 메시지를 지워도 번호가 다시 쓰이지 않게, DB 가 기억하는 가장 큰 번호도 본다.
+    try {
+        $mx = Invoke-HandoffLedger $ChannelDir { param($db, $key) $q = @($db.Query("SELECT max_num FROM channel_state WHERE channel = ?", [object[]]@($key))); if ($q.Count -gt 0) { return [int]$q[0]["max_num"] } else { return 0 } }
+        if ([int]$mx -gt $max) { $max = [int]$mx }
+    } catch {}
     return ($max + 1)
 }
 
@@ -358,7 +361,6 @@ function Add-HandoffMessage([string]$ChannelDir, [string]$Dir, [string]$Title, [
     if ($Model -eq "(session)") { $Model = "" }          # 세션 이어가기 자리표시자는 모델명이 아니다
     $msgDir = Join-Path $ChannelDir "msg"
     New-Item -ItemType Directory -Force -Path $msgDir | Out-Null
-    $idx = Join-Path $ChannelDir "INDEX.md"
     $cleanTitle = ([string]$Title -replace '[\r\n|]+', ' ' -replace '\s{2,}', ' ').Trim()
     if (-not $cleanTitle) { $cleanTitle = "(제목 없음)" }
     # 잠금 블록은 자식 범위라 안에서 대입한 값은 밖에 남지 않는다. 블록의 출력(마지막 줄)으로 번호를 돌려받는다.
@@ -386,15 +388,12 @@ function Add-HandoffMessage([string]$ChannelDir, [string]$Dir, [string]$Title, [
                 $created = $false        # 같은 번호의 파일이 방금 생겼다: 다음 번호로
             } finally { if ($fs) { $fs.Dispose() } }
             if (-not $created) { continue }
-            $script:__hoRow = ("| {0} | {1} | {2} | {3} | {4} |" -f $numStr, $now, $Dir, $cleanTitle, $Status)
-            [void](Edit-HandoffIndexFile $idx {
-                param($lines)
-                while ($lines.Count -gt 0 -and [string]::IsNullOrWhiteSpace($lines[$lines.Count - 1])) { $lines.RemoveAt($lines.Count - 1) }
-                if ($lines.Count -eq 0) {
-                    foreach ($h in @("# INDEX — 메시지 원장", "| 번호 | 시각 | 방향 | 제목 | 상태 |", "|---|---|---|---|---|")) { $lines.Add($h) }
-                }
-                $lines.Add($script:__hoRow)
-                return $true
+            $script:__hoNum = $numStr; $script:__hoNow = $now; $script:__hoDir = $Dir; $script:__hoTitle = $cleanTitle; $script:__hoStatusNew = $Status
+            [void](Invoke-HandoffLedger $ChannelDir {
+                param($db, $key)
+                [void]$db.Execute("INSERT INTO messages (channel, num, ts, dir, title, status) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(channel, num) DO UPDATE SET ts=excluded.ts, dir=excluded.dir, title=excluded.title, status=excluded.status", [object[]]@($key, $script:__hoNum, $script:__hoNow, $script:__hoDir, $script:__hoTitle, $script:__hoStatusNew))
+                Set-HandoffMaxNum $db $key ([int]$script:__hoNum)
+                Write-HandoffIndexView $script:__hlDir $db
             })
             $made = $numStr
         }
@@ -405,8 +404,8 @@ function Add-HandoffMessage([string]$ChannelDir, [string]$Dir, [string]$Title, [
 }
 
 # --------------------------------------------------------------------------------------------
-# 자동 이어가기 상태 (AUTO.json = 상태, AUTO.off = 끄기 표시)
-#   채널 폴더 안에 둔다: 펌프(워처)·Stop 훅·뷰어가 같은 파일을 본다.
+# 자동 이어가기 상태 (핸드오프 DB 의 channel_state · dispatches · hook_blocks, AUTO.off = 끄기 표시)
+#   펌프(워처)·Stop 훅·뷰어가 같은 DB 를 본다. 예전 AUTO.json 은 처음 읽을 때 DB 로 옮긴다.
 # --------------------------------------------------------------------------------------------
 $script:HandoffAutoWindowMinutes = 60
 
@@ -423,49 +422,70 @@ function Test-HandoffAutoDisabled([string]$ChannelDir) {
     return $false
 }
 
-function Read-HandoffAutoState([string]$ChannelDir) {
-    $s = @{ dispatches = @(); halted = $false; halted_at = ""; halted_reason = ""; hook_blocks = @{} }
+# 예전 채널 폴더의 AUTO.json 이 있으면 DB 로 옮기고 파일은 AUTO.json.migrated 로 바꿔 둔다(한 번만).
+function Import-HandoffLegacyAutoState([string]$ChannelDir) {
     $p = Join-Path $ChannelDir "AUTO.json"
-    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return $s }
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return }
     try {
         $o = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+        $state = @{ dispatches = @(); halted = [bool]$o.halted; halted_at = [string]$o.halted_at; halted_reason = [string]$o.halted_reason; hook_blocks = @{} }
         if ($o.dispatches) {
-            $s.dispatches = @(@($o.dispatches) | Where-Object { $_ } | ForEach-Object {
-                @{ num = [string]$_.num; task_id = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done; tier = [string]$_.tier }
-            })
+            $state.dispatches = @(@($o.dispatches) | Where-Object { $_ } | ForEach-Object { @{ num = [string]$_.num; task_id = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done; tier = [string]$_.tier } })
         }
-        $s.halted = [bool]$o.halted
-        $s.halted_at = [string]$o.halted_at
-        $s.halted_reason = [string]$o.halted_reason
-        if ($o.hook_blocks) { foreach ($pr in $o.hook_blocks.PSObject.Properties) { $s.hook_blocks[[string]$pr.Name] = [int]$pr.Value } }
+        if ($o.hook_blocks) { foreach ($pr in $o.hook_blocks.PSObject.Properties) { $state.hook_blocks[[string]$pr.Name] = [int]$pr.Value } }
+        Write-HandoffAutoState $ChannelDir $state
+        Move-Item -LiteralPath $p -Destination ($p + ".migrated") -Force
+    } catch {}
+}
+
+function Read-HandoffAutoState([string]$ChannelDir) {
+    $s = @{ dispatches = @(); halted = $false; halted_at = ""; halted_reason = ""; hook_blocks = @{} }
+    try {
+        $script:__haDir = $ChannelDir
+        Import-HandoffLegacyAutoState $ChannelDir
+        $key = Get-HandoffChannelKey $ChannelDir
+        $db = Open-HandoffDb
+        try {
+            $st = @($db.Query("SELECT halted, halted_at, halted_reason FROM channel_state WHERE channel = ?", [object[]]@($key)))
+            if ($st.Count -gt 0) {
+                $s.halted = ([int64]$st[0]["halted"] -ne 0)
+                $s.halted_at = [string]$st[0]["halted_at"]
+                $s.halted_reason = [string]$st[0]["halted_reason"]
+            }
+            $s.dispatches = @(@($db.Query("SELECT num, task_id, at, done, tier FROM dispatches WHERE channel = ? ORDER BY at, rowid", [object[]]@($key))) | ForEach-Object {
+                @{ num = [string]$_["num"]; task_id = [string]$_["task_id"]; at = [string]$_["at"]; done = ([int64]$_["done"] -ne 0); tier = [string]$_["tier"] }
+            })
+            foreach ($r in @($db.Query("SELECT num, count FROM hook_blocks WHERE channel = ?", [object[]]@($key)))) { $s.hook_blocks[[string]$r["num"]] = [int]$r["count"] }
+        } finally { $db.Dispose() }
     } catch {}
     return $s
 }
 
 # 임시 파일에 쓴 뒤 바꿔 끼운다(읽는 쪽이 쓰다 만 파일을 보지 않게).
 function Write-HandoffAutoState([string]$ChannelDir, $State) {
-    $p = Join-Path $ChannelDir "AUTO.json"
-    $tmp = $p + ".tmp"
-    $disp = @(@($State.dispatches) | Where-Object { $_ } | ForEach-Object {
-        [ordered]@{ num = [string]$_.num; task_id = [string]$_.task_id; at = [string]$_.at; done = [bool]$_.done; tier = [string]$_.tier }
-    })
+    $key = Get-HandoffChannelKey $ChannelDir
+    $disp = @(@($State.dispatches) | Where-Object { $_ })
     # 오래된 기록은 버린다(최근 40건만)
     if ($disp.Count -gt 40) { $disp = @($disp[($disp.Count - 40)..($disp.Count - 1)]) }
-    $blocks = [ordered]@{}
-    foreach ($k in @($State.hook_blocks.Keys | Sort-Object)) { $blocks[[string]$k] = [int]$State.hook_blocks[$k] }
-    $obj = [ordered]@{
-        dispatches    = $disp
-        halted        = [bool]$State.halted
-        halted_at     = [string]$State.halted_at
-        halted_reason = [string]$State.halted_reason
-        hook_blocks   = $blocks
-    }
-    $json = $obj | ConvertTo-Json -Depth 6
-    [System.IO.File]::WriteAllText($tmp, $json, (New-Object System.Text.UTF8Encoding($false)))
-    Move-Item -LiteralPath $tmp -Destination $p -Force
+    $db = Open-HandoffDb
+    try {
+        $script:__hwDb = $db
+        [void](Invoke-AgyDbTransaction $db {
+            $d = $script:__hwDb
+            [void]$d.Execute("INSERT INTO channel_state (channel, halted, halted_at, halted_reason) VALUES (?, ?, ?, ?) ON CONFLICT(channel) DO UPDATE SET halted=excluded.halted, halted_at=excluded.halted_at, halted_reason=excluded.halted_reason", [object[]]@($key, [int][bool]$State.halted, [string]$State.halted_at, [string]$State.halted_reason))
+            [void]$d.Execute("DELETE FROM dispatches WHERE channel = ?", [object[]]@($key))
+            foreach ($x in $disp) {
+                [void]$d.Execute("INSERT OR REPLACE INTO dispatches (channel, task_id, num, at, done, tier) VALUES (?, ?, ?, ?, ?, ?)", [object[]]@($key, [string]$x.task_id, [string]$x.num, [string]$x.at, [int][bool]$x.done, [string]$x.tier))
+            }
+            [void]$d.Execute("DELETE FROM hook_blocks WHERE channel = ?", [object[]]@($key))
+            foreach ($k in @($State.hook_blocks.Keys)) {
+                [void]$d.Execute("INSERT OR REPLACE INTO hook_blocks (channel, num, count) VALUES (?, ?, ?)", [object[]]@($key, [string]$k, [int]$State.hook_blocks[$k]))
+            }
+        })
+    } finally { $db.Dispose() }
 }
 
-# AUTO.json 을 "읽고 고치고 쓰기" 한 번으로. $Edit 는 상태 해시테이블을 받아 그 자리에서 고친다(펌프·훅·뷰어가 서로 덮어쓰지 않게 채널 잠금 안에서).
+# 자동 이어가기 상태를 "읽고 고치고 쓰기" 한 번으로. $Edit 는 상태 해시테이블을 받아 그 자리에서 고친다(펌프·훅·뷰어가 서로 덮어쓰지 않게 채널 잠금 안에서).
 function Update-HandoffAutoState([string]$ChannelDir, [scriptblock]$Edit) {
     Invoke-HandoffLock $ChannelDir {
         $s = Read-HandoffAutoState $ChannelDir

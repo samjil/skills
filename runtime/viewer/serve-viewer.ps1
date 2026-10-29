@@ -30,14 +30,14 @@ $parentDir = Split-Path $PSScriptRoot -Parent
 if (-not $HandoffDir) {
     if ($env:AGENT_HANDOFF_ROOT) {
         $HandoffDir = $env:AGENT_HANDOFF_ROOT
-    } elseif (Test-Path (Join-Path $env:USERPROFILE ".samjil\handoff")) {
-        $HandoffDir = Join-Path $env:USERPROFILE ".samjil\handoff"
-    } elseif ($parentDir -and (Test-Path (Join-Path $parentDir "handoff"))) {
-        $HandoffDir = Join-Path $parentDir "handoff"
-    } elseif (Test-Path (Join-Path $PSScriptRoot "runtime\handoff")) {
-        $HandoffDir = Join-Path $PSScriptRoot "runtime\handoff"
     } else {
-        $HandoffDir = Join-Path $env:USERPROFILE ".samjil\handoff"
+        # 핸드오프 폴더: ~\.samjil\handoff(설치본) > 이 뷰어 옆의 handoff > 저장소의 runtime\handoff. 채널은 그 안의 channels\ 에 있다.
+        # 옛 배치(~\.samjil\handoff\<채널>)가 남아 있으면 channels\ 로 한 번 옮긴다.
+        $hhHome = @((Join-Path $env:USERPROFILE ".samjil\handoff"), $(if ($parentDir) { Join-Path $parentDir "handoff" }), (Join-Path $PSScriptRoot "runtime\handoff")) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+        if (-not $hhHome) { $hhHome = Join-Path $env:USERPROFILE ".samjil\handoff" }
+        $hhDb = @((Join-Path $hhHome "scripts\handoff-db.ps1"), (Join-Path $PSScriptRoot "..\handoff\scripts\handoff-db.ps1")) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+        if ($hhDb) { try { . $hhDb; [void](Move-HandoffLegacyLayout $hhHome) } catch {} }
+        $HandoffDir = Join-Path $hhHome "channels"
     }
 }
 
@@ -292,7 +292,7 @@ function Get-HandoffRoots {
 
     $cands = @(
 
-        (Join-Path $env:USERPROFILE ".samjil\handoff"),
+        (Join-Path $env:USERPROFILE ".samjil\handoff\channels"),
 
         (Join-Path $env:USERPROFILE ".samjil\samjil-handoff"),
 
@@ -849,7 +849,7 @@ try {
 
                     foreach ($d in $dirs) {
 
-                        if ($d.Name -eq "templates" -or $d.Name -eq "viewer" -or $d.Name -eq "scripts" -or $seenNames.ContainsKey($d.Name)) { continue }
+                        if ($d.Name -eq "templates" -or $d.Name -eq "viewer" -or $d.Name -eq "scripts" -or $d.Name -eq "data" -or $d.Name.StartsWith(".") -or $seenNames.ContainsKey($d.Name)) { continue }
 
                         $seenNames[$d.Name] = $true
 

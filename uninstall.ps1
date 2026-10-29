@@ -20,8 +20,8 @@ if ($MyInvocation.MyCommand.Path -and (-not $env:SAMJIL_UTF8_ACTIVE)) {
 #    2. 웹 원클릭 실행 (irm | iex):
 #       irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex
 #
-#  * 에이전트 간 대화 기록(~/.samjil/samjil-handoff/<프로젝트>/msg/)은 사용자의 소중한 자산이므로
-#    제거 시에도 절대 삭제되지 않고 영구 보존됩니다.
+#  * 에이전트 간 대화 기록(~/.samjil/handoff/channels/<프로젝트>/msg/)과 핸드오프 DB(~/.samjil/handoff/data)는
+#    제거 시에도 지우지 않습니다. 3개월이 지난 메시지는 워처가 켜질 때 알아서 지웁니다.
 #  * 위임하면서 생긴 파일(~/.samjil/delegate-agy/runtime 의 큐 · 기록 DB · 로그 · 스크린샷)도 지우지 않습니다.
 #    install.ps1 이 놓은 도구(scripts)만 지웁니다. 위임 작업 파일은 워처가 30일이 지난 것부터 알아서 지웁니다.
 # ==========================================================
@@ -277,7 +277,8 @@ if (Test-Path -LiteralPath $samjilDir) {
         if (Test-Path -LiteralPath $hd) {
             # 실제 대화 파일(.md)이 남아있는지 확인
             $handoffFiles = @(Get-ChildItem -LiteralPath $hd -Recurse -File -Filter "*.md" -ErrorAction SilentlyContinue)
-            if ($handoffFiles.Count -gt 0) {
+            $handoffDb = Join-Path $hd "data\handoff.db"
+            if ($handoffFiles.Count -gt 0 -or (Test-Path -LiteralPath $handoffDb)) {
                 # 실제 대화 기록이 있으면 100% 영구 보존!
                 Write-Host "[i] 에이전트 대화 기록($($handoffFiles.Count)건)이 존재하여 안전하게 보존합니다: $hd" -ForegroundColor Cyan
             } else {
