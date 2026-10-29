@@ -29,11 +29,11 @@ Claude 와 Antigravity(agy) 가 **파일로 주고받는 비동기 대화 채널
 **세션을 이어서 다시 열면(resume) 세션 ID 가 바뀐다.** 그래서 `세션 ID` 줄에는 값을 여러 개 적을 수 있다(`` `ID1`, `ID2` ``처럼 백틱으로 감싸 쉼표로 잇는다).
 이어 연 세션의 ID 를 모르면 그 세션에서 훅이 채널을 못 찾고 조용히 끝나므로, 새로 이어 연 뒤에는 그 세션의 ID(Claude 는 자기 기록 파일 이름의 UUID)를 이 줄에 덧붙인다.
 
-**채널 루트는 사용자 홈 디렉터리의 `~/.samjil/handoff/` 아래에 둔다.**
+**채널 루트는 사용자 홈 디렉터리의 `~/.samjil/handoff/channels/` 에 둔다.** (원장·자동 이어가기 상태 DB 는 그 옆 `~/.samjil/handoff/data/handoff.db`)
 이 스킬을 사용하는 환경에서 채널 루트는 다음 우선순위로 결정한다:
 1. 사용자가 프롬프트에서 명시한 경로
 2. 환경변수 `%AGENT_HANDOFF_ROOT%`
-3. 기본값: `~/.samjil/handoff/<작업 폴더 이름>/` (Windows: `C:\Users\<username>\.samjil\handoff\<작업 폴더 이름>\`, 기존 `~/.samjil/samjil-handoff/`도 자동 호환)
+3. 기본값: `~/.samjil/handoff/channels/<작업 폴더 이름>/` (Windows: `C:\Users\<username>\.samjil\handoff\channels\<작업 폴더 이름>\`. 옛 배치 `~/.samjil/handoff/<작업 폴더 이름>/` 는 처음 열 때 `channels\` 로 자동으로 옮긴다)
 
 **채널 기록은 PC 사이에 공유하지 않는다.** PC마다 자기 채널을 가진다. 공유하면 두 PC가
 같은 번호를 따고 원장이 서로를 덮어쓴다. **스킬(규약)만 공유한다.**
@@ -57,7 +57,7 @@ Claude 와 Antigravity(agy) 가 **파일로 주고받는 비동기 대화 채널
 ```
 <채널 폴더>/
   BRIEF.md                      프로젝트 고유 맥락. agy 는 읽기만 한다
-  INDEX.md                      한 줄 원장. 맨 아래 append 만
+  INDEX.md                      한 줄 원장 보기. 맨 아래 append 만(원본은 핸드오프 DB, 손으로 고쳐도 다음에 읽을 때 DB 에 반영된다)
   msg/0001-c2a-슬러그.md         메시지 한 건 = 파일 한 개
   msg/0002-a2c-슬러그.md
 ```
@@ -240,6 +240,10 @@ agy 는 이 메시지 한 통과 `BRIEF.md` 만 가지고 시작하고, 한 번 
 어긋나는 값을 쓸 때는 **어느 쪽이 맞는지 한 줄** 덧붙인다.
 
 ## 원장 (INDEX.md)
+
+원장의 원본은 핸드오프 DB(`~/.samjil/handoff/data/handoff.db`)다. `INDEX.md` 는 그 DB 에서 다시 만드는 보기이고, 손으로 줄을 덧붙이거나 상태 칸을 고쳐도
+(워처·훅·뷰어가 다음에 읽을 때) DB 에 흡수된다. 그래서 아래 규칙은 그대로 따르면 된다.
+**3개월**이 지난 메시지 파일과 원장 행은 워처가 켜질 때 지운다(번호는 다시 쓰지 않는다). 오래 두고 봐야 할 내용은 `BRIEF.md` 나 저장소 문서로 옮겨 둔다.
 
 맨 아래에 **한 줄만 덧붙인다.** 위쪽 줄은 고치지 않는다 — 상태 칸만 예외다.
 

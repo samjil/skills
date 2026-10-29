@@ -456,6 +456,15 @@ function Initialize-QaStore {
         Log "위임 작업 파일 정리 중 오류: $($_.Exception.Message)"
     }
     try {
+        # 핸드오프 채널의 오래된 메시지·원장(같은 보관 기간). 핸드오프 모듈이 올라와 있을 때만(워처 본체).
+        if (Get-Command Remove-HandoffOlderThan -CommandType Function -ErrorAction SilentlyContinue) {
+            $handoffRemoved = Remove-HandoffOlderThan $KeepMonths
+            if ($handoffRemoved -gt 0) { Log "보관 기간($KeepMonths 개월)이 지난 핸드오프 메시지 $handoffRemoved 건을 정리했습니다." }
+        }
+    } catch {
+        Log "핸드오프 정리 중 오류: $($_.Exception.Message)"
+    }
+    try {
         $removed = Remove-QaRecordsOlderThan $AgyDbPath $KeepMonths
         if ($removed -gt 0) { Log "보관 기간($KeepMonths 개월)이 지난 기록 $removed 건을 정리했습니다." }
     } catch {

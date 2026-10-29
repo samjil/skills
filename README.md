@@ -16,7 +16,7 @@ Claude Code 와 Antigravity(agy) 를 함께 쓰기 위한 스킬 모음과 부�
 | 부속 도구 | 위치(설치 후) | 하는 일 |
 |---|---|---|
 | 위임 워처 | `~/.samjil/delegate-agy/` | inbox 의 지시문을 agy CLI 로 처리하고 결과를 돌려줍니다. 폴더는 `scripts`(도구) · `runtime`(대기 큐 · 실행 상태 · 로그) · `data`(위임 기록 DB `delegate.db` · 처리한 지시와 답 · 스크린샷 · 캐시 · 백업)로 나뉩니다. |
-| 핸드오프 도구 | `~/.samjil/handoff/` | 채널 공용 함수, 채널 템플릿, Claude Stop 훅. 채널(대화 기록)도 여기에 쌓입니다. |
+| 핸드오프 도구 | `~/.samjil/handoff/` | `scripts`(공용 함수 · Claude Stop 훅) · `templates` · `data\handoff.db`(원장과 자동 이어가기 상태 DB) · `channels\<프로젝트>\`(협의 메시지 원문과 BRIEF.md). |
 | 웹 뷰어 | `~/.samjil/viewer/` | 위임·협의 기록과 워처 상태를 보는 대시보드(`http://127.0.0.1:8787`, 이 PC 에서만 접속). |
 
 ## 설치
@@ -104,7 +104,7 @@ EOF
 
 ## 핸드오프 (Claude ↔ agy 대화)
 
-채널은 저장소 폴더 이름과 같은 이름의 폴더(`~/.samjil/handoff/<채널>/`)이고, `INDEX.md`(원장), `BRIEF.md`(배경·저장소 경로), `msg/NNNN-<방향>-….md`(메시지)로 이루어집니다. 방향은 `c2a`(Claude→agy) / `a2c`(agy→Claude), 상태는 `보냄 → 읽음 → 처리됨`(받은 쪽이 직접 반영) 또는 `확인함`(검증만) 이고 `보류` 가 있습니다. 규약의 세부는 [`samjil-handoff/SKILL.md`](samjil-handoff/SKILL.md) 입니다.
+채널은 저장소 폴더 이름과 같은 이름의 폴더(`~/.samjil/handoff/channels/<채널>/`)이고, `BRIEF.md`(배경·저장소 경로), `msg/NNNN-<방향>-….md`(메시지 원문), `INDEX.md`(원장 보기)로 이루어집니다. 원장(번호·시각·방향·제목·상태)과 자동 이어가기 상태(위임 기록·멈춤·훅이 막은 횟수)는 `~/.samjil/handoff/data/handoff.db` 에 있고, `INDEX.md` 는 그 DB 에서 다시 만드는 보기입니다(줄을 손으로 고쳐도 다음에 읽을 때 DB 에 반영됩니다). 메시지와 원장·상태는 **3개월**이 지나면 워처가 켜질 때 지웁니다(번호는 다시 쓰지 않습니다). 방향은 `c2a`(Claude→agy) / `a2c`(agy→Claude), 상태는 `보냄 → 읽음 → 처리됨`(받은 쪽이 직접 반영) 또는 `확인함`(검증만) 이고 `보류` 가 있습니다. 규약의 세부는 [`samjil-handoff/SKILL.md`](samjil-handoff/SKILL.md) 입니다.
 
 회신은 사용자가 "메시지 확인해줘"라고 말하지 않아도 자동으로 이어집니다.
 
@@ -118,7 +118,7 @@ EOF
 - **한도·안전장치**: 한 대화 줄기의 자동 왕복은 최근 60분에 6회(`AGY_HANDOFF_MAX_ROUNDS`)이고, 넘으면 멈춰서 뷰어에 "사용자 확인 필요"로 뜹니다(**한도 초기화** 버튼). 한 채널에서는 한 번에 하나만 위임하고, 2시간(`AGY_HANDOFF_MAX_AGE_HOURS`)보다 오래된 `보냄` 메시지는 위임하지 않습니다(뷰어에 "자동 위임 안 됨"으로 표시). 채널 폴더에 `AUTO.off` 파일을 두거나 뷰어의 **끄기** 버튼으로 끌 수 있고, 워처가 꺼져 있으면 훅은 회신을 기다리지 않고 그렇게 알립니다.
 - 메시지를 쓰는 스크립트에는 `모델:` 을 직접 적지 말고 비워 두세요. Stop 훅이 대화 기록의 실제 모델과 노력 단계를 채웁니다.
 - `c2a` 머리말에 `위임모델: low|medium|high`(또는 `gemini-3.8-flash-<단계>`)를 적으면 자동 단계 선택 대신 그 단계로 위임합니다(AS-IS/TO-BE 가 정해진 구현 명세를 `medium` 으로 보낼 때).
-- 채널 루트는 `~/.samjil/handoff/`(환경변수 `AGENT_HANDOFF_ROOT` 로 바꿈)입니다.
+- 채널 루트는 `~/.samjil/handoff/channels/`(환경변수 `AGENT_HANDOFF_ROOT` 로 바꿈), DB 는 그 옆 `data/`(환경변수 `AGENT_HANDOFF_DATA`)입니다. 옛 배치(`~/.samjil/handoff/<채널>/`)는 처음 열 때 `channels/` 로 옮기고, 옛 `AUTO.json` 은 DB 로 옮깁니다.
 
 ## 웹 뷰어
 

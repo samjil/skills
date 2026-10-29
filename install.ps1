@@ -436,7 +436,7 @@ Write-Host "      (창·브라우저 탭 없이 백그라운드로 켜기: ~/.sa
 Write-Host "    - 위임 워처 시작/재시작 : ~/.samjil/delegate-agy/scripts/start-agy.ps1" -ForegroundColor Gray
 Write-Host "      (창 없이 시작하려면 -Hidden)" -ForegroundColor Gray
 Write-Host "    - 위임 워처 안전 중지   : ~/.samjil/delegate-agy/scripts/stop-agy.ps1" -ForegroundColor Gray
-Write-Host "    - 대화 저장소         : ~/.samjil/handoff/" -ForegroundColor Gray
+Write-Host "    - 대화 저장소         : ~/.samjil/handoff/channels/ (원장·자동 설정 DB: ~/.samjil/handoff/data/handoff.db)" -ForegroundColor Gray
 Write-Host "    - 핸드오프 자동 이어가기: agy 쪽은 워처가 자동 처리(채널에 AUTO.off 파일을 두면 끔). Claude 쪽은 .\install.ps1 -HandoffAutoHook 로 Stop 훅을 등록" -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
