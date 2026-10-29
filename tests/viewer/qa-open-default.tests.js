@@ -29,14 +29,18 @@ function assertEqual(name, expected, actual) {
   else { failed++; console.log("  FAIL  " + name + "  (기대: " + e + " / 실제: " + a + ")"); }
 }
 
-console.log("답변 구역의 기본 펼침");
-assertEqual("맨 위 카드의 답변은 펼친다(예전 규칙 그대로)", true, qaDefaultAnswerOpen({ isFirst: true, isAnswer: true, isProcessing: false }));
-assertEqual("  맨 위가 아닌 끝난 카드의 답변은 접는다", false, qaDefaultAnswerOpen({ isFirst: false, isAnswer: true, isProcessing: false }));
-assertEqual("지금 실행 중인 카드는 맨 위가 아니어도 답변을 펼친다(두 작업이 같이 돌면 둘 다 진행 화면)", true, qaDefaultAnswerOpen({ isFirst: false, isAnswer: true, isProcessing: true }));
-assertEqual("  실행 중이고 맨 위여도 펼친다", true, qaDefaultAnswerOpen({ isFirst: true, isAnswer: true, isProcessing: true }));
-assertEqual("질문 구역은 실행 중이어도 접는다", false, qaDefaultAnswerOpen({ isFirst: false, isAnswer: false, isProcessing: true }));
-assertEqual("  맨 위 카드의 질문도 접는다(예전 규칙 그대로)", false, qaDefaultAnswerOpen({ isFirst: true, isAnswer: false, isProcessing: false }));
-assertEqual("값이 빠져도 오류 없이 접는다", false, qaDefaultAnswerOpen({}));
+console.log("답변 구역의 기본 펼침(접속 직후에는 모두 접는다)");
+var cases = [
+  ["맨 위 카드의 답변도 접는다", { isFirst: true, isAnswer: true, isProcessing: false }],
+  ["  맨 위가 아닌 끝난 카드의 답변도 접는다", { isFirst: false, isAnswer: true, isProcessing: false }],
+  ["  지금 실행 중인 카드의 답변도 접는다", { isFirst: false, isAnswer: true, isProcessing: true }],
+  ["  실행 중이고 맨 위여도 접는다", { isFirst: true, isAnswer: true, isProcessing: true }],
+  ["질문 구역은 실행 중이어도 접는다", { isFirst: false, isAnswer: false, isProcessing: true }],
+  ["  맨 위 카드의 질문도 접는다", { isFirst: true, isAnswer: false, isProcessing: false }],
+  ["값이 빠져도 오류 없이 접는다", {}]
+];
+cases.forEach(function (c) { assertEqual(c[0], false, qaDefaultAnswerOpen(c[1])); });
+assertEqual("인자가 아예 없어도 접는다", false, qaDefaultAnswerOpen());
 
 console.log("");
 console.log("통과 " + passed + " / 실패 " + failed);
