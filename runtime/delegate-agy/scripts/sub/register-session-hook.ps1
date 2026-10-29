@@ -32,7 +32,7 @@ if ($existed) {
 }
 if (-not $settings) { $settings = [pscustomobject]@{} }
 
-function Get-OurEntries($s) {
+function Get-SessionHookEntries($s) {
     $found = @()
     if ($s.PSObject.Properties["hooks"] -and $s.hooks.PSObject.Properties["SessionStart"]) {
         foreach ($g in @($s.hooks.SessionStart)) {
@@ -45,7 +45,7 @@ function Get-OurEntries($s) {
     return @($found)
 }
 
-$ours = @(Get-OurEntries $settings)
+$ours = @(Get-SessionHookEntries $settings)
 if ($Check) { if ($ours.Count -gt 0) { "PRESENT" } else { "ABSENT" }; exit 0 }
 
 $result = ""
