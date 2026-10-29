@@ -13,9 +13,9 @@
 # "수동 정지 존중 -> 죽은 것 같으면 20초 뒤 한 번 더 확인 -> 창 없이 재시작 -> watchdog.log
 # 기록"을 하기 때문입니다. 뷰어는 60초마다 점검해서 죽어 보일 때만 그것을 띄웁니다.
 
-# 뷰어가 쓰는 DataDir(<runtime>\logs\data)에서 런타임 폴더(<runtime>)를 구합니다.
+# 위임 데이터 폴더(<위임>\data) 옆의 런타임 폴더(<위임>\runtime)를 구합니다.
 function Get-WatcherRuntimeDir([string]$DataDir) {
-    return (Split-Path (Split-Path $DataDir -Parent) -Parent)
+    return (Join-Path (Split-Path $DataDir -Parent) "runtime")
 }
 
 # 기본 프로세스 조회: 명령줄에 watch-agy.ps1 이 들어간 powershell.exe 목록.
@@ -37,8 +37,7 @@ function Test-WatcherAlive {
         [int]$StaleSeconds = 300,
         [scriptblock]$GetWatcherProcesses = $null
     )
-    $logsDir  = Join-Path $RuntimeDir "logs"
-    $lockFile = Join-Path $logsDir ("watcher_{0}.lock" -f $ComputerName)
+    $lockFile = Join-Path $RuntimeDir ("watcher_{0}.lock" -f $ComputerName)
 
     $lockItem = Get-Item -LiteralPath $lockFile -ErrorAction SilentlyContinue
     if ($lockItem) {
@@ -54,7 +53,7 @@ function Test-WatcherAlive {
         }
     }
 
-    $hbFile = Join-Path (Join-Path $logsDir "heartbeat") ("hb_{0}.txt" -f $ComputerName)
+    $hbFile = Join-Path (Join-Path $RuntimeDir "heartbeat") ("hb_{0}.txt" -f $ComputerName)
     $hb = Get-Item -LiteralPath $hbFile -ErrorAction SilentlyContinue
     if ($hb -and (((Get-Date) - $hb.LastWriteTime).TotalSeconds -le $StaleSeconds)) {
         # @(if ...) 로 감쌉니다: if 식은 원소 하나짜리 배열을 풀어 버려서 .Count 가 비게 됩니다.
@@ -66,7 +65,7 @@ function Test-WatcherAlive {
 
 # 사용자가 stop-agy 로 일부러 끈 상태인가.
 function Test-WatcherManualStop([string]$RuntimeDir) {
-    return (Test-Path -LiteralPath (Join-Path (Join-Path $RuntimeDir "logs") "manual_stop.flag"))
+    return (Test-Path -LiteralPath (Join-Path $RuntimeDir "manual_stop.flag"))
 }
 
 # 이번 점검에서 무엇을 할지. 반환: 'ok' | 'manual-stop' | 'no-script' | 'ensure-running' | 'restart'
@@ -180,7 +179,7 @@ function Invoke-WatcherStartRequest {
     if (($null -ne $State.EnsureProcess) -and (-not $State.EnsureProcess.HasExited)) {
         return @{ Result = "busy"; Message = "이미 켜는 중입니다." }
     }
-    $flag = Join-Path (Join-Path $State.RuntimeDir "logs") "manual_stop.flag"
+    $flag = Join-Path $State.RuntimeDir "manual_stop.flag"
     if (Test-Path -LiteralPath $flag) { Remove-Item -LiteralPath $flag -Force -ErrorAction SilentlyContinue }
     try {
         $State.EnsureProcess = & $Launcher $State.EnsureScript $State.RuntimeDir 0

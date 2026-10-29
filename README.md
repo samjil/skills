@@ -15,7 +15,7 @@ Claude Code 와 Antigravity(agy) 를 함께 쓰기 위한 스킬 모음과 부�
 
 | 부속 도구 | 위치(설치 후) | 하는 일 |
 |---|---|---|
-| 위임 워처 | `~/.samjil/delegate-agy/` | inbox 의 지시문을 agy CLI 로 처리하고 결과를 outbox 에 돌려줍니다. 위임 기록은 SQLite(`agy.db`)에 남깁니다. |
+| 위임 워처 | `~/.samjil/delegate-agy/` | inbox 의 지시문을 agy CLI 로 처리하고 결과를 돌려줍니다. 폴더는 `scripts`(도구) · `runtime`(대기 큐 · 실행 상태 · 로그) · `data`(위임 기록 DB `delegate.db` · 처리한 지시와 답 · 스크린샷 · 캐시 · 백업)로 나뉩니다. |
 | 핸드오프 도구 | `~/.samjil/handoff/` | 채널 공용 함수, 채널 템플릿, Claude Stop 훅. 채널(대화 기록)도 여기에 쌓입니다. |
 | 웹 뷰어 | `~/.samjil/viewer/` | 위임·협의 기록과 워처 상태를 보는 대시보드(`http://127.0.0.1:8787`, 이 PC 에서만 접속). |
 
@@ -40,6 +40,7 @@ npx skills add samjil/skills -g --skill samjil-handoff
 
 설치 스크립트는 여러 번 돌려도 같은 결과이며, 예전 이름의 스킬·플러그인 등록은 정리합니다. 옵션:
 
+- **세션 시작 훅(자동)** — `install.ps1` 은 `~/.claude/settings.json` 에 SessionStart 훅을 등록합니다. 새 Claude 세션이 열릴 때 agy 워처를 창 없이 켜고(`stop-agy` 로 일부러 끈 상태면 켜지 않음), `samjil-delegate-agy` 스킬을 먼저 따르라는 문맥을 넣습니다. 바꾸기 전에 `settings.json.bak-*` 로 백업하고 `uninstall.ps1` 이 이 항목만 뺍니다.
 - `.\install.ps1 -HandoffAutoHook` — Claude 쪽 핸드오프 자동 이어가기 Stop 훅을 `~/.claude/settings.json` 에 등록합니다(옵트인). 바꾸기 전에 `settings.json.bak-*` 로 백업하고 다른 설정·훅은 건드리지 않으며, JSON 이 깨져 있으면 손대지 않습니다. `irm | iex` 로 받을 때는 `$env:SAMJIL_HANDOFF_AUTO_HOOK = "1"` 을 먼저 지정합니다.
 - `.\install.ps1 -TargetDir <경로>` — 설치 위치 지정.
 
@@ -50,7 +51,7 @@ irm https://raw.githubusercontent.com/samjil/skills/main/uninstall.ps1 | iex   #
 .\uninstall.ps1                                                                  # 로컬 (= .\install.ps1 -Uninstall)
 ```
 
-스킬·정션·Antigravity 등록·Stop 훅·뷰어와 실행 도구를 지웁니다. `~/.samjil/handoff/` 의 대화 기록과 위임 기록 DB(`agy.db`)는 지우지 않습니다.
+스킬·정션·Antigravity 등록·Stop 훅·뷰어와 실행 도구를 지웁니다. `~/.samjil/handoff/` 의 대화 기록과, 위임하면서 생긴 파일(`~/.samjil/delegate-agy/` 의 `runtime` · `data`: 큐 · 위임 기록 DB `delegate.db` · 로그 · 스크린샷)은 지우지 않습니다. `data` 의 위임 정보(DB 행 포함)는 워처가 켜질 때 3개월이 지난 것부터 알아서 지웁니다.
 
 ## 위임 워처
 
@@ -99,7 +100,7 @@ EOF
 - **표준 규칙 자동 추가**: `@cwd` 작업에는 `DO NOT COMMIT` · 포그라운드 실행 · 필요한 파일만 수정 · 한글 답변 규칙을 프롬프트 끝에 붙입니다(이미 있는 규칙은 건너뜀, 위임 기록의 질문에는 원본만 남음).
 - **git 안전장치**: `@cwd` 가 git 저장소면 agy 호출 전후의 HEAD·브랜치·stash 를 비교해 바뀌었으면 응답 맨 위에 경고와 복구 명령을 붙입니다(자동으로 되돌리지는 않음). 커밋하지 않은 변경은 `refs/samjil/snapshots/<작업 ID>` 에 보관합니다(최근 20개, 추적 파일만). `AGY_GIT_GUARD=off` 로 끕니다.
 - **모델 단계 자동 선택**: 모델·`@session` 을 지정하지 않은 위임과 핸드오프 메시지는 요청 내용(키워드·길이·폴더 접근)으로 `low`/`medium`/`high` 를 규칙 기반으로 고릅니다. 분명히 쉬운 일만 낮추고 애매하면 `high` 이며, 폴더의 작은 수정(고치는 말뿐·500자 이하·파일 1개 이하)만 `medium` 입니다. 이유는 `watcher.log` 의 `모델 자동 선택:` 줄에 남고, `AGY_AUTO_MODEL=off` 로 끕니다.
-- **위임 기록**: 사용량·질문·답·과정(도구 호출 목록)·agy 세션은 `~/.samjil/delegate-agy/runtime/logs/agy.db` 하나에 쌓입니다(Windows 의 `winsqlite3.dll` 을 쓰므로 설치할 것이 없고, 여러 프로세스가 동시에 써도 됩니다). 로그는 `runtime/logs/watcher.log` 입니다.
+- **위임 기록**: 사용량·질문·답·과정(도구 호출 목록)·agy 세션은 `~/.samjil/delegate-agy/data/delegate.db` 하나에 쌓입니다(Windows 의 `winsqlite3.dll` 을 쓰므로 설치할 것이 없고, 여러 프로세스가 동시에 써도 됩니다). 로그(`watcher.log` 등 진짜 런타임 로그만)는 `runtime/logs/` 에 있습니다. 하트비트·잠금·정지 표시는 `runtime/` 바로 아래에 있습니다.
 
 ## 핸드오프 (Claude ↔ agy 대화)
 

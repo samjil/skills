@@ -38,6 +38,8 @@ function Stop-WithCode([int]$Code, [string]$Message) {
 }
 
 # 런타임 폴더: -RuntimeDir > 환경변수 AGY_DELEGATE_RUNTIME > 이 스크립트 옆(설치 위치 ~/.samjil/delegate-agy/scripts -> ../runtime) > 예전 설치 이름들
+. (Join-Path $PSScriptRoot "sub\agy-layout.ps1")
+
 function Resolve-RuntimeDirForSubmit([string]$Given) {
     $cands = @()
     if ($Given) { $cands += $Given }
@@ -73,7 +75,7 @@ function Test-TaskDone([string]$Id) {
 
 # 아직 끝나지 않은 작업의 상태를 한 줄로: 대기열 / 실행 중(경과·모델·마지막 단계) / 접수 기록 없음
 function Get-PendingStatus([string]$Id) {
-    $runningDir = Join-Path $script:RuntimeDirResolved "logs\running"
+    $runningDir = (Get-AgyLayout $script:RuntimeDirResolved).RunningDir
     $claimPath = Join-Path $runningDir "$Id.json"
     $parts = @()
     $claim = $null
@@ -107,7 +109,7 @@ function Get-PendingStatus([string]$Id) {
     if ($queued.Count -gt 0) {
         $running = @(Get-ChildItem -LiteralPath $runningDir -Filter "*.json" -File -ErrorAction SilentlyContinue).Count
         $text = "대기열에서 기다리는 중(지금 도는 작업 ${running}개)"
-        $hb = @(Get-ChildItem -LiteralPath (Join-Path $script:RuntimeDirResolved "logs\heartbeat") -Filter "hb_*.txt" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+        $hb = @(Get-ChildItem -LiteralPath (Get-AgyLayout $script:RuntimeDirResolved).HeartbeatDir -Filter "hb_*.txt" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
         if ($hb.Count -eq 0 -or ((Get-Date) - $hb[0].LastWriteTime).TotalMinutes -gt 5) { $text += " · 워처 하트비트가 없습니다: 워처가 꺼져 있는지 확인하세요" }
         return $text
     }
@@ -116,7 +118,7 @@ function Get-PendingStatus([string]$Id) {
 
 $script:RuntimeDirResolved = Resolve-RuntimeDirForSubmit $RuntimeDir
 if (-not $script:RuntimeDirResolved) { Stop-WithCode 3 "위임 런타임 폴더(~/.samjil/delegate-agy/runtime)를 찾지 못했습니다. install.ps1 로 설치돼 있는지 확인하세요." }
-$script:OutboxDir = Join-Path $script:RuntimeDirResolved "outbox"
+$script:OutboxDir = (Get-AgyLayout $script:RuntimeDirResolved).OutboxDir
 $inboxDir = Join-Path $script:RuntimeDirResolved "inbox"
 
 # 기다릴 작업 ID 들

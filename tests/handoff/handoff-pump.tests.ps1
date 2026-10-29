@@ -34,7 +34,7 @@ $env:AGY_HANDOFF_MAX_ROUNDS = "50"      # 아래 본 시험은 한도에 걸리�
 Remove-Item Env:\AGY_HANDOFF_MAX_AGE_HOURS -ErrorAction SilentlyContinue
 
 $env:AGY_DB_CACHE_DIR = Join-Path $work "cache"
-$ctx = @{ InboxDir = (Join-Path $rt "inbox"); OutboxDir = (Join-Path $rt "outbox"); DbPath = (Join-Path $rt "logs\agy.db") }
+$ctx = @{ InboxDir = (Join-Path $rt "inbox"); OutboxDir = (Join-Path $rt "outbox"); DbPath = (Join-Path $rt "data\delegate.db") }
 $script:LogLines = @()
 function Log($m) { $script:LogLines += $m }
 

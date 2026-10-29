@@ -106,8 +106,8 @@ if ($allChanged.Count -gt 0) { Write-Host ("복사했습니다: {0}개" -f $allC
 
 # --- 재시작이 필요한가 ---
 # 워처는 켜질 때 handoff-lib.ps1(handoff 스크립트)도 읽어 올리므로 그 파일이 바뀌어도 워처를 다시 켜야 한다(훅·등록기만 바뀐 것은 해당 없음)
-# submit-task.ps1(Claude 가 위임할 때 부르는 도구)은 워처가 읽지 않으므로 바뀌어도 워처 재시작 대상이 아니다
-$watcherChanged = @($allChanged | Where-Object { ($_.Group -eq "delegate-agy 스크립트" -and $_.Rel -like "*.ps1" -and $_.Rel -ne "submit-task.ps1") -or ($_.Group -eq "handoff 스크립트" -and $_.Rel -eq "handoff-lib.ps1") })
+# submit-task.ps1(Claude 가 위임할 때 부르는 도구)과 세션 시작 훅·등록기는 워처가 읽지 않으므로 바뀌어도 워처 재시작 대상이 아니다
+$watcherChanged = @($allChanged | Where-Object { ($_.Group -eq "delegate-agy 스크립트" -and $_.Rel -like "*.ps1" -and $_.Rel -ne "submit-task.ps1" -and @("sub\session-start-hook.ps1", "sub\register-session-hook.ps1") -notcontains $_.Rel) -or ($_.Group -eq "handoff 스크립트" -and $_.Rel -eq "handoff-lib.ps1") })
 $viewerMain = @("serve-viewer.ps1", "claude-sessions.ps1", "watcher-health.ps1")
 # 뷰어는 켜질 때 handoff-lib.ps1(메시지 머리말의 모델·자동 이어가기 상태를 읽는 함수)도 불러 오므로 그 파일이 바뀌어도 다시 켜야 한다
 # 뷰어는 위임 기록 API 를 위해 agy-db.ps1(delegate-agy\scripts\sub)도 불러 오므로 그 파일이 바뀌어도 다시 켜야 한다
@@ -139,7 +139,7 @@ if ($watcherChanged.Count -gt 0) {
     } elseif (-not $RestartWatcher) {
         Write-Host ("워처 스크립트가 바뀌었는데 워처(PID {0})는 옛 코드로 돌고 있습니다. 새 작업자와 옛 워처가 섞이지 않게 다시 켜야 합니다: -RestartWatcher" -f $wpid) -ForegroundColor Yellow
     } else {
-        $running = @(Get-ChildItem (Join-Path $InstallRoot "delegate-agy\runtime\logs\running") -Filter "*.json" -ErrorAction SilentlyContinue)
+        $running = @(Get-ChildItem (Join-Path $InstallRoot "delegate-agy\runtime\running") -Filter "*.json" -ErrorAction SilentlyContinue)
         if ($running.Count -gt 0) {
             Write-Host ("돌고 있는 작업이 {0}건이라 워처를 다시 켜지 않았습니다. 끝난 뒤 -RestartWatcher 로 다시 실행하세요." -f $running.Count) -ForegroundColor Yellow
         } else {

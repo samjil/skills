@@ -2,14 +2,14 @@
 # watch-agy.ps1과 log-qa.ps1이 함께 쓰는 헬퍼 모음입니다(위임 기록 틀, 세션 연속성, 폴더 목록 규칙).
 # dot-source해서 씁니다: `. (Join-Path $PSScriptRoot "common.ps1")`
 #
-# 기록과 세션은 SQLite(runtime\logs\agy.db)에 있고, 접근은 같은 폴더의 agy-db.ps1 이 맡습니다. 이 파일은 그 위에 도메인 규칙만 얹습니다.
+# 기록과 세션은 SQLite(delegate-agy\data\delegate.db)에 있고, 접근은 같은 폴더의 agy-db.ps1 이 맡습니다. 이 파일은 그 위에 도메인 규칙만 얹습니다.
 #
 # 왜 따로 뺐는가: 예전에 이 함수들이 두 파일에 복사돼 있었는데, 한쪽만 고치고 다른 쪽을
 # 놓치면 같은 버그(예: ETS 속성이 붙은 문자열을 그대로 직렬화해 레코드가 수십 MB로
 # 부풀던 문제)가 조용히 재발할 수 있었습니다. 한 곳에서만 관리하도록 통합했습니다.
 #
 # 이 파일을 dot-source하는 스크립트는 아래 변수를 먼저 정의해 둬야 합니다:
-#   $AgyDbPath  - runtime\logs\agy.db 경로
+#   $AgyDbPath  - data\delegate.db 경로
 
 # DB 접근 모듈(agy-db.ps1). 이 파일과 같은 폴더에 있다.
 $agyDbModule = Join-Path $PSScriptRoot "agy-db.ps1"

@@ -60,15 +60,17 @@ if (-not $RuntimeDir) {
 }
 New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
 
-$LogsDir        = Join-Path $RuntimeDir "logs"
-$HeartbeatDir   = Join-Path $LogsDir "heartbeat"
-$ManualStopFlag = Join-Path $LogsDir "manual_stop.flag"
+. (Join-Path $PSScriptRoot "agy-layout.ps1")
+$Layout         = Get-AgyLayout $RuntimeDir
+$LogsDir        = $Layout.LogsDir
+$HeartbeatDir   = $Layout.HeartbeatDir
+$ManualStopFlag = $Layout.ManualStopFlag
 $WatcherScript  = Join-Path $PSScriptRoot "watch-agy.ps1"
 if (-not (Test-Path $WatcherScript)) {
     $WatcherScript = Join-Path (Split-Path $PSScriptRoot -Parent) "watch-agy.ps1"
 }
 $WatchdogLog    = Join-Path $LogsDir "watchdog.log"
-$LockFile       = Join-Path $LogsDir ("watcher_{0}.lock" -f $env:COMPUTERNAME)
+$LockFile       = $Layout.LockFile
 
 function Write-WatchdogLog($msg) {
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"

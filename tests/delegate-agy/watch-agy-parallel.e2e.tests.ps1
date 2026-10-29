@@ -21,7 +21,8 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ("watch-agy-parallel-e2e-" + [Guid]
 $rt = Join-Path $work "runtime"
 $fakeBin = Join-Path $work "bin"
 $timesDir = Join-Path $work "times"
-foreach ($d in @("inbox", "outbox", "processed", "logs", "logs\data", "logs\heartbeat")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("inbox", "logs", "heartbeat", "running")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("data\tasks\outbox", "data\tasks\processed", "data\cache")) { New-Item -ItemType Directory -Force -Path (Join-Path $work $d) | Out-Null }
 New-Item -ItemType Directory -Force -Path $fakeBin, $timesDir, (Join-Path $work "agyhome\conversations") | Out-Null
 $dirA = Join-Path $work "space-a"; $dirB = Join-Path $work "space-b"
 New-Item -ItemType Directory -Force -Path $dirA, $dirB | Out-Null
@@ -55,7 +56,7 @@ function Send-Task([string]$name, [string]$tagSleep, [string]$session = "", [str
 function Wait-Done([string[]]$names, [int]$seconds = 90) {
     $until = (Get-Date).AddSeconds($seconds)
     while ((Get-Date) -lt $until) {
-        $left = @($names | Where-Object { -not (Test-Path (Join-Path $rt "outbox\$_.response.md")) -and -not (Test-Path (Join-Path $rt "processed\$_.md")) })
+        $left = @($names | Where-Object { -not (Test-Path (Join-Path $work "data\tasks\outbox\$_.response.md")) -and -not (Test-Path (Join-Path $work "data\tasks\processed\$_.md")) })
         if ($left.Count -eq 0) { return $true }
         Start-Sleep -Milliseconds 500
     }
@@ -64,7 +65,7 @@ function Wait-Done([string[]]$names, [int]$seconds = 90) {
 function Wait-ClaimGone([string[]]$names, [int]$seconds = 30) {
     $until = (Get-Date).AddSeconds($seconds)
     while ((Get-Date) -lt $until) {
-        $left = @($names | Where-Object { Test-Path (Join-Path $rt "logs\running\$_.json") })
+        $left = @($names | Where-Object { Test-Path (Join-Path $rt "running\$_.json") })
         if ($left.Count -eq 0) { return }
         Start-Sleep -Milliseconds 300
     }
@@ -92,18 +93,18 @@ function Get-MaxConcurrent([string[]]$tags) {
 $proc = $null
 try {
     $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$watcher`"", "-RuntimeDir", "`"$rt`"", "-MaxParallel", "3") -WindowStyle Hidden -PassThru
-    $lock = Join-Path $rt ("logs\watcher_{0}.lock" -f $env:COMPUTERNAME)
+    $lock = Join-Path $rt ("watcher_{0}.lock" -f $env:COMPUTERNAME)
     $until = (Get-Date).AddSeconds(30)
     while ((Get-Date) -lt $until -and -not (Test-Path $lock)) { Start-Sleep -Milliseconds 300 }
     Assert-Equal "워처가 떴다(잠금 파일)" $true (Test-Path $lock)
 
     Write-Host "세션이 없는 작업끼리는 함께 돈다"
     Send-Task "a1" "SLEEP:6"; Send-Task "a2" "SLEEP:6"
-    # 도는 동안 표시 파일(logs\running\<작업 ID>.json)이 있고 PID 가 살아 있다
+    # 도는 동안 표시 파일(running\<작업 ID>.json)이 있고 PID 가 살아 있다
     $claim = $null
     $until = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $until -and $null -eq $claim) {
-        $cf = Join-Path $rt "logs\running\a1.json"
+        $cf = Join-Path $rt "running\a1.json"
         if ((Test-Path $cf) -and $null -ne (Get-Time "a1" "start")) { try { $claim = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($cf, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF)) } catch {} }
         Start-Sleep -Milliseconds 300
     }
@@ -113,8 +114,8 @@ try {
     Assert-Equal "  두 작업의 실행 시간이 겹친다(동시에 돌았다)" $true (Test-Overlap "a1" "a2")
     # 답변 파일이 먼저 생기고 기록 갱신 뒤에 표시 파일이 지워지므로 잠깐 기다린다
     Wait-ClaimGone @("a1", "a2")
-    Assert-Equal "  끝나면 표시 파일이 사라진다" $false ((Test-Path (Join-Path $rt "logs\running\a1.json")) -or (Test-Path (Join-Path $rt "logs\running\a2.json")))
-    Assert-Equal "  답변 파일에 각자의 답이 들어 있다" "done a1|done a2" ((Get-Content -Raw -Encoding UTF8 (Join-Path $rt "outbox\a1.response.md")).Trim([char]0xFEFF, " ", "`r", "`n") + "|" + (Get-Content -Raw -Encoding UTF8 (Join-Path $rt "outbox\a2.response.md")).Trim([char]0xFEFF, " ", "`r", "`n"))
+    Assert-Equal "  끝나면 표시 파일이 사라진다" $false ((Test-Path (Join-Path $rt "running\a1.json")) -or (Test-Path (Join-Path $rt "running\a2.json")))
+    Assert-Equal "  답변 파일에 각자의 답이 들어 있다" "done a1|done a2" ((Get-Content -Raw -Encoding UTF8 (Join-Path $work "data\tasks\outbox\a1.response.md")).Trim([char]0xFEFF, " ", "`r", "`n") + "|" + (Get-Content -Raw -Encoding UTF8 (Join-Path $work "data\tasks\outbox\a2.response.md")).Trim([char]0xFEFF, " ", "`r", "`n"))
 
     Write-Host "같은 세션이고 폴더도 같으면 차례로 한다"
     Send-Task "b1" "SLEEP:5" "sess-b" $dirA; Start-Sleep -Milliseconds 1200; Send-Task "b2" "SLEEP:2" "sess-b" $dirA   # 파일 수정 시각이 달라야 "먼저 보낸 것"이 분명하다
@@ -148,7 +149,7 @@ try {
     Send-Task "n1" "SLEEP:1 NOISE"
     Assert-Equal "  처리된다" $true (Wait-Done @("n1"))
     Wait-ClaimGone @("n1")
-    $respN = Join-Path $rt "outbox\n1.response.md"; $errN = Join-Path $rt "outbox\n1.error.log"
+    $respN = Join-Path $work "data\tasks\outbox\n1.response.md"; $errN = Join-Path $work "data\tasks\outbox\n1.error.log"
     Assert-Equal "  응답 파일이 있다" $true (Test-Path $respN)
     Assert-Equal "  error.log 에 agy 의 표준오류가 담긴다" $true ((Test-Path $errN) -and ([System.IO.File]::ReadAllText($errN) -like "*stderr-noise-from-agy*"))
     Assert-Equal "  응답 파일이 error.log 보다 먼저(또는 같은 때) 써진다" $true ((Test-Path $respN) -and (Test-Path $errN) -and ((Get-Item $respN).LastWriteTimeUtc -le (Get-Item $errN).LastWriteTimeUtc))
@@ -161,7 +162,7 @@ try {
     $promptR1 = if (Test-Path (Join-Path $timesDir "r1.prompt")) { [System.IO.File]::ReadAllText((Join-Path $timesDir "r1.prompt")) } else { "" }
     Assert-Equal "  agy 가 받은 질문에 언어 규칙 문단이 없다" $false (($promptR1 -like "*언어 규칙*") -or ($promptR1 -like "*(thinking)*"))
     Assert-Equal "  본문(TAG 줄)은 그대로 전달된다" $true ($promptR1 -like "*TAG:r1*")
-    $processedR1 = Join-Path $rt "processed\r1.md"
+    $processedR1 = Join-Path $work "data\tasks\processed\r1.md"
     Assert-Equal "  처리된 지시파일에도 문단이 없다(뷰어에 안 보인다)" $false ((Test-Path $processedR1) -and ([System.IO.File]::ReadAllText($processedR1) -like "*언어 규칙*"))
     Assert-Equal "  @cwd 줄은 그대로 남는다" $true ((Test-Path $processedR1) -and ([System.IO.File]::ReadAllText($processedR1) -like "*@cwd:*"))
 
@@ -172,12 +173,12 @@ try {
     Assert-Equal "  한꺼번에 도는 최대 수가 3 이다" 3 (Get-MaxConcurrent $tags)
 
     Write-Host "작업자가 끝내지 못하고 사라지면 실패로 남기고 다시 시도하지 않는다"
-    $deadClaim = Join-Path $rt "logs\running\g1.json"
+    $deadClaim = Join-Path $rt "running\g1.json"
     New-Item -ItemType Directory -Force -Path (Split-Path $deadClaim) | Out-Null
     [System.IO.File]::WriteAllText($deadClaim, '{"task_id":"g1","pid":999999,"session":"","cwds":[],"started":"2026-10-14 00:00:00"}', (New-Object System.Text.UTF8Encoding($false)))
     Send-Task "g1" "SLEEP:1"
     Assert-Equal "  실패 처리되어 processed 로 옮겨진다" $true (Wait-Done @("g1") 40)
-    $g1 = Join-Path $rt "outbox\g1.response.md"
+    $g1 = Join-Path $work "data\tasks\outbox\g1.response.md"
     Assert-Equal "  오류 답변이 남는다" $true ((Test-Path $g1) -and ((Get-Content -Raw -Encoding UTF8 $g1) -like "*사라졌습니다*"))
     Assert-Equal "  agy 는 부르지 않았다" $null (Get-Time "g1" "start")
     Wait-ClaimGone @("g1")
@@ -187,7 +188,7 @@ try {
     Send-Task "h1" "SLEEP:8"
     $until = (Get-Date).AddSeconds(30)
     while ((Get-Date) -lt $until -and $null -eq (Get-Time "h1" "start")) { Start-Sleep -Milliseconds 300 }
-    "stop" | Set-Content -Path (Join-Path $rt "logs\stop.signal") -Encoding UTF8
+    "stop" | Set-Content -Path (Join-Path $rt "stop.signal") -Encoding UTF8
     Start-Sleep -Seconds 3
     Assert-Equal "  작업이 도는 동안에는 워처가 살아 있다" $false $proc.HasExited
     Assert-Equal "  작업이 끝나고" $true (Wait-Done @("h1") 40)

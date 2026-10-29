@@ -1,4 +1,4 @@
-﻿# 위임 기록 DB(runtime\logs\agy.db)의 사용량을 CSV 로 내보낸다. 평소에는 CSV 를 쓰지 않고, 필요할 때만 이 스크립트로 만든다.
+﻿# 위임 기록 DB(delegate-agy\data\delegate.db)의 사용량을 CSV 로 내보낸다. 평소에는 CSV 를 쓰지 않고, 필요할 때만 이 스크립트로 만든다.
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\export-usage-csv.ps1                          # 작업별 사용량 -> .\usage-export-<시각>.csv
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\export-usage-csv.ps1 -Summary                 # 모델별 집계   -> .\usage-summary-<시각>.csv
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\export-usage-csv.ps1 -Since 2026-10-01 -Out D:\x\usage.csv
@@ -18,7 +18,11 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 if (-not $RuntimeDir) {
     $RuntimeDir = if ($env:AGY_DELEGATE_RUNTIME) { $env:AGY_DELEGATE_RUNTIME } else { Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime" }
 }
-$dbPath = Join-Path $RuntimeDir "logs\agy.db"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) "runtime\delegate-agy\scripts\sub\agy-layout.ps1")
+$dbPath = (Get-AgyLayout $RuntimeDir).DbPath
+# 아직 새 배치로 옮기기 전인 옛 위치(logs\agy.db)에 있으면 그것을 쓴다.
+$legacyDb = Join-Path (Join-Path $RuntimeDir "logs") "agy.db"
+if (-not (Test-Path -LiteralPath $dbPath) -and (Test-Path -LiteralPath $legacyDb)) { $dbPath = $legacyDb }
 if (-not (Test-Path -LiteralPath $dbPath)) { Write-Host "[x] 위임 기록 DB 가 없습니다: $dbPath" -ForegroundColor Red; exit 1 }
 
 $repoRoot = Split-Path $PSScriptRoot -Parent

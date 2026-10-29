@@ -58,12 +58,13 @@ if (-not $RuntimeDir) {
 
 New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
 
-$LogsDir       = Join-Path $RuntimeDir "logs"
-$HeartbeatDir  = Join-Path $LogsDir "heartbeat"
+. (Join-Path $PSScriptRoot "sub\agy-layout.ps1")
+$Layout        = Get-AgyLayout $RuntimeDir
+$LogsDir       = $Layout.LogsDir
+$HeartbeatDir  = $Layout.HeartbeatDir
 New-Item -ItemType Directory -Force -Path $LogsDir, $HeartbeatDir | Out-Null
 $HeartbeatFile = Join-Path $HeartbeatDir ("hb_{0}.txt" -f $env:COMPUTERNAME)
-
-$LockFile      = Join-Path $LogsDir ("watcher_{0}.lock" -f $env:COMPUTERNAME)
+$LockFile      = $Layout.LockFile
 
 $WatcherScript = Join-Path $PSScriptRoot "sub\watch-agy.ps1"
 if (-not (Test-Path $WatcherScript)) {
@@ -222,7 +223,7 @@ if (Test-WatcherAlive) {
 
         "stop requested at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" |
 
-            Set-Content -Path (Join-Path $LogsDir "stop.signal") -Encoding UTF8
+            Set-Content -Path $Layout.StopSignalFile -Encoding UTF8
 
     }
 
@@ -242,7 +243,7 @@ if (Test-WatcherAlive) {
 
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
 
-    $stopSignal = Join-Path $LogsDir "stop.signal"
+    $stopSignal = $Layout.StopSignalFile
 
     while ((Get-Date) -lt $deadline -and (Test-WatcherAlive)) {
 
@@ -262,7 +263,7 @@ if (Test-WatcherAlive) {
 
     Remove-Item -Path $stopSignal -Force -ErrorAction SilentlyContinue
 
-    $manualStopFlag = Join-Path $LogsDir "manual_stop.flag"
+    $manualStopFlag = $Layout.ManualStopFlag
 
     Remove-Item -Path $manualStopFlag -Force -ErrorAction SilentlyContinue
 

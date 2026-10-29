@@ -19,14 +19,17 @@ function Assert-Equal($name, $expected, $actual) {
 $work = Join-Path ([IO.Path]::GetTempPath()) ("qa-store-test-" + [Guid]::NewGuid().ToString("N"))
 $env:AGY_DB_CACHE_DIR = Join-Path $work "cache"
 $RuntimeDir   = $work
-$LogsDir      = Join-Path $work "logs"
-$AgyDbPath    = Join-Path $LogsDir "agy.db"
+. (Join-Path $subDir "agy-layout.ps1")
+. (Join-Path $subDir "agy-retention.ps1")
+$Layout       = Get-AgyLayout $work "TESTPC"
+$LogsDir      = $Layout.LogsDir
+$AgyDbPath    = $Layout.DbPath
 $InboxDir     = Join-Path $work "inbox"
-$OutboxDir    = Join-Path $work "outbox"
-$ProcessedDir = Join-Path $work "processed"
+$OutboxDir    = $Layout.OutboxDir
+$ProcessedDir = $Layout.ProcessedDir
 $ComputerName = "TESTPC"
-$QaKeepMonths = 12; $QaProcessMaxSteps = 400
-foreach ($d in @($LogsDir, $InboxDir, $OutboxDir, $ProcessedDir)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
+$KeepMonths = 3; $QaProcessMaxSteps = 400
+foreach ($d in @($LogsDir, $InboxDir, $OutboxDir, $ProcessedDir, $Layout.DataDir)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
 function Log($msg) { }
 
 . (Join-Path $subDir "common.ps1")
@@ -119,7 +122,7 @@ try {
     [void](Write-QaRecordToDb $AgyDbPath ([ordered]@{ task_id = "ancient"; timestamp = "2019-01-01 00:00:00"; question = "q"; answer = "a" }) 'Upsert')
     Assert-Equal "정리 전에는 있다" $true ($null -ne (Get-QaTaskRow $AgyDbPath "ancient"))
     Initialize-QaStore
-    Assert-Equal "12개월이 지난 기록은 사라진다" $true ($null -eq (Get-QaTaskRow $AgyDbPath "ancient"))
+    Assert-Equal "3개월이 지난 기록은 사라진다" $true ($null -eq (Get-QaTaskRow $AgyDbPath "ancient"))
     Assert-Equal "  최근 기록은 남는다" $true ($null -ne (Get-QaTaskRow $AgyDbPath "task-a"))
 
     Write-Host "watch-agy.ps1 의 작업자 경로"

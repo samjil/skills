@@ -49,15 +49,13 @@ if (-not $RuntimeDir) {
 
 
 
-$LogsDir        = Join-Path $RuntimeDir "logs"
-
-$StopSignalFile = Join-Path $LogsDir "stop.signal"
-
-$HeartbeatDir   = Join-Path $LogsDir "heartbeat"
-
+. (Join-Path $PSScriptRoot "sub\agy-layout.ps1")
+$Layout         = Get-AgyLayout $RuntimeDir
+$LogsDir        = $Layout.LogsDir
+$StopSignalFile = $Layout.StopSignalFile
+$HeartbeatDir   = $Layout.HeartbeatDir
 $HeartbeatFile  = Join-Path $HeartbeatDir ("hb_{0}.txt" -f $env:COMPUTERNAME)
-
-$ManualStopFlag = Join-Path $LogsDir "manual_stop.flag"
+$ManualStopFlag = $Layout.ManualStopFlag
 
 
 

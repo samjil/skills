@@ -16,7 +16,7 @@
 
 #      runtime\outbox 폴더에 같은 이름 + .response.md 파일로 답변을 저장합니다.
 
-#      처리한 지시파일은 runtime\processed 폴더로 이동합니다.
+#      처리한 지시파일은 data\tasks\processed 폴더로 이동합니다.
 
 #   3) 종료하려면 이 창에서 Ctrl+C 를 누르세요.
 
@@ -30,7 +30,7 @@
 
 #   - 화면 표시는 이 스크립트가 아니라 serve-report.ps1이 띄우는 로컬 웹 서버 + web\
 
-#     페이지가 담당합니다. 이 스크립트는 logs\agy.db 의 위임 기록만 관리합니다.
+#     페이지가 담당합니다. 이 스크립트는 data\delegate.db 의 위임 기록만 관리합니다.
 
 #
 
@@ -191,25 +191,25 @@ if (-not $ComputerName) { $ComputerName = "(알수없음)" }
 
 
 
-$InboxDir     = Join-Path $RuntimeDir "inbox"
-
-$OutboxDir    = Join-Path $RuntimeDir "outbox"
-
-$ProcessedDir = Join-Path $RuntimeDir "processed"
-
-$StuckDir     = Join-Path $RuntimeDir "_stuck"
-
-$LogsDir      = Join-Path $RuntimeDir "logs"
+# 폴더 배치(runtime / data)는 agy-layout.ps1 한 곳에서 정한다. 옛 배치(runtime\outbox · runtime\logs\agy.db 등)면 폴더를 만들기 전에 먼저 옮긴다.
+$layoutFile = Join-Path $PSScriptRoot "agy-layout.ps1"
+if (-not (Test-Path $layoutFile)) { $layoutFile = Join-Path (Split-Path $PSScriptRoot -Parent) "agy-layout.ps1" }
+. $layoutFile
+$legacyMoved = Move-AgyLegacyLayout $RuntimeDir
+$Layout       = Get-AgyLayout $RuntimeDir $ComputerName
+$InboxDir     = $Layout.InboxDir
+$OutboxDir    = $Layout.OutboxDir
+$ProcessedDir = $Layout.ProcessedDir
+$StuckDir     = $Layout.StuckDir
+$LogsDir      = $Layout.LogsDir
 # 지금 돌고 있는 작업마다 <작업 ID>.json 표시 파일을 둔다(작업자 프로세스 PID·세션·폴더·모델). 워처와 뷰어가 읽는다.
-$RunningDir   = Join-Path $LogsDir "running"
+$RunningDir   = $Layout.RunningDir
+
+New-Item -ItemType Directory -Force -Path $InboxDir, $OutboxDir, $ProcessedDir, $StuckDir, $LogsDir, $RunningDir, $Layout.DataDir, $Layout.BackupsDir, $Layout.CacheDir | Out-Null
 
 
 
-New-Item -ItemType Directory -Force -Path $InboxDir, $OutboxDir, $ProcessedDir, $StuckDir, $LogsDir | Out-Null
-
-
-
-# 로그류는 전부 별도의 logs 폴더 안에 모아서 기록합니다.
+# logs 폴더에는 진짜 런타임 로그(watcher.log 등)만 기록합니다.
 
 $LogFile        = Join-Path $LogsDir "watcher.log"
 
@@ -239,7 +239,7 @@ $global:LogFile = $LogFile
 
 # 주기를 짧게 잡아도 무방합니다.
 
-$HeartbeatDir  = Join-Path $LogsDir "heartbeat"
+$HeartbeatDir  = $Layout.HeartbeatDir
 
 New-Item -ItemType Directory -Force -Path $HeartbeatDir | Out-Null
 
@@ -257,7 +257,7 @@ $HeartbeatIntervalSec = 10
 
 # 확인하면 되므로 훨씬 확실합니다. 정상 종료 시에는 아래 finally에서 이 파일을 지웁니다.
 
-$LockFile = Join-Path $LogsDir ("watcher_{0}.lock" -f $ComputerName)
+$LockFile = $Layout.LockFile
 
 $script:LastHeartbeatAt = [datetime]::MinValue
 
@@ -267,7 +267,7 @@ $script:LastHeartbeatAt = [datetime]::MinValue
 
 # 확인해서(Stop-Process로 강제로 죽이지 않고) 스스로 정상 종료합니다.
 
-$StopSignalFile = Join-Path $LogsDir "stop.signal"
+$StopSignalFile = $Layout.StopSignalFile
 
 
 
@@ -279,7 +279,7 @@ $StopSignalFile = Join-Path $LogsDir "stop.signal"
 
 # 판단하고 자동으로 재시작하지 않습니다.
 
-$ManualStopFlag = Join-Path $LogsDir "manual_stop.flag"
+$ManualStopFlag = $Layout.ManualStopFlag
 
 # 공통 함수(세션 관리, 뮤텍스 락, 샤드/인덱스 관리 등)를 가져옵니다.
 $commonFile = Join-Path $PSScriptRoot "common.ps1"
@@ -367,7 +367,7 @@ function Get-JsonField($obj, [string[]]$paths) {
 
 # ============================================================================
 
-# 위임 기록 저장소 (SQLite: logs\agy.db, 접근은 agy-db.ps1)
+# 위임 기록 저장소 (SQLite: data\delegate.db, 접근은 agy-db.ps1)
 # ----------------------------------------------------------------------------
 #   tasks 표         : 작업 한 건이 한 줄. 사용량(토큰·모델)은 작업이 끝날 때 먼저 넣고(Write-UsageRow), 질문·답·과정은 지시파일을
 #                      processed 로 옮긴 직후에 채운다(Complete-TaskQaRecord). 답이 채워진 줄이 "끝난 기록"이고 뷰어는 그것만 보인다.
@@ -376,8 +376,8 @@ function Get-JsonField($obj, [string[]]$paths) {
 # 화면은 뷰어(serve-viewer.ps1)가 이 DB 를 읽어 /api/qa/records 로 내보냅니다.
 # ============================================================================
 
-$AgyDbPath        = Join-Path $LogsDir "agy.db"
-$QaKeepMonths     = 12     # 이보다 오래된 기록은 워처가 켜질 때 자동으로 지웁니다.
+$AgyDbPath        = $Layout.DbPath
+$KeepMonths       = 3      # 위임 기록 DB 와 위임 작업 파일(data 폴더)은 이보다 오래되면 워처가 켜질 때 자동으로 지웁니다.
 # 기록에 저장하는 "과정"(agy 가 부른 도구 목록)의 최대 개수. 한 작업이 100~수백 번 도구를 부르는 일이 있어
 # 기록이 커지는 것을 막는다. 넘으면 앞쪽 이만큼만 남긴다.
 $QaProcessMaxSteps = 400
@@ -415,6 +415,13 @@ if (-not (Test-Path $gitGuardFile)) {
 }
 . $gitGuardFile
 
+# 위임 작업 파일(processed · outbox · 스크린샷 등) 보관 기간 정리(agy-retention.ps1). 테스트: tests\delegate-agy\agy-retention.tests.ps1
+$retentionFile = Join-Path $PSScriptRoot "agy-retention.ps1"
+if (-not (Test-Path $retentionFile)) {
+    $retentionFile = Join-Path (Split-Path $PSScriptRoot -Parent) "agy-retention.ps1"
+}
+. $retentionFile
+
 # 핸드오프 "자동 이어가기" 펌프(워처 본체만 씀): 채널에 Claude 가 새 메시지를 보내면 agy 에게 위임하고, 답이 오면 회신 메시지로 기록한다.
 # 못 찾거나 불러오지 못해도 워처의 본래 일(inbox 위임)에는 영향이 없다. 함수 정의는 handoff-pump.ps1 머리말 참고. 테스트: tests\handoff
 $script:HandoffPumpReady = $false
@@ -443,8 +450,14 @@ if (-not $WorkerTask) {
 
 function Initialize-QaStore {
     try {
-        $removed = Remove-QaRecordsOlderThan $AgyDbPath $QaKeepMonths
-        if ($removed -gt 0) { Log "보관 기간($QaKeepMonths 개월)이 지난 기록 $removed 건을 정리했습니다." }
+        $filesRemoved = Remove-DelegationFilesOlderThan $RuntimeDir $KeepMonths
+        if ($filesRemoved -gt 0) { Log "보관 기간($KeepMonths 개월)이 지난 위임 작업 파일 $filesRemoved 개를 정리했습니다." }
+    } catch {
+        Log "위임 작업 파일 정리 중 오류: $($_.Exception.Message)"
+    }
+    try {
+        $removed = Remove-QaRecordsOlderThan $AgyDbPath $KeepMonths
+        if ($removed -gt 0) { Log "보관 기간($KeepMonths 개월)이 지난 기록 $removed 건을 정리했습니다." }
     } catch {
         Log "기록 저장소 초기화 중 오류: $($_.Exception.Message)"
     }
@@ -817,7 +830,7 @@ function Get-AgyPromptDelivery([string]$Prompt, [string[]]$OtherMarkers, [int]$O
     return @{ Mode = 'inline'; Marker = $marker; Reason = '' }
 }
 
-# 지금 돌고 있는 다른 작업(자기 제외)의 인라인 표식과 작업 수. 작업 표시 파일(logs\running)에서 읽는다.
+# 지금 돌고 있는 다른 작업(자기 제외)의 인라인 표식과 작업 수. 작업 표시 파일(running)에서 읽는다.
 function Get-OtherRunningMarkers([string]$ExceptTaskId) {
     $markers = @(); $total = 0
     if (Test-Path -LiteralPath $RunningDir) {
@@ -881,7 +894,7 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
         } else {
             $candidate
         }
-        $currentTaskFile = Join-Path $LogsDir "current_task.json"
+        $currentTaskFile = $Layout.CurrentTaskFile
         if ($taskId) {
             try {
                 [ordered]@{
@@ -1057,7 +1070,7 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
     $result.ElapsedSec = [math]::Round(((Get-Date) - $overallStart).TotalSeconds, 1)
 
     # current_task.json 은 "가장 최근에 시작한 작업"을 가리키는 호환용 파일이다. 내가 쓴 것일 때만 지운다(다른 작업이 덮어썼을 수 있다).
-    $currentTaskFile = Join-Path $LogsDir "current_task.json"
+    $currentTaskFile = $Layout.CurrentTaskFile
     if ($taskId -and (Test-Path $currentTaskFile)) {
         try {
             $ct = [System.IO.File]::ReadAllText($currentTaskFile, [System.Text.Encoding]::UTF8).TrimStart([char]0xFEFF) | ConvertFrom-Json
@@ -1075,7 +1088,7 @@ function Invoke-AgyWithFallback($safePrompt, $targetCwd, [bool]$skipPerm, $errFi
 # 동시 실행: 작업 표시 파일, 충돌 판정, 작업자 프로세스
 # ----------------------------------------------------------------------------
 
-# 표시 파일(logs\running\<작업 ID>.json)을 읽는다. 없거나 반쯤 쓴 파일이면 $null.
+# 표시 파일(running\<작업 ID>.json)을 읽는다. 없거나 반쯤 쓴 파일이면 $null.
 function Read-RunningClaim([string]$Path) {
     try {
         if (-not (Test-Path -LiteralPath $Path)) { return $null }
@@ -1415,7 +1428,7 @@ function Invoke-InboxTaskBody([System.IO.FileInfo]$file) {
     try {
         # 프롬프트 길이와 무관하게 항상 임시 프롬프트 파일(@$tempPromptFile)을 사용하여
         # 명령줄 따옴표/이스케이프 깨짐을 방지하고 병렬 실행 시 고유한 대화 식별 Marker를 보장합니다.
-        $promptsDir = Join-Path $LogsDir "prompts"
+        $promptsDir = $Layout.PromptsDir
         if (-not (Test-Path -LiteralPath $promptsDir)) {
             New-Item -ItemType Directory -Force -Path $promptsDir | Out-Null
         }

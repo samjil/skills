@@ -1,5 +1,5 @@
 ﻿# log-qa.ps1
-# watch-agy.ps1가 관리하는 것과 같은 기록 저장소(runtime\logs\agy.db 의 tasks 표)에
+# watch-agy.ps1가 관리하는 것과 같은 기록 저장소(data\delegate.db 의 tasks 표)에
 # Q&A 한 건을 추가로 남깁니다. 워처(inbox 파일 위임) 경로를 거치지 않고
 # 다른 통로(예: antigravity MCP 직접 호출)로 주고받은 질문/답변을 같은 웹 뷰어에서
 # 함께 볼 수 있게 하기 위한 것입니다.
@@ -52,7 +52,8 @@ if (-not $RuntimeDir) {
         $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime"
     }
 }
-$AgyDbPath = Join-Path $RuntimeDir "logs\agy.db"
+. (Join-Path $PSScriptRoot "agy-layout.ps1")
+$AgyDbPath = (Get-AgyLayout $RuntimeDir).DbPath
 
 if (-not (Test-Path $QuestionFile)) { throw "QuestionFile을 찾을 수 없습니다: $QuestionFile" }
 if (-not (Test-Path $AnswerFile))   { throw "AnswerFile을 찾을 수 없습니다: $AnswerFile" }

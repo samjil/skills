@@ -18,7 +18,7 @@ function Assert-Equal($name, $expected, $actual) {
 $work = Join-Path ([IO.Path]::GetTempPath()) ("ensure-check-test-" + [Guid]::NewGuid().ToString("N"))
 function New-Runtime {
     $rt = Join-Path $work ([Guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Force -Path (Join-Path $rt "logs\heartbeat") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $rt "heartbeat") | Out-Null
     return $rt
 }
 $lockName = "watcher_{0}.lock" -f $env:COMPUTERNAME
@@ -40,15 +40,15 @@ $r = Invoke-Check $rt
 Assert-Equal "아무 흔적도 없으면 DEAD" "DEAD" $r.Output
 Assert-Equal "  종료 코드 1" 1 $r.Code
 
-"$PID" | Set-Content -Path (Join-Path $rt "logs\$lockName") -Encoding UTF8
+"$PID" | Set-Content -Path (Join-Path $rt "$lockName") -Encoding UTF8
 $r = Invoke-Check $rt
 Assert-Equal "잠금 PID가 살아 있는 powershell 이면 ALIVE" "ALIVE" $r.Output
 Assert-Equal "  종료 코드 0" 0 $r.Code
 
-"x" | Set-Content (Join-Path $rt "logs\manual_stop.flag")
+"x" | Set-Content (Join-Path $rt "manual_stop.flag")
 $r = Invoke-Check $rt
 Assert-Equal "살아 있으면 수동 정지 플래그가 있어도 ALIVE (정지 중일 수 있음)" "ALIVE" $r.Output
-Remove-Item (Join-Path $rt "logs\$lockName") -Force
+Remove-Item (Join-Path $rt "$lockName") -Force
 
 $r = Invoke-Check $rt
 Assert-Equal "죽었고 수동 정지 플래그가 있으면 MANUAL_STOP" "MANUAL_STOP" $r.Output
@@ -58,14 +58,14 @@ Write-Host "-CheckOnly: 낡은 잠금 파일"
 $rt = New-Runtime
 $gone = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile", "-Command", "exit 0" -WindowStyle Hidden -PassThru
 $gone.WaitForExit()
-"$($gone.Id)" | Set-Content -Path (Join-Path $rt "logs\$lockName") -Encoding UTF8
+"$($gone.Id)" | Set-Content -Path (Join-Path $rt "$lockName") -Encoding UTF8
 $r = Invoke-Check $rt
 Assert-Equal "잠금 PID의 프로세스가 끝났으면 DEAD" "DEAD" $r.Output
-Assert-Equal "  낡은 잠금 파일은 치웠다" $false (Test-Path (Join-Path $rt "logs\$lockName"))
+Assert-Equal "  낡은 잠금 파일은 치웠다" $false (Test-Path (Join-Path $rt "$lockName"))
 
 Write-Host "-CheckOnly: 하트비트 유예 (-StaleThresholdSeconds)"
 $rt = New-Runtime
-$hb = Join-Path $rt "logs\heartbeat\$hbName"
+$hb = Join-Path $rt "heartbeat\$hbName"
 "x" | Set-Content $hb; (Get-Item $hb).LastWriteTime = (Get-Date).AddSeconds(-290)
 $r = Invoke-Check $rt 300
 Assert-Equal "창을 닫은 직후(290초 전 하트비트)는 기본값 300 이면 ALIVE 로 오판한다" "ALIVE" $r.Output

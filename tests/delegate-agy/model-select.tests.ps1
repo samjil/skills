@@ -197,7 +197,8 @@ $env:AGY_HOME = Join-Path $work "agyhome"
 $env:FAKE_ARGS_LOG = Join-Path $work "args.log"
 $env:FAKE_DIRS_LOG = Join-Path $work "dirs.log"
 
-$LogsDir = $work; $RuntimeDir = $work
+. (Join-Path $subDir "agy-layout.ps1")
+$LogsDir = $work; $RuntimeDir = $work; $Layout = Get-AgyLayout $work
 $AgyTimeoutSeconds = 60; $AgyStallSeconds = 30; $AgyPollSeconds = 2; $AgyProgressLogSeconds = 600; $AgyConversationWindowSeconds = 5
 $script:LogLines = @()
 function Log($msg) { $script:LogLines += $msg }

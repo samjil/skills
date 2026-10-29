@@ -22,6 +22,8 @@ if ($MyInvocation.MyCommand.Path -and (-not $env:SAMJIL_UTF8_ACTIVE)) {
 #
 #  * 에이전트 간 대화 기록(~/.samjil/samjil-handoff/<프로젝트>/msg/)은 사용자의 소중한 자산이므로
 #    제거 시에도 절대 삭제되지 않고 영구 보존됩니다.
+#  * 위임하면서 생긴 파일(~/.samjil/delegate-agy/runtime 의 큐 · 기록 DB · 로그 · 스크린샷)도 지우지 않습니다.
+#    install.ps1 이 놓은 도구(scripts)만 지웁니다. 위임 작업 파일은 워처가 30일이 지난 것부터 알아서 지웁니다.
 # ==========================================================
 
 $Force = ($args -contains "-Force")
@@ -87,6 +89,17 @@ if (Test-Path $regHookScript) {
         if ($hookRes -eq "REMOVED") { Write-Host "[+] 핸드오프 Stop 훅 제거 (~/.claude/settings.json, 백업: settings.json.bak-*)" -ForegroundColor Green }
     } catch {
         Write-Warning "핸드오프 Stop 훅 제거 중 오류: $_"
+    }
+}
+
+# 2-2. agy 워처 SessionStart 훅 제거 (~/.claude/settings.json 의 hooks.SessionStart 에서 우리 항목만)
+$regSessionScript = Join-Path $env:USERPROFILE ".samjil\delegate-agy\scripts\sub\register-session-hook.ps1"
+if (Test-Path $regSessionScript) {
+    try {
+        $sessRes = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $regSessionScript -Remove 2>&1 | Out-String).Trim()
+        if ($sessRes -eq "REMOVED") { Write-Host "[+] agy 워처 SessionStart 훅 제거 (~/.claude/settings.json, 백업: settings.json.bak-*)" -ForegroundColor Green }
+    } catch {
+        Write-Warning "agy 워처 SessionStart 훅 제거 중 오류: $_"
     }
 }
 
@@ -215,7 +228,8 @@ if (Test-Path -LiteralPath $samjilDir) {
         }
     }
 
-    # 4-2. Delegate 디렉터리 정리 (스크립트·임시 큐는 지우되, 실행 기록이 있는 logs 폴더는 보존)
+    # 4-2. Delegate 디렉터리 정리: install.ps1 이 놓은 도구(scripts)만 지우고, 위임하면서 생긴 것(runtime: 큐 · 기록 DB · 로그 · 스크린샷 등)은 건드리지 않는다.
+    #      위임 작업 파일은 워처가 켜질 때 30일이 지난 것부터 알아서 지운다(agy-retention.ps1).
     $delegateDirs = @(
         (Join-Path $samjilDir "delegate-agy"),
         (Join-Path $samjilDir "samjil-delegate-agy"),
@@ -223,20 +237,17 @@ if (Test-Path -LiteralPath $samjilDir) {
     )
     foreach ($dd in $delegateDirs) {
         if (Test-Path -LiteralPath $dd) {
-            $qaFiles = @(Get-ChildItem -LiteralPath (Join-Path $dd "runtime\logs\data") -Filter "qa-*.jsonl" -File -ErrorAction SilentlyContinue)
-            $qaDb = Join-Path $dd "runtime\logs\agy.db"
-            if ($qaFiles.Count -gt 0 -or (Test-Path -LiteralPath $qaDb)) {
-                # scripts 및 inbox/outbox/processed 등 실행 도구만 지우고 logs 데이터는 보존
-                foreach ($sub in @("scripts", "runtime\inbox", "runtime\outbox", "runtime\processed", "runtime\_stuck", "runtime\logs\running", "runtime\logs\prompts")) {
-                    $subPath = Join-Path $dd $sub
-                    if (Test-Path -LiteralPath $subPath) {
-                        Remove-Item -Recurse -Force -LiteralPath $subPath -ErrorAction SilentlyContinue
-                    }
-                }
-                Write-Host "[i] 위임 실행 기록(DB 또는 $($qaFiles.Count)개 샤드)이 존재하여 로그를 안전하게 보존합니다: $(Join-Path $dd 'runtime\logs')" -ForegroundColor Cyan
+            $scriptsPath = Join-Path $dd "scripts"
+            if (Test-Path -LiteralPath $scriptsPath) {
+                Remove-Item -Recurse -Force -LiteralPath $scriptsPath -ErrorAction SilentlyContinue
+                Write-Host "[+] Delegate 설치 도구 삭제 완료: $scriptsPath" -ForegroundColor Green
+            }
+            $leftFiles = @(Get-ChildItem -LiteralPath $dd -Recurse -File -Force -ErrorAction SilentlyContinue)
+            if ($leftFiles.Count -gt 0) {
+                Write-Host "[i] 위임하면서 생긴 파일($($leftFiles.Count)개)은 지우지 않고 보존합니다: $dd" -ForegroundColor Cyan
             } else {
                 Remove-Item -Recurse -Force -LiteralPath $dd -ErrorAction SilentlyContinue
-                Write-Host "[+] Delegate 도구 및 런타임 삭제 완료: $dd" -ForegroundColor Green
+                Write-Host "[+] 빈 Delegate 디렉터리 삭제 완료: $dd" -ForegroundColor Green
             }
         }
     }
