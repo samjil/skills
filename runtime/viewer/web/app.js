@@ -2120,12 +2120,12 @@
       }
 
       pItem.innerHTML = [
-        '<span class="tree-chevron" aria-hidden="true"></span>',
         '<span class="project-icon">' + icon("folder") + '</span>',
         '<div class="project-info">',
         '  <span class="project-name" title="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</span>',
         '  ' + subHtml,
         '</div>',
+        '<span class="tree-chevron" aria-hidden="true"></span>',
         badgeHtml
       ].join("");
 
@@ -2385,12 +2385,12 @@
       }
 
       pItem.innerHTML = [
-        '<span class="tree-chevron" aria-hidden="true"></span>',
         '<span class="project-icon">' + icon("folder") + '</span>',
         '<div class="project-info">',
         '  <span class="project-name" title="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</span>',
         '  ' + subHtml,
         '</div>',
+        '<span class="tree-chevron" aria-hidden="true"></span>',
         badgeHtml
       ].join("");
 
