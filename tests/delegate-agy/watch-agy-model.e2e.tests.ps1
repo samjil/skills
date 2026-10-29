@@ -51,7 +51,22 @@ else {
     '{"status":"SUCCESS","response":"ok from ' + $model + '","conversation_id":"conv-test","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}'
 }
 '@
-Set-Content -Path (Join-Path $fakeBin "agy.cmd") -Encoding ASCII -Value "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0fake-agy.ps1`" %*"
+# 가짜 agy 는 agy.exe(작은 래퍼)로 만든다. agy.cmd 를 쓰면 cmd.exe 가 여러 줄 프롬프트(표준 규칙이 붙은 @cwd 위임)의 첫 줄에서 명령줄을 잘라 --add-dir 같은 뒷 인자가 사라진다.
+# 진짜 agy.exe 도 네이티브라 줄바꿈이 있는 인자를 그대로 받으므로, 래퍼가 받은 명령줄을 그대로 powershell 에 넘긴다.
+Add-Type -TypeDefinition @"
+using System; using System.Diagnostics;
+public static class FakeAgyLauncher {
+    public static int Main() {
+        string cl = Environment.CommandLine; string rest = "";
+        if (cl.StartsWith("\"")) { int e = cl.IndexOf('"', 1); rest = e >= 0 ? cl.Substring(e + 1) : ""; }
+        else { int e = cl.IndexOf(' '); rest = e >= 0 ? cl.Substring(e) : ""; }
+        string ps1 = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location), "fake-agy.ps1");
+        var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -File \"" + ps1 + "\"" + rest);
+        psi.UseShellExecute = false;
+        using (var p = Process.Start(psi)) { p.WaitForExit(); return p.ExitCode; }
+    }
+}
+"@ -OutputAssembly (Join-Path $fakeBin "agy.exe") -OutputType ConsoleApplication
 
 $env:PATH = "$fakeBin;$env:PATH"
 $env:AGY_HOME = Join-Path $work "agyhome"
