@@ -18,7 +18,8 @@ function Assert-Equal($name, $expected, $actual) {
 $work = Join-Path ([IO.Path]::GetTempPath()) ("watch-agy-model-e2e-" + [Guid]::NewGuid().ToString("N"))
 $rt = Join-Path $work "runtime"
 $fakeBin = Join-Path $work "bin"
-foreach ($d in @("inbox", "outbox", "processed", "logs", "logs\data", "logs\heartbeat")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("inbox", "logs", "heartbeat", "running")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("data\tasks\outbox", "data\tasks\processed", "data\cache")) { New-Item -ItemType Directory -Force -Path (Join-Path $work $d) | Out-Null }
 New-Item -ItemType Directory -Force -Path $fakeBin, (Join-Path $work "agyhome\conversations") | Out-Null
 
 Set-Content -Path (Join-Path $fakeBin "fake-agy.ps1") -Encoding ASCII -Value @'
@@ -63,14 +64,14 @@ function Send-Task([string]$name, [string]$text) {
     [System.IO.File]::WriteAllText((Join-Path $rt "inbox\$name.md"), $text, (New-Object System.Text.UTF8Encoding($false)))
 }
 function Get-Response([string]$name) {
-    $f = Join-Path $rt "outbox\$name.response.md"
+    $f = Join-Path $work "data\tasks\outbox\$name.response.md"
     if (Test-Path $f) { return ([System.IO.File]::ReadAllText($f, [System.Text.Encoding]::UTF8)).Trim([char]0xFEFF, " ", "`r", "`n") } else { return $null }
 }
 
 $proc = $null
 try {
     $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$watcher`"", "-RuntimeDir", "`"$rt`"") -WindowStyle Hidden -PassThru
-    $lock = Join-Path $rt ("logs\watcher_{0}.lock" -f $env:COMPUTERNAME)
+    $lock = Join-Path $rt ("watcher_{0}.lock" -f $env:COMPUTERNAME)
     $started = $false
     for ($i = 0; $i -lt 60 -and -not $started; $i++) { if (Test-Path $lock) { $started = $true } else { Start-Sleep -Milliseconds 500 } }
     Write-Host "워처 시작"
@@ -110,7 +111,7 @@ try {
     Assert-Equal "  medium: 지정한 쿼터 초과 요청은 다른 모델을 시도하지 않고 1번 + 자동 선택 medium 1번(쿼터 초과 뒤 폴백)" 2 @($calls | Where-Object { $_ -eq "model=gemini-3.8-flash-medium" }).Count
 
     Write-Host "기록(DB)에 과정 저장"
-$dbPath = Join-Path $rt "logs\agy.db"
+$dbPath = Join-Path $work "data\delegate.db"
 $deadline2 = (Get-Date).AddSeconds(40)
 $qaRows = @()
 while ((Get-Date) -lt $deadline2) {
@@ -239,13 +240,13 @@ Write-Host "사용량 기록 (tasks 표)"
     Assert-Equal "  기록의 상태는 OK(실패가 아니다)" "OK" $rowH.status
     Assert-Equal "  기록의 답이 회수한 응답이다" "FINALHANG recovered final answer" ([string]$rowH.answer).Trim()
     Assert-Equal "  대화 ID 도 기록된다" "conv-finalhang" $rowH.session_id
-    $errH = Join-Path $rt "outbox\e2e_finalhang.error.log"
+    $errH = Join-Path $work "data\tasks\outbox\e2e_finalhang.error.log"
     Assert-Equal "  error.log 에 회수 안내가 남는다" $true ((Test-Path $errH) -and ((Get-Content -Raw -LiteralPath $errH -Encoding UTF8) -match "회수"))
     Assert-Equal "  워처 로그에도 회수가 남는다" $true (@(Get-Content (Join-Path $rt "logs\watcher.log") -Encoding UTF8 | Where-Object { $_ -like "*회수*e2e_finalhang*" -or ($_ -like "*[e2e_finalhang]*" -and $_ -like "*회수*") }).Count -ge 1)
 }
 finally {
     if ($proc -and -not $proc.HasExited) {
-        "stop" | Set-Content -Path (Join-Path $rt "logs\stop.signal") -Encoding UTF8
+        "stop" | Set-Content -Path (Join-Path $rt "stop.signal") -Encoding UTF8
         $null = $proc.WaitForExit(40000)
         if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
     }

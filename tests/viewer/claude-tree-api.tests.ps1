@@ -251,7 +251,7 @@ try {
     [System.IO.File]::AppendAllText($s1LogFile, $newLine, $utf8NoBom)
 
     # 색인 파일 수정 시각을 20초 전으로 되돌림
-    $indexFile = Join-Path $dataDir "claude-links.json"
+    $indexFile = Join-Path $dataDir "cache\claude-links.json"
     (Get-Item -LiteralPath $indexFile).LastWriteTime = (Get-Date).AddSeconds(-20)
 
     # 요청 보내면 스캔이 다시 트리거됨

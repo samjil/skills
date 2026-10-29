@@ -16,7 +16,8 @@ function Assert-Equal($name, $expected, $actual) {
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("submit-task-test-" + [Guid]::NewGuid().ToString("N"))
 $rt = Join-Path $work "runtime"
-foreach ($d in @("inbox", "outbox", "logs\running", "logs\heartbeat")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("inbox", "logs", "heartbeat", "running")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("data\tasks\outbox", "data\tasks\processed", "data\cache")) { New-Item -ItemType Directory -Force -Path (Join-Path $work $d) | Out-Null }
 $agyHome = Join-Path $work "agyhome"
 $utf8 = New-Object Text.UTF8Encoding($false)
 
@@ -88,16 +89,16 @@ try {
     Assert-Equal "경로가 섞인 작업 ID 는 종료 코드 3" 3 $r.Exit
 
     Write-Host "결과 기다리기 (-Poll)"
-    Write-Utf8 (Join-Path $rt "outbox\$id1.response.md") "결과 본문 줄1`n줄2" $true
+    Write-Utf8 (Join-Path $work "data\tasks\outbox\$id1.response.md") "결과 본문 줄1`n줄2" $true
     $r = Run-Submit @("-Poll", $id1, "-WaitSeconds", "5")
     Assert-Equal "응답이 있으면 RESULT + 본문(BOM 제거), 종료 코드 0" "0|True" ("{0}|{1}" -f $r.Exit, ($r.Out -match "(?s)^===RESULT=== $id1\r?\n결과 본문 줄1\r?\n줄2"))
-    Write-Utf8 (Join-Path $rt "outbox\$id2.error.log") "실행 오류 로그"
+    Write-Utf8 (Join-Path $work "data\tasks\outbox\$id2.error.log") "실행 오류 로그"
     $r = Run-Submit @("-Poll", $id2, "-WaitSeconds", "5")
     Assert-Equal "응답 없이 error.log 만 있으면 ERROR, 종료 코드 1" "1|True" ("{0}|{1}" -f $r.Exit, ($r.Out -match "===ERROR=== $id2\r?\n실행 오류 로그"))
-    Write-Utf8 (Join-Path $rt "outbox\$id2.response.md") "응답도 있음"
+    Write-Utf8 (Join-Path $work "data\tasks\outbox\$id2.response.md") "응답도 있음"
     $r = Run-Submit @("-Poll", $id2, "-WaitSeconds", "5")
     Assert-Equal "응답이 있으면 error.log 가 있어도 RESULT" $true ($r.Out -match "===RESULT=== $id2")
-    Write-Utf8 (Join-Path $rt "outbox\빈응답.response.md") ""
+    Write-Utf8 (Join-Path $work "data\tasks\outbox\빈응답.response.md") ""
 
     Write-Host "여러 개 · 진행 상태(PENDING)"
     $idQ = "claude_1790000000_7"
@@ -107,7 +108,7 @@ try {
     Assert-Equal "  끝난 것은 RESULT 로" $true ($r.Out -match "===RESULT=== $id1")
     Assert-Equal "  대기열에 있는 것은 '대기열에서 기다리는 중'" $true ($r.Out -match "===PENDING=== $idQ 대기열에서 기다리는 중")
     Assert-Equal "  하트비트가 없으면 워처 확인 안내" $true ($r.Out -match "워처 하트비트가 없습니다")
-    Set-Content -LiteralPath (Join-Path $rt "logs\heartbeat\hb_T.txt") -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $rt "heartbeat\hb_T.txt") -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8
     $r = Run-Submit @("-Poll", $idQ, "-WaitSeconds", "1")
     Assert-Equal "  하트비트가 있으면 안내가 없다" $false ($r.Out -match "하트비트")
     $r = Run-Submit @("-Poll", "claude_1_1", "-WaitSeconds", "1")
@@ -116,7 +117,7 @@ try {
     $idR = "claude_1790000001_8"
     $conv = "abc-123"
     $started = (Get-Date).AddMinutes(-11).ToString("yyyy-MM-dd HH:mm:ss")
-    Write-Utf8 (Join-Path $rt "logs\running\$idR.json") (@{ task_id = $idR; pid = 1; model = "gemini-3.8-flash-high"; started_at = $started; session = "결제-리팩토링"; conversation_id = $conv } | ConvertTo-Json -Compress)
+    Write-Utf8 (Join-Path $rt "running\$idR.json") (@{ task_id = $idR; pid = 1; model = "gemini-3.8-flash-high"; started_at = $started; session = "결제-리팩토링"; conversation_id = $conv } | ConvertTo-Json -Compress)
     $tdir = Join-Path $agyHome "brain\$conv\.system_generated\logs"
     New-Item -ItemType Directory -Force -Path $tdir | Out-Null
     Write-Utf8 (Join-Path $tdir "transcript_full.jsonl") ('{"step_index":13,"type":"USER_INPUT","status":"DONE"}' + "`n" + '{"step_index":14,"type":"PLANNER_RESPONSE","status":"DONE","tool_calls":[{"name":"view_file"}]}' + "`n")
@@ -130,7 +131,7 @@ try {
     $idW = [regex]::Match($line, 'submitted: (\S+)').Groups[1].Value
     Assert-Equal "  먼저 'submitted: <ID>' 를 내보낸다" $true ($idW -ne "")
     Start-Sleep -Seconds 1
-    Write-Utf8 (Join-Path $rt "outbox\$idW.response.md") "나중에 생긴 응답"
+    Write-Utf8 (Join-Path $work "data\tasks\outbox\$idW.response.md") "나중에 생긴 응답"
     $rest = $p.StandardOutput.ReadToEnd(); [void]$p.WaitForExit()
     Assert-Equal "  응답이 생기면 RESULT 로 끝나고 종료 코드 0" "0|True" ("{0}|{1}" -f $p.ExitCode, ($rest -match "===RESULT=== $idW\r?\n나중에 생긴 응답"))
     $r = Run-Submit @("-WaitSeconds", "2") "끝내 응답이 없는 지시문"

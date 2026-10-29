@@ -129,15 +129,16 @@ Assert-Equal "  진짜 뷰어(8787)는 시험 전과 같은 상태다(건드리�
 Write-Host "뷰어와 워처가 둘 다 꺼져 있을 때: 한 번에 켜지고 창이 뜨지 않는다"
 $work2 = Join-Path ([IO.Path]::GetTempPath()) ("ensure-viewer-both-" + [Guid]::NewGuid().ToString("N"))
 $rt = Join-Path $work2 "runtime"
-foreach ($d in @("inbox", "outbox", "processed", "logs", "logs\data", "logs\heartbeat")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("inbox", "logs", "heartbeat", "running")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("data\tasks\outbox", "data\tasks\processed", "data\cache")) { New-Item -ItemType Directory -Force -Path (Join-Path $work2 $d) | Out-Null }
 New-Item -ItemType Directory -Force -Path (Join-Path $work2 "handoff") | Out-Null
 $port3 = 38795
 $env:AGY_DELEGATE_RUNTIME = $rt   # 뷰어가 켜는 워처도 이 임시 런타임을 쓴다(진짜 워처는 건드리지 않는다)
 $q = [char]34
 $winsBefore2 = Get-VisibleConsoleWindows
-$out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ensure -Port $port3 -ViewerArgs "-DataDir $q$(Join-Path $rt 'logs\data')$q -HandoffDir $q$(Join-Path $work2 'handoff')$q"
+$out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ensure -Port $port3 -ViewerArgs "-RuntimeDir $q$rt$q -DataDir $q$(Join-Path $work2 'data')$q -HandoffDir $q$(Join-Path $work2 'handoff')$q"
 Assert-Equal "-NoAgent 없이 켜면 STARTED(0)" "STARTED|0" ("{0}|{1}" -f (($out | Out-String).Trim()), $LASTEXITCODE)
-$lockFile = Join-Path $rt ("logs\watcher_{0}.lock" -f $env:COMPUTERNAME)
+$lockFile = Join-Path $rt ("watcher_{0}.lock" -f $env:COMPUTERNAME)
 $lockUp = $false
 for ($i = 0; $i -lt 90 -and -not $lockUp; $i++) { if (Test-Path $lockFile) { $lockUp = $true } else { Start-Sleep -Seconds 1 } }
 Assert-Equal "  뷰어가 워처도 함께 켰다(잠금 파일이 생김)" $true $lockUp

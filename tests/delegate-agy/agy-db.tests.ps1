@@ -17,7 +17,7 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ("agy-db-test-" + [Guid]::NewGuid()
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 $env:AGY_DB_CACHE_DIR = Join-Path $work "cache"
 . $modulePath
-$dbPath = Join-Path $work "logs\agy.db"
+$dbPath = Join-Path $work "data\delegate.db"
 
 # 창 없이 PowerShell 을 띄운다(시험이 콘솔 창을 깜빡이지 않게)
 function Start-HiddenPowerShell([string[]]$ArgumentList) {

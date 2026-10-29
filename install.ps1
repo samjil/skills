@@ -306,6 +306,18 @@ if (Test-Path $srcRuntime) {
         New-Item -ItemType Directory -Force -Path $destDelegate | Out-Null
         Copy-Item -Recurse -Force -Path (Join-Path $srcDelegate "*") -Destination $destDelegate
         Write-Host "[+] delegate-agy 런타임 및 스크립트 배치 완료 (~/.samjil/delegate-agy)" -ForegroundColor Green
+
+        # 3-1a. 세션 시작 훅: 새 Claude 세션이 열릴 때 agy 워처를 창 없이 켜고 samjil-delegate-agy 스킬을 먼저 따르게 한다.
+        #       Claude Code 설정을 바꾸므로 등록 전에 settings.json 을 백업한다(register-session-hook.ps1). 끄려면 uninstall.ps1.
+        $regSession = Join-Path $destDelegate "scripts\sub\register-session-hook.ps1"
+        if (Test-Path $regSession) {
+            try {
+                $sessOut = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $regSession 2>&1 | Out-String).Trim()
+                Write-Host "[+] agy 워처 SessionStart 훅 등록: $sessOut (~/.claude/settings.json)" -ForegroundColor Green
+            } catch {
+                Write-Warning "agy 워처 SessionStart 훅 등록 중 오류: $_"
+            }
+        }
     }
 
     $srcHandoff = Join-Path $srcRuntime "handoff"

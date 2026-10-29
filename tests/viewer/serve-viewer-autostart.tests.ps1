@@ -19,8 +19,8 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ("serve-viewer-autostart-test-" + [
 $runtime = Join-Path $work "runtime"
 $scripts = Join-Path $work "scripts"
 $handoff = Join-Path $work "handoff"
-New-Item -ItemType Directory -Force -Path (Join-Path $runtime "logs\data"), (Join-Path $runtime "logs\heartbeat"), (Join-Path $runtime "inbox"), (Join-Path $scripts "sub"), $handoff | Out-Null
-Set-Content -Path (Join-Path $runtime "logs\agy.db") -Value "" -NoNewline -Encoding ASCII    # 뷰어가 데이터 폴더를 고르는 표지(빈 파일도 빈 SQLite DB 로 읽힌다)
+New-Item -ItemType Directory -Force -Path (Join-Path $work "data"), (Join-Path $runtime "logs"), (Join-Path $runtime "heartbeat"), (Join-Path $runtime "inbox"), (Join-Path $scripts "sub"), $handoff | Out-Null
+Set-Content -Path (Join-Path $work "data\delegate.db") -Value "" -NoNewline -Encoding ASCII    # 빈 파일도 빈 SQLite DB 로 읽힌다
 
 $ensureLog = Join-Path $work "ensure-calls.txt"
 $startLog  = Join-Path $work "start-calls.txt"
@@ -40,9 +40,9 @@ $env:FAKE_ENSURE_LOG = $ensureLog
 $env:FAKE_START_LOG  = $startLog
 
 $port = Get-Random -Minimum 30000 -Maximum 40000
-$lockFile = Join-Path $runtime ("logs\watcher_{0}.lock" -f $env:COMPUTERNAME)
-$hbFile   = Join-Path $runtime ("logs\heartbeat\hb_{0}.txt" -f $env:COMPUTERNAME)
-$flagFile = Join-Path $runtime "logs\manual_stop.flag"
+$lockFile = Join-Path $runtime ("watcher_{0}.lock" -f $env:COMPUTERNAME)
+$hbFile   = Join-Path $runtime ("heartbeat\hb_{0}.txt" -f $env:COMPUTERNAME)
+$flagFile = Join-Path $runtime "manual_stop.flag"
 
 function Get-Status {
     try {

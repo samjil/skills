@@ -21,7 +21,7 @@ function Assert-Equal($name, $expected, $actual) {
 $work = Join-Path ([IO.Path]::GetTempPath()) ("handoff-hook-test-" + [Guid]::NewGuid().ToString("N"))
 $root = Join-Path $work "root"
 $rt = Join-Path $work "runtime"
-New-Item -ItemType Directory -Force -Path $root, (Join-Path $rt "logs\heartbeat") | Out-Null
+New-Item -ItemType Directory -Force -Path $root, (Join-Path $rt "heartbeat") | Out-Null
 $savedRoot = $env:AGENT_HANDOFF_ROOT
 $env:AGENT_HANDOFF_ROOT = $root
 
@@ -54,7 +54,7 @@ function Invoke-Hook([string]$Cwd, [hashtable]$ExtraEnv = @{}, [string]$Stdin = 
     if ([string]::IsNullOrEmpty($Stdin)) { $Stdin = (@{ cwd = $Cwd; session_id = "s1"; hook_event_name = "Stop"; stop_hook_active = $false } | ConvertTo-Json -Compress) }
     return (Wait-PsProcess (Start-PsProcess $hookScript @() $Stdin $e))
 }
-function Touch-Heartbeat { Set-Content -LiteralPath (Join-Path $rt "logs\heartbeat\hb_TESTPC.txt") -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8 }
+function Touch-Heartbeat { Set-Content -LiteralPath (Join-Path $rt "heartbeat\hb_TESTPC.txt") -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Encoding UTF8 }
 function New-Channel([string]$Name) {
     $dir = Join-Path $root $Name
     New-Item -ItemType Directory -Force -Path (Join-Path $dir "msg") | Out-Null
@@ -162,7 +162,7 @@ try {
     Assert-Equal "  대기 시간만큼만 기다렸다" $true ($sec -ge 3 -and $sec -lt 25)
 
     Write-Host "기다리지 않는 경우"
-    Remove-Item (Join-Path $rt "logs\heartbeat\hb_TESTPC.txt") -Force
+    Remove-Item (Join-Path $rt "heartbeat\hb_TESTPC.txt") -Force
     $t0 = Get-Date
     $r = Invoke-Hook $appCwd @{ SAMJIL_HANDOFF_WAIT_SECONDS = "30" }
     Assert-Equal "워처 하트비트가 없으면 바로 끝내며 알린다" $true (((($r.Out | ConvertFrom-Json).systemMessage) -match "워처가 꺼져") -and (((Get-Date) - $t0).TotalSeconds -lt 20))

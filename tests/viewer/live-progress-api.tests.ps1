@@ -19,7 +19,8 @@ function Assert-Equal($name, $expected, $actual) {
 $work = Join-Path ([IO.Path]::GetTempPath()) ("live-progress-test-" + [Guid]::NewGuid().ToString("N"))
 $rt = Join-Path $work "runtime"
 $agyHome = Join-Path $work "agyhome"
-foreach ($d in @("inbox", "outbox", "processed", "logs", "logs\data", "logs\heartbeat", "logs\sessions", "logs\running")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("inbox", "logs", "heartbeat", "running")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("data\tasks\outbox", "data\tasks\processed", "data\cache")) { New-Item -ItemType Directory -Force -Path (Join-Path $work $d) | Out-Null }
 New-Item -ItemType Directory -Force -Path (Join-Path $work "handoff") | Out-Null
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
@@ -58,7 +59,7 @@ $deadProc = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile
 $deadProc.WaitForExit()
 function Put-Claim([string]$id, [int]$claimPid, [string]$conv) {
     $o = [ordered]@{ task_id = $id; pid = $claimPid; model = "gemini-3.8-flash-high"; started_at = $t0; conversation_id = $conv }
-    [System.IO.File]::WriteAllText((Join-Path $rt "logs\running\$id.json"), (ConvertTo-Json -InputObject $o -Compress), $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $rt "running\$id.json"), (ConvertTo-Json -InputObject $o -Compress), $utf8)
 }
 Put-Claim "t_run" $PID "conv-running"
 Put-Claim "t_dead" $deadProc.Id "conv-dead"
@@ -72,7 +73,7 @@ $env:AGY_HOME = $agyHome
 $viewer = $null
 try {
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$viewerScript`"", "-NoBrowser", "-NoAgent", "-Port", $port,
-        "-DataDir", "`"$(Join-Path $rt 'logs\data')`"", "-HandoffDir", "`"$(Join-Path $work 'handoff')`"")
+        "-RuntimeDir", "`"$rt`"", "-DataDir", "`"$(Join-Path $work 'data')`"", "-HandoffDir", "`"$(Join-Path $work 'handoff')`"")
     $viewer = Start-Process -FilePath "powershell.exe" -ArgumentList $argList -WindowStyle Hidden -PassThru
     $up = $false
     for ($i = 0; $i -lt 40 -and -not $up; $i++) {

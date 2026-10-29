@@ -1,5 +1,5 @@
 ﻿# agy-db.ps1
-# 위임 기록(tasks)과 agy 세션(agy_sessions)을 담는 SQLite 저장소(runtime\logs\agy.db)를 다루는 공용 모듈입니다.
+# 위임 기록(tasks)과 agy 세션(agy_sessions)을 담는 SQLite 저장소(delegate-agy\data\delegate.db)를 다루는 공용 모듈입니다.
 # 워처·작업자·log-qa.ps1·handoff-pump.ps1·뷰어가 이 파일을 dot-source 해서 씁니다: `. (Join-Path $PSScriptRoot "agy-db.ps1")`
 #
 # 왜 SQLite 인가: 여러 프로세스(워처, 작업자 여럿, log-qa, 뷰어)가 같은 기록을 동시에 읽고 쓴다. 예전에는 파일(qa-*.jsonl, usage.csv,

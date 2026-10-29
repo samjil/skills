@@ -15,12 +15,13 @@ function Assert-Equal($name, $expected, $actual) {
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("qa-records-api-test-" + [Guid]::NewGuid().ToString("N"))
 $rt = Join-Path $work "runtime"
-foreach ($d in @("inbox", "outbox", "processed", "logs", "logs\data", "logs\heartbeat")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("inbox", "logs", "heartbeat", "running")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("data\tasks\outbox", "data\tasks\processed", "data\cache")) { New-Item -ItemType Directory -Force -Path (Join-Path $work $d) | Out-Null }
 New-Item -ItemType Directory -Force -Path (Join-Path $work "handoff") | Out-Null
 $env:AGY_DB_CACHE_DIR = Join-Path $work "cache"
 $env:AGY_DELEGATE_RUNTIME = $rt
 . (Join-Path $repoRoot "runtime\delegate-agy\scripts\sub\agy-db.ps1")
-$dbPath = Join-Path $rt "logs\agy.db"
+$dbPath = Join-Path $work "data\delegate.db"
 
 function Get-Api([string]$Query) {
     $resp = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/api/qa/records$Query" -TimeoutSec 10
@@ -32,7 +33,7 @@ $port = Get-Random -Minimum 30000 -Maximum 40000
 $viewer = $null
 try {
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$viewerScript`"", "-NoBrowser", "-NoAgent", "-Port", $port,
-        "-DataDir", "`"$(Join-Path $rt 'logs\data')`"", "-HandoffDir", "`"$(Join-Path $work 'handoff')`"")
+        "-RuntimeDir", "`"$rt`"", "-DataDir", "`"$(Join-Path $work 'data')`"", "-HandoffDir", "`"$(Join-Path $work 'handoff')`"")
     $viewer = Start-Process -FilePath "powershell.exe" -ArgumentList $argList -WindowStyle Hidden -PassThru
     $up = $false
     for ($i = 0; $i -lt 40 -and -not $up; $i++) {
@@ -82,10 +83,10 @@ try {
     }
     $bigQ = "@session: s`n" + ("긴 질문 " * 6000) + "`n끝줄 질문"
     $bigA = ("긴 답변 " * 6000) + "`n끝줄 답변"
-    [System.IO.File]::WriteAllText((Join-Path $rt "processed\src1.md"), $bigQ, (New-Object System.Text.UTF8Encoding($false)))
-    [System.IO.File]::WriteAllText((Join-Path $rt "outbox\src1.response.md"), $bigA, (New-Object System.Text.UTF8Encoding($false)))
-    [System.IO.File]::WriteAllText((Join-Path $rt "processed\src2.txt"), "txt 지시", (New-Object System.Text.UTF8Encoding($false)))
-    [System.IO.File]::WriteAllText((Join-Path $rt "processed\한글_작업.md"), "한글 이름 지시", (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText((Join-Path $work "data\tasks\processed\src1.md"), $bigQ, (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText((Join-Path $work "data\tasks\outbox\src1.response.md"), $bigA, (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText((Join-Path $work "data\tasks\processed\src2.txt"), "txt 지시", (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText((Join-Path $work "data\tasks\processed\한글_작업.md"), "한글 이름 지시", (New-Object System.Text.UTF8Encoding($false)))
     [System.IO.File]::WriteAllText((Join-Path $work "secret.txt"), "런타임 밖의 파일", (New-Object System.Text.UTF8Encoding($false)))
     $sq = Get-Source "?task=src1&kind=question"
     Assert-Equal "질문 원본(processed)을 그대로 돌려준다" "200|True" ("{0}|{1}" -f $sq.Status, ($sq.Text -eq $bigQ))

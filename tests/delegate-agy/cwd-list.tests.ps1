@@ -1,6 +1,6 @@
 ﻿# @cwd 여러 폴더: 세션 저장/읽기(common.ps1, SQLite)와 뷰어(serve-viewer.ps1)의 폴더 목록 규칙 테스트. Pester 없이 돌아갑니다.
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\delegate-agy\cwd-list.tests.ps1
-# 임시 폴더의 DB 만 씁니다. 실제 기록(runtime\logs\agy.db)은 건드리지 않습니다(몇 초).
+# 임시 폴더의 DB 만 씁니다. 실제 기록(runtime\data\delegate.db)은 건드리지 않습니다(몇 초).
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -48,7 +48,7 @@ $viewerPath = Join-Path $repoRoot "runtime\viewer\serve-viewer.ps1"
 $work = Join-Path ([IO.Path]::GetTempPath()) ("cwd-list-test-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 $env:AGY_DB_CACHE_DIR = Join-Path $work "cache"
-$AgyDbPath = Join-Path $work "logs\agy.db"
+$AgyDbPath = Join-Path $work "data\delegate.db"
 . $commonPath
 # 뷰어의 같은 이름 함수(사본)는 다른 이름으로 불러 와서 비교한다
 Invoke-Expression ((Get-FunctionText $viewerPath "ConvertTo-CwdList").Replace("function ConvertTo-CwdList", "function ConvertTo-CwdListViewer"))

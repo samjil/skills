@@ -17,16 +17,16 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ("watcher-health-test-" + [Guid]::N
 $computer = "TESTPC"
 function New-Runtime {
     $rt = Join-Path $work ([Guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Force -Path (Join-Path $rt "logs\heartbeat"), (Join-Path $rt "logs\data") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $rt "heartbeat"), (Join-Path $rt "logs\data") | Out-Null
     return $rt
 }
 function Set-Lock($rt, $pidValue, $written) {
-    $f = Join-Path $rt "logs\watcher_$computer.lock"
+    $f = Join-Path $rt "watcher_$computer.lock"
     "$pidValue" | Set-Content -Path $f -Encoding UTF8
     if ($written) { (Get-Item $f).LastWriteTime = $written }
 }
 function Set-Heartbeat($rt, [datetime]$written) {
-    $f = Join-Path $rt "logs\heartbeat\hb_$computer.txt"
+    $f = Join-Path $rt "heartbeat\hb_$computer.txt"
     "x" | Set-Content -Path $f -Encoding UTF8
     (Get-Item $f).LastWriteTime = $written
 }
@@ -34,7 +34,7 @@ $noProcs   = { @() }
 $someProcs = { @([pscustomobject]@{ ProcessId = 1 }) }
 
 Write-Host "Get-WatcherRuntimeDir"
-Assert-Equal "logs\data 에서 두 단계 위가 런타임 폴더" "C:\x\runtime" (Get-WatcherRuntimeDir "C:\x\runtime\logs\data")
+Assert-Equal "데이터 폴더 옆의 runtime 이 런타임 폴더" "C:\x\runtime" (Get-WatcherRuntimeDir "C:\x\data")
 
 Write-Host "Test-WatcherAlive: 잠금 파일"
 $rt = New-Runtime
@@ -88,7 +88,7 @@ Assert-Equal "잠금 없음 + 하트비트 10분 전 = 프로세스가 보여도
 Write-Host "Test-WatcherManualStop"
 $rt = New-Runtime
 Assert-Equal "플래그 없으면 false" $false (Test-WatcherManualStop $rt)
-"x" | Set-Content (Join-Path $rt "logs\manual_stop.flag")
+"x" | Set-Content (Join-Path $rt "manual_stop.flag")
 Assert-Equal "manual_stop.flag 있으면 true" $true (Test-WatcherManualStop $rt)
 
 Write-Host "Get-WatcherAutoStartDecision"
@@ -141,15 +141,15 @@ Set-Lock $rt $PID (Get-Date)
 $d = Invoke-WatcherHealthTick $st $t0.AddSeconds(1200) $launcher
 Assert-Equal "살아 있으면 ok" "ok" $d
 Assert-Equal "  추가 실행 없음" 2 $script:Launched.Count
-Remove-Item (Join-Path $rt "logs\watcher_$computer.lock") -Force
+Remove-Item (Join-Path $rt "watcher_$computer.lock") -Force
 
 # 수동 정지
-"x" | Set-Content (Join-Path $rt "logs\manual_stop.flag")
+"x" | Set-Content (Join-Path $rt "manual_stop.flag")
 $st.EnsureProcess = $null
 $d = Invoke-WatcherHealthTick $st $t0.AddSeconds(1500) $launcher
 Assert-Equal "수동 정지 중이면 manual-stop" "manual-stop" $d
 Assert-Equal "  추가 실행 없음" 2 $script:Launched.Count
-Remove-Item (Join-Path $rt "logs\manual_stop.flag") -Force
+Remove-Item (Join-Path $rt "manual_stop.flag") -Force
 
 # 스크립트를 못 찾음
 $st2 = New-WatcherHealthState -RuntimeDir $rt -EnsureScript "" -IntervalSeconds 60 -Now $t0 -GetWatcherProcesses $noProcs -ComputerName $computer
@@ -200,7 +200,7 @@ Set-Lock $rt $PID (Get-Date)
 $r = Invoke-WatcherStartRequest $stA $t0 $launcher3
 Assert-Equal "이미 켜져 있으면 already-running" "already-running" $r.Result
 Assert-Equal "  실행 없음" 0 $script:Launched.Count
-Remove-Item (Join-Path $rt "logs\watcher_$computer.lock") -Force
+Remove-Item (Join-Path $rt "watcher_$computer.lock") -Force
 
 $stB = & $mk
 $r = Invoke-WatcherStartRequest $stB $t0 $launcher3
@@ -216,10 +216,10 @@ Assert-Equal "직전에 띄운 ensure 가 아직 돌면 busy" "busy" $r.Result
 Assert-Equal "  추가 실행 없음" 1 $script:Launched.Count
 
 $stC = & $mk
-"stopped" | Set-Content (Join-Path $rt "logs\manual_stop.flag")
+"stopped" | Set-Content (Join-Path $rt "manual_stop.flag")
 $r = Invoke-WatcherStartRequest $stC $t0 $launcher3
 Assert-Equal "수동 정지 중이어도 직접 누르면 started" "started" $r.Result
-Assert-Equal "  수동 정지 플래그를 지웠다" $false (Test-Path (Join-Path $rt "logs\manual_stop.flag"))
+Assert-Equal "  수동 정지 플래그를 지웠다" $false (Test-Path (Join-Path $rt "manual_stop.flag"))
 
 $stD = & $mk
 $r = Invoke-WatcherStartRequest $stD $t0 { param($s, $r, $d) throw "실행 실패" }

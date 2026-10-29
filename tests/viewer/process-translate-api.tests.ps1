@@ -86,7 +86,7 @@ Write-Host "대화 id 검사"
 Assert-Equal "경로 문자가 든 id 는 null" $true ($null -eq (Get-ProcessTranslationState "..\x"))
 Assert-Equal "  Start 도 null" $true ($null -eq (Start-ProcessTranslation "a/b"))
 Assert-Equal "  빈 id 도 null" $true ($null -eq (Get-ProcessTranslationState ""))
-Assert-Equal "캐시 경로는 데이터 폴더의 process-ko 아래" (Join-Path $DataDir "process-ko\abc-1.json") (Get-ProcessTranslationPath "abc-1")
+Assert-Equal "캐시 경로는 데이터 폴더의 cache\process-ko 아래" (Join-Path $DataDir "cache\process-ko\abc-1.json") (Get-ProcessTranslationPath "abc-1")
 
 Write-Host "대화 기록이 없을 때"
 $s0 = Get-ProcessTranslationState "conv-none"

@@ -15,14 +15,15 @@ function Assert-Equal($name, $expected, $actual) {
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("pending-cwd-test-" + [Guid]::NewGuid().ToString("N"))
 $rt = Join-Path $work "runtime"
-foreach ($d in @("inbox", "outbox", "processed", "logs", "logs\data", "logs\heartbeat")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("inbox", "logs", "heartbeat", "running")) { New-Item -ItemType Directory -Force -Path (Join-Path $rt $d) | Out-Null }
+foreach ($d in @("data\tasks\outbox", "data\tasks\processed", "data\cache")) { New-Item -ItemType Directory -Force -Path (Join-Path $work $d) | Out-Null }
 New-Item -ItemType Directory -Force -Path (Join-Path $work "handoff") | Out-Null
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 function Put-Inbox([string]$name, [string]$text) { [System.IO.File]::WriteAllText((Join-Path $rt "inbox\$name.md"), $text, $utf8) }
 # 세션 s1 은 DB 에 모델·대화 id 가 있다(뷰어가 대기 작업에 세션의 모델과 대화 id 를 붙이는지 본다)
 $env:AGY_DB_CACHE_DIR = Join-Path $work "cache"
 . (Join-Path $repoRoot "runtime\delegate-agy\scripts\sub\agy-db.ps1")
-$dbSeed = Open-AgyDb (Join-Path $rt "logs\agy.db")
+$dbSeed = Open-AgyDb (Join-Path $work "data\delegate.db")
 Invoke-AgyDbTransaction $dbSeed { Set-AgySessionRow $dbSeed "s1" "conv-s1" @() "gemini-3.8-flash-low" "2026-10-16 09:00:00" "2026-10-16 09:00:00" 1 }
 $dbSeed.Dispose()
 
@@ -37,7 +38,7 @@ $env:AGY_DELEGATE_RUNTIME = $rt
 $viewer = $null
 try {
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$viewerScript`"", "-NoBrowser", "-NoAgent", "-Port", $port,
-        "-DataDir", "`"$(Join-Path $rt 'logs\data')`"", "-HandoffDir", "`"$(Join-Path $work 'handoff')`"")
+        "-RuntimeDir", "`"$rt`"", "-DataDir", "`"$(Join-Path $work 'data')`"", "-HandoffDir", "`"$(Join-Path $work 'handoff')`"")
     $viewer = Start-Process -FilePath "powershell.exe" -ArgumentList $argList -WindowStyle Hidden -PassThru
     $up = $false
     for ($i = 0; $i -lt 40 -and -not $up; $i++) {

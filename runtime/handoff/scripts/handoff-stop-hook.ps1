@@ -43,7 +43,7 @@ function Test-WatcherAliveForHook {
         $home_ = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
         $rt = Join-Path $home_ ".samjil/delegate-agy/runtime"
     }
-    $hbDir = Join-Path $rt "logs/heartbeat"
+    $hbDir = Join-Path $rt "heartbeat"
     if (-not (Test-Path -LiteralPath $hbDir -PathType Container)) { return $false }
     $hb = @(Get-ChildItem -LiteralPath $hbDir -Filter "hb_*.txt" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
     if ($hb.Count -eq 0) { return $false }

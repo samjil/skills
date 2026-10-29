@@ -13,6 +13,7 @@
 param(
     [string]$HandoffDir = "",
     [string]$DataDir    = "",
+    [string]$RuntimeDir = "",
     [string]$WebDir     = "",
     [int]$Port          = 8787,
     [switch]$NoBrowser  = $false,
@@ -40,36 +41,33 @@ if (-not $HandoffDir) {
     }
 }
 
-if (-not $DataDir) {
-    $dataCandidates = @()
-    if ($env:AGY_DELEGATE_RUNTIME) {
-        $dataCandidates += (Join-Path $env:AGY_DELEGATE_RUNTIME "logs\data")
-    }
-    $dataCandidates += (Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime\logs\data")
-    if ($parentDir) {
-        $dataCandidates += (Join-Path $parentDir "delegate-agy\runtime\logs\data")
-    }
-    $dataCandidates += (Join-Path $PSScriptRoot "runtime\delegate-agy\runtime\logs\data")
+# 위임 폴더 배치(runtime / data)는 agy-layout.ps1 이 정한다. 설치본 옆 · 저장소 옆 · 내 폴더 순서로 찾는다.
+$layoutCands = @(
+    (Join-Path $parentDir "delegate-agy\scripts\sub\agy-layout.ps1"),
+    (Join-Path $env:USERPROFILE ".samjil\delegate-agy\scripts\sub\agy-layout.ps1"),
+    (Join-Path $PSScriptRoot "runtime\delegate-agy\scripts\sub\agy-layout.ps1")
+)
+$layoutFile = $layoutCands | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+if ($layoutFile) { . $layoutFile } else { Write-Error "agy-layout.ps1 을 찾을 수 없습니다. install.ps1 로 설치돼 있는지 확인하세요."; exit 1 }
 
-    foreach ($cand in $dataCandidates) {
-        # 위임 기록 DB(logs\agy.db)가 있거나, 이전 전의 index.json 이 있는 후보를 고른다
-        if ($cand -and ((Test-Path (Join-Path $cand "index.json")) -or (Test-Path (Join-Path (Split-Path $cand -Parent) "agy.db")))) {
-            $DataDir = $cand
-            break
+if (-not $RuntimeDir) {
+    if ($DataDir) {
+        $RuntimeDir = Join-Path (Split-Path $DataDir -Parent) "runtime"
+    } elseif ($env:AGY_DELEGATE_RUNTIME) {
+        $RuntimeDir = $env:AGY_DELEGATE_RUNTIME
+    } else {
+        $RuntimeDir = Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime"
+        if (-not (Test-Path -LiteralPath $RuntimeDir) -and $parentDir -and (Test-Path -LiteralPath (Join-Path $parentDir "delegate-agy\runtime"))) {
+            $RuntimeDir = Join-Path $parentDir "delegate-agy\runtime"
         }
     }
-
-    if (-not $DataDir) {
-        $DataDir = Join-Path $env:USERPROFILE ".samjil\delegate-agy\runtime\logs\data"
-    }
 }
-
-
+# 옛 배치(runtime\outbox · runtime\logs\agy.db 등)면 새 배치로 옮긴다(이미 옮겼으면 아무것도 안 함).
+if (Test-Path -LiteralPath $RuntimeDir) { try { Move-AgyLegacyLayout $RuntimeDir | Out-Null } catch {} }
+if (-not $DataDir) { $DataDir = Get-AgyDataDir $RuntimeDir }
 
 if (-not $WebDir) {
-
     $WebDir = Join-Path $PSScriptRoot "web"
-
 }
 
 
@@ -80,11 +78,7 @@ if (-not (Test-Path $HandoffDir)) {
 
 }
 
-if (-not (Test-Path $DataDir)) {
-
-    New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
-
-}
+New-Item -ItemType Directory -Force -Path $DataDir, (Join-Path $DataDir "cache") | Out-Null
 
 
 
@@ -100,9 +94,9 @@ if (-not (Test-Path $WebDir)) {
 
 # 워처 상태 판정/자동 재시작 헬퍼
 . (Join-Path $PSScriptRoot "watcher-health.ps1")
-$WatcherRuntimeDir = Get-WatcherRuntimeDir $DataDir
-# 위임 기록·세션 DB. DataDir 이 <런타임>\logs\data 라서 한 단계 위(<런타임>\logs)에 있다. /data/ 로 내보내는 폴더 밖에 둔다.
-$AgyDbPath = Join-Path (Split-Path $DataDir -Parent) "agy.db"
+$WatcherRuntimeDir = $RuntimeDir
+# 위임 기록·세션 DB(<위임>\data\delegate.db). /data/ 로 내보내는 cache 폴더 밖에 둔다.
+$AgyDbPath = Join-Path $DataDir "delegate.db"
 
 # Claude Desktop 세션 및 링크 색인 헬퍼
 $claudeSessionsScript = Join-Path $PSScriptRoot "claude-sessions.ps1"
@@ -128,7 +122,7 @@ $RouteMap = [ordered]@{
 
     "/handoff/" = (Resolve-Path $HandoffDir).Path
 
-    "/data/"    = (Resolve-Path $DataDir).Path
+    "/data/"    = (Resolve-Path (Join-Path $DataDir "cache")).Path
 
     "/"         = (Resolve-Path $WebDir).Path
 
@@ -419,7 +413,7 @@ $script:TranslateStaleSeconds = 360   # 실행 표시 파일이 이만큼 오래
 
 function Get-ProcessTranslationPath([string]$ConversationId) {
     if ($ConversationId -notmatch '^[A-Za-z0-9-]{1,80}$') { return $null }
-    return (Join-Path $DataDir ("process-ko\{0}.json" -f $ConversationId))
+    return (Join-Path $DataDir ("cache\process-ko\{0}.json" -f $ConversationId))
 }
 
 # 상태: running(번역 중) | done(끝남) | none(아직 안 함·새 단계가 생김) | error | unavailable(대화 기록이 없어 번역할 수 없음)
@@ -1239,21 +1233,20 @@ try {
                 $response.OutputStream.Write($bytes, 0, $bytes.Length)
             } elseif ($urlPath -eq "/api/qa/source") {
 
-                # 길어서 잘린 기록의 원본 파일(질문 = processed 의 지시파일, 답변 = outbox 의 응답 파일)을 그대로 내려 준다.
-                # 작업 ID 는 글자·숫자·_ . - 만 허용하고 ".." 는 막아서, 런타임의 processed·outbox 밖 파일은 읽지 못하게 한다.
+                # 길어서 잘린 기록의 원본 파일(질문 = tasks\processed 의 지시파일, 답변 = tasks\outbox 의 응답 파일)을 그대로 내려 준다.
+                # 작업 ID 는 글자·숫자·_ . - 만 허용하고 ".." 는 막아서, 데이터 폴더의 tasks\processed·tasks\outbox 밖 파일은 읽지 못하게 한다.
                 $params = Get-Utf8QueryParams $request.Url
                 $srcTask = [string]$params["task"]
                 $srcKind = [string]$params["kind"]
-                $srcRuntime = Split-Path (Split-Path $DataDir -Parent) -Parent
-                $srcPath = $null
+                                $srcPath = $null
                 if ($srcTask -match '^[A-Za-z0-9가-힣_.\-]{1,200}$' -and -not $srcTask.Contains("..")) {
                     if ($srcKind -eq "question") {
                         foreach ($srcExt in @(".md", ".txt")) {
-                            $srcCand = Join-Path $srcRuntime ("processed\" + $srcTask + $srcExt)
+                            $srcCand = Join-Path $DataDir ("tasks\processed\" + $srcTask + $srcExt)
                             if (Test-Path -LiteralPath $srcCand -PathType Leaf) { $srcPath = $srcCand; break }
                         }
                     } elseif ($srcKind -eq "answer") {
-                        $srcCand = Join-Path $srcRuntime ("outbox\" + $srcTask + ".response.md")
+                        $srcCand = Join-Path $DataDir ("tasks\outbox\" + $srcTask + ".response.md")
                         if (Test-Path -LiteralPath $srcCand -PathType Leaf) { $srcPath = $srcCand }
                     }
                 }
@@ -1272,7 +1265,7 @@ try {
                 $response.OutputStream.Write($bytes, 0, $bytes.Length)
             } elseif ($urlPath -eq "/api/delegate/pending") {
 
-                $runtimeDir = Split-Path (Split-Path $DataDir -Parent) -Parent
+                $runtimeDir = $RuntimeDir
                 $inboxDir = Join-Path $runtimeDir "inbox"
 
                 $watcherAlive = [bool](Test-WatcherAlive -RuntimeDir $WatcherRuntimeDir).Alive
@@ -1285,9 +1278,9 @@ try {
                     } catch {}
                 }
 
-                # 작업마다 있는 표시 파일(logs\running\<작업 ID>.json): 동시에 도는 작업 각각의 작업자 PID·모델·시작 시각·대화 ID.
+                # 작업마다 있는 표시 파일(running\<작업 ID>.json): 동시에 도는 작업 각각의 작업자 PID·모델·시작 시각·대화 ID.
                 # 이 폴더가 아예 없으면 옛 워처(한 번에 하나만 처리)라서 예전 규칙(맨 앞 작업이 처리 중)을 쓴다.
-                $runningDir = Join-Path $runtimeDir "logs\running"
+                $runningDir = Join-Path $runtimeDir "running"
                 $legacyQueue = -not (Test-Path -LiteralPath $runningDir -PathType Container)
 
                 $pendingList = @()
@@ -1438,8 +1431,8 @@ try {
 
             } elseif ($urlPath -eq "/api/status" -or $urlPath -eq "/api/system/status") {
 
-                $runtimeDir = Split-Path (Split-Path $DataDir -Parent) -Parent
-                $heartbeatDir = Join-Path $runtimeDir "logs\heartbeat"
+                $runtimeDir = $RuntimeDir
+                $heartbeatDir = Join-Path $runtimeDir "heartbeat"
                 $inboxDir = Join-Path $runtimeDir "inbox"
 
                 # 켜짐/꺼짐은 하트비트가 아니라 PID 잠금 파일로 판단합니다(agy 를 기다리는 동안은 하트비트가 낡음).
@@ -1800,7 +1793,7 @@ try {
             } elseif ($urlPath -eq "/api/claude/tree") {
 
                 try {
-                    $indexFile = Join-Path $DataDir "claude-links.json"
+                    $indexFile = Join-Path $DataDir "cache\claude-links.json"
                     $runningFile = "$indexFile.running"
                     $errorFile = "$indexFile.error"
 
