@@ -153,6 +153,10 @@ Assert-Equal "  모델을 안 고른 성공 작업도 process 가 저장된다" 
     $dirA = Join-Path $work "proj-a"; $dirB = Join-Path $work "docs b"; $dirC = Join-Path $work "proj-c"
     foreach ($dd in @($dirA, $dirB, $dirC)) { New-Item -ItemType Directory -Force -Path $dd | Out-Null }
     function Invoke-CwdTask([string]$name, [string]$text) {
+        # 앞선 작업이 늦게 남기는 dirs= 줄이 이번 작업의 줄로 읽히지 않게, 돌고 있는 작업과 대기 작업이 없어질 때까지 기다린 뒤 기록을 비운다
+        $idleUntil = (Get-Date).AddSeconds(60)
+        while ((Get-Date) -lt $idleUntil -and (@(Get-ChildItem (Join-Path $rt "running") -Filter "*.json" -File -ErrorAction SilentlyContinue).Count -gt 0 -or @(Get-ChildItem (Join-Path $rt "inbox") -File -ErrorAction SilentlyContinue).Count -gt 0)) { Start-Sleep -Milliseconds 300 }
+        Start-Sleep -Milliseconds 800
         if (Test-Path $env:FAKE_DIRS_LOG) { Remove-Item $env:FAKE_DIRS_LOG -Force }
         Send-Task $name $text
         $until = (Get-Date).AddSeconds(60)
