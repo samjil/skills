@@ -131,7 +131,7 @@ function Test-PsSyntax([string]$Path) {
 }
 ```
 
-이후 단계의 `$repo` 는 `D:\Repos\github.com\samjil\skills` 이다.
+이후 단계의 `$repo` 는 `<저장소 경로>` 이다.
 
 ## 파일 구조
 
@@ -170,7 +170,7 @@ function Test-PsSyntax([string]$Path) {
 - [ ] **Step 2: 모듈과 시험을 제자리에 복사하고 BOM + CRLF 로 맞춘다**
 
 ```powershell
-$repo = "D:\Repos\github.com\samjil\skills"
+$repo = "<저장소 경로>"
 . "$env:TEMP\psedit.ps1"
 $assets = Join-Path $repo "docs\superpowers\plans\2026-10-16-sqlite-migration.assets"
 Copy-Item (Join-Path $assets "agy-db.ps1.txt") (Join-Path $repo "runtime\delegate-agy\scripts\sub\agy-db.ps1") -Force
@@ -215,7 +215,7 @@ Expected: `runtime/delegate-agy/scripts/sub/common.ps1`(정의), `watch-agy.ps1`
 - [ ] **Step 2: common.ps1 에서 파일 저장 함수와 세션 파일 함수를 지운다**
 
 ```powershell
-$repo = "D:\Repos\github.com\samjil\skills"
+$repo = "<저장소 경로>"
 . "$env:TEMP\psedit.ps1"
 $c = Join-Path $repo "runtime\delegate-agy\scripts\sub\common.ps1"
 Remove-PsFunction -Path $c -Names @('Get-QaShardFiles','Get-QaShardPath','Add-QaLine','Test-QaTaskIdInShardTail','Test-QaTaskIdInRecentShards','Add-QaRecordUnlocked','Get-SafeSessionFileName','Get-SessionPath')

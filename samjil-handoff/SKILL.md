@@ -5,6 +5,9 @@ description: Claude 와 Antigravity(agy) 가 파일로 주고받는 비동기 �
 
 # samjil-handoff
 
+> **먼저 설치:** 이 스킬은 규칙 문서이고, 채널 스크립트와 자동 이어가기 훅은 저장소 <https://github.com/samjil/skills> 의 `install.ps1` 이 설치한다(Windows + PowerShell 5.1, Antigravity CLI `agy` 필요).
+> Requires Windows with PowerShell 5.1 and the `agy` CLI; install the runtime with `install.ps1` from the repository above.
+
 ## Overview
 
 Claude 와 Antigravity(agy) 가 **파일로 주고받는 비동기 대화 채널**이다. 둘은 대화창을
@@ -286,7 +289,7 @@ agy 는 이 메시지 한 통과 `BRIEF.md` 만 가지고 시작하고, 한 번 
 - **agy 도 프로젝트 소스를 직접 고칠 수 있다.** 고칠 점이 보이면 제안만 보내지 말고 직접
   반영한 뒤, «작업 완료 · 반영 보고» 형식으로 무엇을 고쳤는지 남긴다. 받은 쪽은 검증하고
   `확인함` 으로 닫는다.
-  (2026-09-21 사용자 결정. 전에는 agy 는 제안만 보내고 반영은 Claude 가 했다.)
+  (전에는 agy 는 제안만 보내고 반영은 Claude 가 했다.)
 - **직접 고칠 때는 그 프로젝트의 관례를 따른다.** `BRIEF.md` 와 이웃 코드의 이름 규칙·폴더·
   공통 부품·토큰을 먼저 보고 맞춘다. 퍼블리싱·시안·샘플 코드 같은 바깥 산출물은 **모양과 값만**
   가져오고, 마크업·클래스·파일 이름을 그대로 옮기지 않는다. 퍼블리싱 랜딩을 오타 클래스와

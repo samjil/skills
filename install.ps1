@@ -103,7 +103,7 @@ $SkillsSourceDir = (Resolve-Path $SkillsSourceDir).Path
 # -----------------------------------------------------------------------------
 # 1. Antigravity 설정 정리 및 ~/.agents/skills 등록 보장
 # -----------------------------------------------------------------------------
-# 저장소 자체(D:\Repos\...)는 스킬 경로로 직접 연결하지 않으므로 skills.json에서 제거합니다.
+# 저장소 자체(clone 한 폴더)는 스킬 경로로 직접 연결하지 않으므로 skills.json에서 제거합니다.
 $GeminiConfigDir = Join-Path $env:USERPROFILE ".gemini\config"
 $SkillsJsonPath = Join-Path $GeminiConfigDir "skills.json"
 
