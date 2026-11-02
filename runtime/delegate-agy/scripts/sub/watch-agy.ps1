@@ -46,7 +46,7 @@ param(
     [string]$RepoRoot    = "",
     [string]$RuntimeDir  = "",
     [int]$PollSeconds    = 2,
-    [int]$MaxParallel    = 0,       # 한 번에 돌릴 작업 수(0 이면 환경변수 AGY_MAX_PARALLEL, 그것도 없으면 3)
+    [int]$MaxParallel    = 0,       # 한 번에 돌릴 작업 수(0 이면 환경변수 AGY_MAX_PARALLEL, 그것도 없으면 5)
     [string]$WorkerTask  = "",      # 내부용: 지시파일 하나만 처리하고 끝나는 작업자 모드(워처가 작업마다 띄운다)
     [switch]$SkipPermissions = $true
 )
@@ -82,7 +82,7 @@ if (-not $RuntimeDir) {
 
 # 동시에 돌릴 작업 수. 1 이면 예전처럼 한 번에 하나씩 처리한다.
 if ($MaxParallel -le 0) {
-    $MaxParallel = 3
+    $MaxParallel = 5
     if ($env:AGY_MAX_PARALLEL -match '^\d+$' -and [int]$env:AGY_MAX_PARALLEL -gt 0) { $MaxParallel = [int]$env:AGY_MAX_PARALLEL }
 }
 

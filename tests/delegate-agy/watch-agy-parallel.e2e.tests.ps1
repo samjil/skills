@@ -4,7 +4,7 @@
 # 가짜 agy 는 지시문의 "TAG:<이름> SLEEP:<초>" 를 읽어 그만큼 자고, 시작·끝 시각을 파일에 남깁니다. 약 2분 걸립니다.
 #
 # 확인하는 규칙: 같은 @session 이면서 @cwd 가 겹치는 작업끼리만 차례로 하고, 나머지(세션이 다르거나, 같은 세션이어도 폴더가 다르면)는
-# 함께 돌린다. 동시에 도는 수는 -MaxParallel(기본 3)까지.
+# 함께 돌린다. 동시에 도는 수는 -MaxParallel(기본 5)까지.
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
