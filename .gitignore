@@ -2,4 +2,5 @@
 Thumbs.db
 *.log
 *.tmp
+/dist/
 node_modules/

@@ -19,5 +19,6 @@
 /sync-installed.ps1 export-ignore
 /tools/setup-dev.ps1 export-ignore
 /tools/build-release.ps1 export-ignore
+/Build-Release.cmd export-ignore
 # VERSION 은 git archive 때 커밋 해시와 날짜로 채워진다
 /VERSION export-subst
