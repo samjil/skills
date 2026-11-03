@@ -38,6 +38,21 @@ Assert-Equal "모든 규칙이 이미 있으면 본문 그대로(붙일 것 없�
 $r = Add-AgyStandardRules "커밋하지 마. 한글로 보고해." $true $false
 Assert-Equal "한글 문장으로 쓴 규칙('커밋하지 마', '한글로 보고')도 인식한다" "foreground,touch-only" (@($r.Added) -join ",")
 
+Write-Host "답변 언어 (AGY_REPLY_LANGUAGE)"
+$savedLang = $env:AGY_REPLY_LANGUAGE
+try {
+    $env:AGY_REPLY_LANGUAGE = "English"
+    $r = Add-AgyStandardRules "fix the bug" $true $false
+    Assert-Equal "English 로 지정하면 답변 언어 문장이 English 가 된다" $true (($r.Text -match "report in English \(keep code") -and ($r.Text -notmatch "in Korean"))
+    $r = Add-AgyStandardRules "fix the bug. Write the final reply in English." $true $false
+    Assert-Equal "  이미 답변 언어를 적었으면 건너뛴다" "no-commit,foreground,touch-only" (@($r.Added) -join ",")
+    $env:AGY_REPLY_LANGUAGE = "x; rm -rf"
+    $r = Add-AgyStandardRules "fix the bug" $true $false
+    Assert-Equal "  이상한 값은 Korean 으로 되돌린다(프롬프트에 끼어들지 못한다)" $true (($r.Text -match "in Korean") -and ($r.Text -notmatch "rm -rf"))
+    $env:AGY_REPLY_LANGUAGE = $null
+    Assert-Equal "  값이 없으면 기존 동작(Korean)" "Korean" (Get-AgyReplyLanguage)
+} finally { $env:AGY_REPLY_LANGUAGE = $savedLang }
+
 Write-Host "지시어 값"
 foreach ($v in @("true", "TRUE", " yes ", "1", "on", "예")) { Assert-Equal "  [$v] 는 참" $true (ConvertTo-AgyDirectiveFlag $v) }
 foreach ($v in @("false", "no", "0", "off", "", "maybe")) { Assert-Equal "  [$v] 는 거짓" $false (ConvertTo-AgyDirectiveFlag $v) }

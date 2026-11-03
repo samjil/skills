@@ -3,3 +3,21 @@
 # 셸 스크립트·git 훅은 LF 여야 한다(CRLF 이면 sh 가 "bad interpreter" 로 실패한다)
 .githooks/* text eol=lf
 *.sh text eol=lf
+
+# .cmd 실행기는 CRLF 여야 한다
+*.cmd text eol=crlf
+
+# 릴리스 zip(git archive, tools/build-release.ps1)에서 빼는 것 - 개발용 파일. 나머지는 저장소 그대로 배포된다.
+/tests export-ignore
+/docs export-ignore
+/.githooks export-ignore
+/.claude-plugin export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/skills_bundle.txt export-ignore
+/skills_bundle_core.txt export-ignore
+/sync-installed.ps1 export-ignore
+/tools/setup-dev.ps1 export-ignore
+/tools/build-release.ps1 export-ignore
+# VERSION 은 git archive 때 커밋 해시와 날짜로 채워진다
+/VERSION export-subst

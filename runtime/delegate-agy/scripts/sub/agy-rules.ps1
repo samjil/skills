@@ -21,9 +21,24 @@ $script:AgyStandardRuleList = @(
        Text = "- Run every command in the FOREGROUND and wait for it to finish. Do not leave background tasks or terminals running. Run commands directly; do not wrap them in another powershell.exe call." },
     @{ Name = "touch-only"; Pattern = '(?i)touch\s+only|필요한\s*파일만';
        Text = "- Touch only the files this task needs. Do not touch untracked files you did not create." },
-    @{ Name = "korean"; Pattern = '(?i)in\s+korean|한글(로|\s*로)\s*(작성|답|보고)|한국어로';
+    @{ Name = "korean"; Pattern = '(?i)write\s+the\s+final\s+reply|in\s+(korean|english)|한글(로|\s*로)\s*(작성|답|보고)|한국어로';
        Text = "Write the final reply and any report in Korean (keep code, paths, commands and raw error text as is)." }
 )
+
+# 답변 언어: 환경변수 AGY_REPLY_LANGUAGE, 없으면 <delegate-agy>\reply-language.txt 의 첫 줄, 둘 다 없으면 Korean(기존 동작).
+# 배포 팩의 설치기가 PC 언어에 맞춰 이 파일을 적는다. 값은 "Korean", "English" 처럼 영어 단어 하나를 쓴다.
+function Get-AgyReplyLanguage {
+    $lang = [string]$env:AGY_REPLY_LANGUAGE
+    if (-not $lang.Trim()) {
+        $f = Join-Path $PSScriptRoot "..\..\reply-language.txt"
+        if (Test-Path -LiteralPath $f -PathType Leaf) {
+            try { $lang = [string](@(Get-Content -LiteralPath $f -Encoding UTF8 -TotalCount 1)[0]) } catch { $lang = "" }
+        }
+    }
+    $lang = $lang.Trim()
+    if ($lang -notmatch '^[A-Za-z][A-Za-z \-]{1,30}$') { return "Korean" }
+    return $lang
+}
 
 # 지시어 값이 참인가: true / yes / 1 / on / 예
 function ConvertTo-AgyDirectiveFlag([string]$Value) {
@@ -39,9 +54,11 @@ function Add-AgyStandardRules([string]$Prompt, [bool]$HasFolder, [bool]$Raw = $f
     if ($Raw -or -not $HasFolder) { return @{ Text = $Prompt; Added = @() } }
     $lines = New-Object System.Collections.ArrayList
     $added = New-Object System.Collections.ArrayList
+    $replyLang = Get-AgyReplyLanguage
     foreach ($r in $script:AgyStandardRuleList) {
         if ([regex]::IsMatch([string]$Prompt, $r.Pattern)) { continue }
-        [void]$lines.Add($r.Text)
+        $ruleText = if ($r.Name -eq "korean") { $r.Text.Replace("in Korean", "in $replyLang") } else { $r.Text }
+        [void]$lines.Add($ruleText)
         [void]$added.Add($r.Name)
     }
     if ($added.Count -eq 0) { return @{ Text = $Prompt; Added = @() } }

@@ -58,6 +58,19 @@ function Remove-SkillTarget([string]$Path) {
 $targetSkills = @("samjil-handoff", "samjil-delegate-agy", "samjil-git-commit", "agent-handoff", "agent-delegate-agy")
 
 # -----------------------------------------------------------------------------
+# 0. Stop the watcher and the dashboard first (so their files can be removed)
+# -----------------------------------------------------------------------------
+$stopAgy = Join-Path $env:USERPROFILE ".samjil\delegate-agy\scripts\stop-agy.ps1"
+if (Test-Path -LiteralPath $stopAgy) {
+    try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $stopAgy 2>&1 | Out-Null; Write-Host "[+] agy watcher stopped" -ForegroundColor Green } catch {}
+}
+$ensureViewer = Join-Path $env:USERPROFILE ".samjil\viewer\ensure-viewer-running.ps1"
+if (Test-Path -LiteralPath $ensureViewer) {
+    try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ensureViewer -Stop 2>&1 | Out-Null } catch {}
+}
+Start-Sleep -Seconds 2
+
+# -----------------------------------------------------------------------------
 # 1. Claude Code 전역 스킬 제거 (~/.claude/skills/)
 # -----------------------------------------------------------------------------
 $claudeSkillsDir = Join-Path $env:USERPROFILE ".claude\skills"
@@ -242,6 +255,7 @@ if (Test-Path -LiteralPath $samjilDir) {
                 Remove-Item -Recurse -Force -LiteralPath $scriptsPath -ErrorAction SilentlyContinue
                 Write-Host "[+] Delegate 설치 도구 삭제 완료: $scriptsPath" -ForegroundColor Green
             }
+            Remove-Item -Force -LiteralPath (Join-Path $dd "reply-language.txt") -ErrorAction SilentlyContinue
             $leftFiles = @(Get-ChildItem -LiteralPath $dd -Recurse -File -Force -ErrorAction SilentlyContinue)
             if ($leftFiles.Count -gt 0) {
                 Write-Host "[i] 위임하면서 생긴 파일($($leftFiles.Count)개)은 지우지 않고 보존합니다: $dd" -ForegroundColor Cyan

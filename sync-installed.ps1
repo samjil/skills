@@ -81,6 +81,17 @@ foreach ($skill in @("samjil-handoff", "samjil-delegate-agy", "samjil-git-commit
     if (-not (Test-Path -LiteralPath $dest)) { $allChanged += [pscustomobject]@{ Group = "스킬"; Rel = "$skill\SKILL.md"; Src = $src; Dest = $dest; Reason = "새 파일" }; continue }
     if ((Get-FileHashHex $src) -ne (Get-FileHashHex $dest)) { $allChanged += [pscustomobject]@{ Group = "스킬"; Rel = "$skill\SKILL.md"; Src = $src; Dest = $dest; Reason = "내용이 다름" } }
 }
+# 스킬의 references\ (SKILL.md 가 필요할 때만 읽는 상세 문서)도 같은 규칙으로 맞춘다
+foreach ($skill in @("samjil-handoff", "samjil-delegate-agy", "samjil-git-commit")) {
+    $refSrcDir = Join-Path $SourceRoot "$skill\references"
+    if (-not (Test-Path -LiteralPath $refSrcDir)) { continue }
+    foreach ($rf in @(Get-ChildItem -LiteralPath $refSrcDir -Recurse -File)) {
+        $rel = $rf.FullName.Substring($refSrcDir.Length + 1)
+        $dest = Join-Path $AgentsSkillsRoot "$skill\references\$rel"
+        if (-not (Test-Path -LiteralPath $dest)) { $allChanged += [pscustomobject]@{ Group = "스킬"; Rel = "$skill\references\$rel"; Src = $rf.FullName; Dest = $dest; Reason = "새 파일" }; continue }
+        if ((Get-FileHashHex $rf.FullName) -ne (Get-FileHashHex $dest)) { $allChanged += [pscustomobject]@{ Group = "스킬"; Rel = "$skill\references\$rel"; Src = $rf.FullName; Dest = $dest; Reason = "내용이 다름" } }
+    }
+}
 
 if ($allChanged.Count -eq 0) {
     Write-Host "설치본이 소스와 같습니다." -ForegroundColor Green

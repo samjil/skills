@@ -38,10 +38,28 @@ $Uninstall = $false
 # 핸드오프 자동 이어가기 Stop 훅을 ~/.claude/settings.json 에 등록할지(옵트인). irm | iex 로 받을 때는 인자를 줄 수 없어
 # 환경변수 SAMJIL_HANDOFF_AUTO_HOOK=1 로도 켠다.
 $HandoffAutoHook = ($env:SAMJIL_HANDOFF_AUTO_HOOK -eq "1")
+# -Full: the author's complete setup (~/.claude/skills becomes a junction to ~/.agents/skills, Antigravity skills.json,
+#        legacy cleanup, session hook always on). Default (simple): copy the skills into ~/.claude/skills and the runtime
+#        into ~/.samjil, touching nothing else. Env: SAMJIL_FULL=1 / SAMJIL_ALWAYS_ON=1 for `irm | iex`.
+$Full = ($env:SAMJIL_FULL -eq "1")
+$AlwaysOn = ($env:SAMJIL_ALWAYS_ON -eq "1")
+$NoStart = $false
+$SkipChecks = $false
+$ReplyLanguage = ""
 if ($args) {
     for ($i = 0; $i -lt $args.Count; $i++) {
         if ($args[$i] -eq "-TargetDir" -and ($i + 1) -lt $args.Count) {
             $TargetDir = $args[++$i]
+        } elseif ($args[$i] -eq "-Full") {
+            $Full = $true
+        } elseif ($args[$i] -eq "-AlwaysOn") {
+            $AlwaysOn = $true
+        } elseif ($args[$i] -eq "-NoStart") {
+            $NoStart = $true
+        } elseif ($args[$i] -eq "-SkipChecks") {
+            $SkipChecks = $true
+        } elseif ($args[$i] -eq "-ReplyLanguage" -and ($i + 1) -lt $args.Count) {
+            $ReplyLanguage = [string]$args[++$i]
         } elseif ($args[$i] -eq "-Uninstall") {
             $Uninstall = $true
         } elseif ($args[$i] -eq "-HandoffAutoHook") {
@@ -106,6 +124,7 @@ $SkillsSourceDir = (Resolve-Path $SkillsSourceDir).Path
 # 저장소 자체(clone 한 폴더)는 스킬 경로로 직접 연결하지 않으므로 skills.json에서 제거합니다.
 $GeminiConfigDir = Join-Path $env:USERPROFILE ".gemini\config"
 $SkillsJsonPath = Join-Path $GeminiConfigDir "skills.json"
+if ($Full) {
 
 if (-not (Test-Path $GeminiConfigDir)) {
     New-Item -ItemType Directory -Force -Path $GeminiConfigDir | Out-Null
@@ -159,6 +178,7 @@ $jsonOutput = $configObj | ConvertTo-Json -Depth 10
 # 정확하게 인코딩되므로(깨짐 방지 목적은 그대로 유지), 여기서는 BOM만 뺍니다.
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($SkillsJsonPath, $jsonOutput, $utf8NoBom)
+}   # end if ($Full): Antigravity skills.json
 
 # -----------------------------------------------------------------------------
 # 2. 에이전트 스킬 배포 (Claude Code & Antigravity AGY)
@@ -167,6 +187,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $ClaudeSkillsRoot = Join-Path $env:USERPROFILE ".claude\skills"
 $AgentsSkillsRoot = Join-Path $env:USERPROFILE ".agents\skills"
 
+if ($Full) {
 New-Item -ItemType Directory -Force -Path $AgentsSkillsRoot | Out-Null
 
 # 구버전 스킬 정리 (agent-handoff, agent-delegate-agy)
@@ -183,6 +204,7 @@ foreach ($old in $legacySkills) {
         Remove-Item -Recurse -Force -LiteralPath $aOld -ErrorAction SilentlyContinue
     }
 }
+}   # end if ($Full): legacy skill cleanup
 
 # ~/.claude/skills 는 ~/.agents/skills 로 가는 정션 하나로 둔다. 이미 정션이면 그대로 둔다.
 # 일반 폴더면 안에 든 것을 지우지 않고 ~/.agents/skills 로 옮긴 뒤 정션으로 바꾼다 — 사용자가 직접
@@ -225,7 +247,8 @@ function Convert-ClaudeSkillsToJunction {
     Write-Host "[+] Claude Code 단일 정션(Junction) 연결 완료: ~/.claude/skills -> ~/.agents/skills" -ForegroundColor Green
 }
 
-Convert-ClaudeSkillsToJunction
+if ($Full) { Convert-ClaudeSkillsToJunction }
+else { New-Item -ItemType Directory -Force -Path $ClaudeSkillsRoot | Out-Null }
 
 $targetSkills = @("samjil-handoff", "samjil-delegate-agy", "samjil-git-commit")
 
@@ -236,7 +259,7 @@ foreach ($sName in $targetSkills) {
     if (-not (Test-Path $srcSkillMd)) { continue }
 
     # (1) 공용 스킬 저장소: ~/.agents/skills/<skill-name>/
-    $aDestDir = Join-Path $AgentsSkillsRoot $sName
+    $aDestDir = Join-Path $(if ($Full) { $AgentsSkillsRoot } else { $ClaudeSkillsRoot }) $sName
     if (Test-Path $aDestDir) {
         $subDirsToClean = @((Join-Path $aDestDir "scripts"), (Join-Path $aDestDir "viewer"), (Join-Path $aDestDir "templates"))
         foreach ($sd in $subDirsToClean) {
@@ -246,6 +269,12 @@ foreach ($sName in $targetSkills) {
         New-Item -ItemType Directory -Force -Path $aDestDir | Out-Null
     }
     Copy-Item -Force -LiteralPath $srcSkillMd -Destination (Join-Path $aDestDir "SKILL.md")
+    $srcRefs = Join-Path $srcSkillDir "references"
+    if (Test-Path -LiteralPath $srcRefs) {
+        $dstRefs = Join-Path $aDestDir "references"
+        New-Item -ItemType Directory -Force -Path $dstRefs | Out-Null
+        Copy-Item -Recurse -Force -Path (Join-Path $srcRefs "*") -Destination $dstRefs
+    }
     Write-Host "[+] 공용 스킬 저장소 배치 완료: $sName (SKILL.md)" -ForegroundColor Green
 }
 
@@ -310,7 +339,11 @@ if (Test-Path $srcRuntime) {
         # 3-1a. 세션 시작 훅: 새 Claude 세션이 열릴 때 agy 워처를 창 없이 켜고 samjil-delegate-agy 스킬을 먼저 따르게 한다.
         #       Claude Code 설정을 바꾸므로 등록 전에 settings.json 을 백업한다(register-session-hook.ps1). 끄려면 uninstall.ps1.
         $regSession = Join-Path $destDelegate "scripts\sub\register-session-hook.ps1"
+        $hookPresent = $false
         if (Test-Path $regSession) {
+            try { $hookPresent = ((& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $regSession -Check 2>&1 | Out-String).Trim() -eq "PRESENT") } catch {}
+        }
+        if ((Test-Path $regSession) -and ($AlwaysOn -or $Full -or $hookPresent)) {
             try {
                 $sessOut = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $regSession 2>&1 | Out-String).Trim()
                 Write-Host "[+] agy 워처 SessionStart 훅 등록: $sessOut (~/.claude/settings.json)" -ForegroundColor Green
@@ -423,6 +456,84 @@ if ($isRemote) {
     Remove-Item -Recurse -Force $tempExtract -ErrorAction SilentlyContinue
 }
 
+# -----------------------------------------------------------------------------
+# 4. Post-install: unblock downloaded files, answer language, agy check, watcher self-test
+#    (messages are ASCII on purpose)
+# -----------------------------------------------------------------------------
+$problems = New-Object System.Collections.ArrayList
+Get-ChildItem -LiteralPath $SamjilRoot -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+    try { Unblock-File -LiteralPath $_.FullName -ErrorAction SilentlyContinue } catch {}
+}
+$versionSrc = Join-Path $SkillsSourceDir "VERSION"
+if (Test-Path -LiteralPath $versionSrc) {
+    $vText = [System.IO.File]::ReadAllText($versionSrc).Trim()
+    if ($vText -and $vText -notmatch '\$Format') { [System.IO.File]::WriteAllText((Join-Path $SamjilRoot "VERSION"), $vText + "`r`n") }
+}
+
+$delegateHome = Join-Path $SamjilRoot "delegate-agy"
+if (Test-Path -LiteralPath $delegateHome) {
+    $langFile = Join-Path $delegateHome "reply-language.txt"
+    if (-not $ReplyLanguage -and (Test-Path -LiteralPath $langFile)) {
+        $ReplyLanguage = ([string](@(Get-Content -LiteralPath $langFile -Encoding UTF8 -TotalCount 1)[0])).Trim()   # re-running keeps the chosen language
+    }
+    if (-not $ReplyLanguage) {
+        $ReplyLanguage = if ((Get-Culture).TwoLetterISOLanguageName -eq "ko") { "Korean" } else { "English" }
+    }
+    if ($ReplyLanguage -notmatch '^[A-Za-z][A-Za-z \-]{1,30}$') { $ReplyLanguage = "English" }
+    [System.IO.File]::WriteAllText($langFile, $ReplyLanguage + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host "[+] agy answers in: $ReplyLanguage (edit $langFile to change)" -ForegroundColor Green
+}
+
+$agyOk = $true
+if (-not $SkipChecks) {
+    $agyCmd = Get-Command agy -ErrorAction SilentlyContinue
+    if (-not $agyCmd) {
+        $agyOk = $false
+        [void]$problems.Add("agy was not found on PATH. Install the Antigravity CLI, open a NEW terminal, run 'agy' once to sign in, then run Install.cmd again.")
+    } else {
+        $job = Start-Job -ScriptBlock { & agy models 2>&1 | Out-String }
+        if (Wait-Job $job -Timeout 25) {
+            if ((Receive-Job $job) -match "gemini") { Write-Host "[+] agy found and signed in: $($agyCmd.Source)" -ForegroundColor Green }
+            else { $agyOk = $false; [void]$problems.Add("agy is installed but did not list models. Run 'agy' once in a terminal and sign in, then run Install.cmd again.") }
+        } else {
+            Stop-Job $job
+            $agyOk = $false
+            [void]$problems.Add("'agy models' did not answer within 25 seconds. Check your network and sign-in, then run Install.cmd again.")
+        }
+        Remove-Job $job -Force -ErrorAction SilentlyContinue
+    }
+}
+
+if (-not $NoStart -and $agyOk -and (Test-Path -LiteralPath $delegateHome)) {
+    $ensure = Join-Path $delegateHome "scripts\sub\ensure-agy-running.ps1"
+    try {
+        Start-Process -FilePath "powershell.exe" -WindowStyle Hidden -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ensure`"", "-ConfirmDelaySeconds", "0", "-StaleThresholdSeconds", "0") | Out-Null
+        $watcherOk = $false
+        for ($w = 0; $w -lt 10; $w++) {
+            Start-Sleep -Seconds 3
+            if ((& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ensure -CheckOnly -StaleThresholdSeconds 0 2>$null | Out-String).Trim() -eq "ALIVE") { $watcherOk = $true; break }
+        }
+        if ($watcherOk) { Write-Host "[+] Watcher is running (ALIVE)." -ForegroundColor Green }
+        else { [void]$problems.Add("The watcher did not start within 30 seconds. See $delegateHome\runtime\logs\watchdog.log") }
+    } catch { [void]$problems.Add("Could not start the watcher: $_") }
+}
+
+if (-not $Full) {
+    Write-Host ""
+    Write-Host "==========================================================" -ForegroundColor Cyan
+    if ($problems.Count -eq 0) {
+        Write-Host "  Done. Open Claude Code and say:  ask agy to say hello" -ForegroundColor Green
+    } else {
+        Write-Host "  Installed, but one thing needs your attention:" -ForegroundColor Yellow
+        foreach ($p in $problems) { Write-Host "   - $p" -ForegroundColor Yellow }
+    }
+    Write-Host "  Skills : ~/.claude/skills/ (samjil-delegate-agy, samjil-handoff, samjil-git-commit)" -ForegroundColor Gray
+    Write-Host "  Tools  : ~/.samjil/   Remove everything: Uninstall.cmd" -ForegroundColor Gray
+    if (-not $AlwaysOn) { Write-Host "  Mode   : on request. For delegation in every session run: Install.cmd -AlwaysOn" -ForegroundColor Gray }
+    Write-Host "==========================================================" -ForegroundColor Cyan
+}
+
+if ($Full) {
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "  설치가 성공적으로 완료되었습니다!" -ForegroundColor Green
@@ -440,3 +551,4 @@ Write-Host "    - 대화 저장소         : ~/.samjil/handoff/channels/ (원장
 Write-Host "    - 핸드오프 자동 이어가기: agy 쪽은 워처가 자동 처리(채널에 AUTO.off 파일을 두면 끔). Claude 쪽은 .\install.ps1 -HandoffAutoHook 로 Stop 훅을 등록" -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
+}   # end if ($Full): original summary

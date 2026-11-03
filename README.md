@@ -5,6 +5,27 @@
 Claude Code 와 Antigravity(agy) 를 함께 쓰기 위한 스킬 모음과 부속 도구입니다. Claude 는 설계와 가장 어려운 일을, 나머지는 agy 가 맡아 Claude 사용량을 아끼고, 두 에이전트가 파일로 대화하며, 그 기록을 로컬 웹 대시보드에서 봅니다.
 [skills.sh](https://skills.sh) 에이전트 스킬 규약(Agent Skills Specification)을 따릅니다. **Windows(PowerShell 5.1) 전용**입니다.
 
+## Quick start (English)
+
+Hand routine coding work from Claude Code to the Antigravity CLI (`agy`) and save Claude quota. Claude designs and reviews; agy does the rest. **Windows 10/11 only** (Windows PowerShell 5.1, included in Windows).
+
+1. Install the Antigravity CLI and sign in once: open a terminal and run `agy`.
+2. Unzip this pack (or clone the repo) and **double-click `Install.cmd`**. It copies the skills to `~/.claude/skills`, the tools to `~/.samjil`, checks `agy`, and starts the background watcher.
+3. In Claude Code say: `ask agy to say hello`.
+
+- Delegation happens when you ask. For delegation in every session run `Install.cmd -AlwaysOn`.
+- agy answers in your Windows display language; edit `~/.samjil/delegate-agy/reply-language.txt` to change it.
+- Remove with `Uninstall.cmd`. Your delegated-task history and handoff chats are kept (see "제거" below).
+- The default install touches only `~/.claude/skills` and `~/.samjil`. `-AlwaysOn` adds one SessionStart hook entry to `~/.claude/settings.json` (backed up first). `-Full` is the author's complete setup (junction `~/.claude/skills` -> `~/.agents/skills`, Antigravity `skills.json`).
+
+**What the installer does and why** (so a careful reader or a scanner is not surprised):
+`powershell -ExecutionPolicy Bypass` because Windows blocks unsigned scripts by default and every script here is readable text (applies to these runs only, machine policy is unchanged) · `Unblock-File` clears the "downloaded from the internet" mark on copied files · a hidden background process is the watcher that runs agy for you (stop it with `stop-agy.ps1` or `Uninstall.cmd`) · the pack makes no network calls (agy talks to Google with your own sign-in).
+
+The optional dashboard (`~/.samjil/viewer`, `http://127.0.0.1:8787`, off until you start it) shows delegated tasks and also reads the Claude Code session and usage records under `~/.claude/projects` on this PC. It listens on `127.0.0.1` only and sends nothing anywhere.
+
+Skills: `samjil-delegate-agy` (this is the English, short one; details in its `references/`), `samjil-handoff` and `samjil-git-commit` (Korean).
+
+---
 ## 구성
 
 | 스킬 | 하는 일 |
