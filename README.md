@@ -15,15 +15,15 @@ Hand routine coding work from Claude Code to the Antigravity CLI (`agy`) and sav
 
 - Delegation happens when you ask. For delegation in every session run `Install.cmd -AlwaysOn`.
 - agy answers in your Windows display language; edit `~/.samjil/delegate-agy/reply-language.txt` to change it.
-- Remove with `Uninstall.cmd`. Your delegated-task history and handoff chats are kept (see "제거" below).
-- The default install touches only `~/.claude/skills` and `~/.samjil`. `-AlwaysOn` adds one SessionStart hook entry to `~/.claude/settings.json` (backed up first). `-Full` is the author's complete setup (junction `~/.claude/skills` -> `~/.agents/skills`, Antigravity `skills.json`).
+- Remove with `Uninstall.cmd`. It removes the skills, tools and hooks; your delegated-task history and handoff chats are kept on purpose (see "제거" below). To delete those too, remove `~/.samjil` by hand afterwards.
+- The default install copies files only into `~/.claude/skills` and `~/.samjil`. It also tidies leftovers of older samjil installs if it finds them (an old Antigravity plugin entry in `~/.gemini/config`, old folders under `~/.samjil`); on a fresh PC there is nothing to tidy. `-AlwaysOn` adds one SessionStart hook entry to `~/.claude/settings.json` (backed up first). `-Full` is the author's complete setup (junction `~/.claude/skills` -> `~/.agents/skills`, Antigravity `skills.json`).
 
 **What the installer does and why** (so a careful reader or a scanner is not surprised):
-`powershell -ExecutionPolicy Bypass` because Windows blocks unsigned scripts by default and every script here is readable text (applies to these runs only, machine policy is unchanged) · `Unblock-File` clears the "downloaded from the internet" mark on copied files · a hidden background process is the watcher that runs agy for you (stop it with `stop-agy.ps1` or `Uninstall.cmd`) · the pack makes no network calls (agy talks to Google with your own sign-in).
+`powershell -ExecutionPolicy Bypass` because Windows blocks unsigned scripts by default and every script here is readable text (applies to these runs only, machine policy is unchanged) · `Unblock-File` clears the "downloaded from the internet" mark on copied files · a hidden background process is the watcher that runs agy for you (stop it with `stop-agy.ps1` or `Uninstall.cmd`) · installing from the unzipped pack (`Install.cmd`) makes no network calls (agy talks to Google with your own sign-in). Only the optional web one-liner (`irm ... | iex`, see "설치") downloads the repository from GitHub; skip it if you want a fully offline install.
 
 The optional dashboard (`~/.samjil/viewer`, `http://127.0.0.1:8787`, off until you start it) shows delegated tasks and also reads the Claude Code session and usage records under `~/.claude/projects` on this PC. It listens on `127.0.0.1` only and sends nothing anywhere.
 
-Skills: `samjil-delegate-agy` (this is the English, short one; details in its `references/`), `samjil-handoff` and `samjil-git-commit` (Korean).
+Skills installed together: `samjil-delegate-agy` (this is the English, short one; details in its `references/`), `samjil-handoff` (agy message channel) and `samjil-git-commit` (asks before every commit/push). The last two are Korean and activate on their own trigger phrases; delete their folders under `~/.claude/skills` if you only want delegation.
 
 ---
 ## 구성
@@ -61,9 +61,9 @@ npx skills add samjil/skills -g --skill samjil-handoff
 
 설치 스크립트는 여러 번 돌려도 같은 결과이며, 예전 이름의 스킬·플러그인 등록은 정리합니다. 옵션:
 
-- **세션 시작 훅(자동)** — `install.ps1` 은 `~/.claude/settings.json` 에 SessionStart 훅을 등록합니다. 새 Claude 세션이 열릴 때 agy 워처를 창 없이 켜고(`stop-agy` 로 일부러 끈 상태면 켜지 않음), `samjil-delegate-agy` 스킬을 먼저 따르라는 문맥을 넣습니다. 바꾸기 전에 `settings.json.bak-*` 로 백업하고 `uninstall.ps1` 이 이 항목만 뺍니다.
+- **세션 시작 훅(`-AlwaysOn` 또는 `-Full` 일 때만)** — 기본 설치는 훅을 등록하지 않고, 위임은 사용자가 요청할 때만 합니다. `.\install.ps1 -AlwaysOn`(압축 팩은 `Install.cmd -AlwaysOn`)을 주면 `~/.claude/settings.json` 에 SessionStart 훅을 등록합니다(이미 등록돼 있으면 재설치 때 경로를 새로 고칩니다). 새 Claude 세션이 열릴 때 agy 워처를 창 없이 켜고(`stop-agy` 로 일부러 끈 상태면 켜지 않음), `samjil-delegate-agy` 스킬을 먼저 따르라는 문맥을 넣습니다. 바꾸기 전에 `settings.json.bak-*` 로 백업하고 `uninstall.ps1` 이 이 항목만 뺍니다.
 - `.\install.ps1 -HandoffAutoHook` — Claude 쪽 핸드오프 자동 이어가기 Stop 훅을 `~/.claude/settings.json` 에 등록합니다(옵트인). 바꾸기 전에 `settings.json.bak-*` 로 백업하고 다른 설정·훅은 건드리지 않으며, JSON 이 깨져 있으면 손대지 않습니다. `irm | iex` 로 받을 때는 `$env:SAMJIL_HANDOFF_AUTO_HOOK = "1"` 을 먼저 지정합니다.
-- `.\install.ps1 -TargetDir <경로>` — 설치 위치 지정.
+- 그 밖의 옵션: `-NoStart`(워처를 켜지 않음), `-SkipChecks`(`agy` 점검 생략), `-ReplyLanguage <언어>`(agy 답변 언어), `-Full`(작성자 전체 구성). 설치 위치는 고정(`~/.claude/skills`, `~/.samjil`)이라 바꿀 수 없습니다.
 
 ## 제거
 
