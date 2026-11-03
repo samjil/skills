@@ -7,7 +7,19 @@ function Get-ClaudeDesktopDir {
     if (-not [string]::IsNullOrEmpty($env:CLAUDE_DESKTOP_DIR)) {
         return $env:CLAUDE_DESKTOP_DIR
     }
-    return (Join-Path $env:APPDATA 'Claude')
+    # 설치 방식에 따라 Desktop 데이터 폴더가 다르다. 세션 폴더(claude-code-sessions)가 실제로 있는 쪽을 고른다.
+    $roaming = Join-Path $env:APPDATA 'Claude'
+    if (Test-Path -LiteralPath (Join-Path $roaming 'claude-code-sessions')) { return $roaming }
+    if (-not [string]::IsNullOrEmpty($env:LOCALAPPDATA)) {
+        $dataRoot = Join-Path $env:LOCALAPPDATA 'Claude-Data'
+        if (Test-Path -LiteralPath $dataRoot) {
+            $found = @(Get-ChildItem -LiteralPath $dataRoot -Directory -ErrorAction SilentlyContinue |
+                Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'claude-code-sessions') } |
+                Sort-Object LastWriteTime -Descending)
+            if ($found.Count -gt 0) { return $found[0].FullName }
+        }
+    }
+    return $roaming
 }
 
 function Get-ClaudeProjectsDir {

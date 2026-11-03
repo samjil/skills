@@ -55,6 +55,25 @@ try {
         $env:CLAUDE_PROJECTS_DIR = $prevProjects
     }
 
+    # 0-2. 환경변수가 없을 때: %APPDATA%\Claude 에 세션 폴더가 없으면 %LOCALAPPDATA%\Claude-Data\<id> 를 찾는다
+    $prevAppData = $env:APPDATA
+    $prevLocal = $env:LOCALAPPDATA
+    try {
+        $env:CLAUDE_DESKTOP_DIR = ''
+        $env:APPDATA = Join-Path $workDir 'roaming'
+        $env:LOCALAPPDATA = Join-Path $workDir 'local'
+        New-Item -ItemType Directory -Force -Path (Join-Path $env:APPDATA 'Claude') | Out-Null
+        $dataSess = Join-Path $env:LOCALAPPDATA 'Claude-Data\claude_x\claude-code-sessions'
+        New-Item -ItemType Directory -Force -Path $dataSess | Out-Null
+        Assert-Equal "Get-ClaudeDesktopDir 가 Claude-Data 폴더를 찾는다" (Join-Path $env:LOCALAPPDATA 'Claude-Data\claude_x') (Get-ClaudeDesktopDir)
+        New-Item -ItemType Directory -Force -Path (Join-Path $env:APPDATA 'Claude\claude-code-sessions') | Out-Null
+        Assert-Equal "Get-ClaudeDesktopDir 는 APPDATA 에 세션 폴더가 있으면 그쪽을 쓴다" (Join-Path $env:APPDATA 'Claude') (Get-ClaudeDesktopDir)
+    }
+    finally {
+        $env:CLAUDE_DESKTOP_DIR = $prevDesktop
+        $env:APPDATA = $prevAppData
+        $env:LOCALAPPDATA = $prevLocal
+    }
     # ---------------------------------------------------------
     # 1. Read-ClaudeGroups 시험
     # ---------------------------------------------------------
