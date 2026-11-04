@@ -260,6 +260,14 @@ eq("tree null 시 연결 안 됨 노드만 1개", [QA_UNLINKED], treeNullRes.map
 // null 및 빈 입력에 대한 방어
 eq("channels 및 tree 가 null 이어도 정상 동작", [], api.buildHandoffTree(null, null));
 
+// 포크한 세션: 협의 트리 노드도 원본(forkOf)을 그대로 가져야 화면이 위임 트리처럼 원본 밑에 들여쓴다(forkDepth 는 화면에서 sortSessions 가 붙인다)
+const forkTree = api.buildHandoffTree({}, { projects: [{ id: "cg-f", name: "sh::proj-fork", sessions: [
+  { id: "orig", title: "원본", cwd: "D:\a", lastActivity: "2026-10-14 10:00:00", archived: false },
+  { id: "kid", title: "포크", cwd: "D:\a", lastActivity: "2026-10-14 11:00:00", archived: false, forkOf: "orig" }
+] }], ungrouped: [] });
+const forkSessions = forkTree[0].sessions;
+eq("협의 트리 노드에 포크 원본(forkOf)이 실린다", ["kid:orig", "orig:"], forkSessions.map(s => s.id + ":" + s.forkOf).sort());
+
 console.log("\nhandoffFilterTree: 검색어로 트리 필터링");
 const sampleNodes = [
   {

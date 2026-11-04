@@ -40,6 +40,20 @@ function Get-HandoffModelOverride([string]$Value) {
     return @{ Tier = $tier; Model = $model; Reason = "메시지 머리말 위임모델: $($Value.Trim())" }
 }
 
+# 협의(핸드오프)의 기본 모델 단계. 협의는 정확도와 성능이 목적이라 자동 선택(짧은 확인은 low)을 쓰지 않고 기본을 high 로 둔다.
+# 환경변수 AGY_HANDOFF_MODEL: low|medium|high|gemini-3.8-flash-* 이면 그 값, `auto` 면 $null(자동 선택으로 넘어간다), 없으면 high.
+# 메시지 머리말의 `위임모델:` 은 이 기본값보다 우선한다. 알 수 없는 값은 high 로 본다.
+# 반환: @{ Tier; Model; Reason } 또는 $null (자동 선택)
+function Get-HandoffDefaultModel {
+    $v = ([string]$env:AGY_HANDOFF_MODEL).Trim()
+    if ($v.ToLowerInvariant() -eq "auto") { return $null }
+    if (-not $v) { $v = "high" }
+    $m = Get-HandoffModelOverride $v
+    if (-not $m) { $m = Get-HandoffModelOverride "high" }
+    $m.Reason = "협의 기본 단계 $($m.Tier) (AGY_HANDOFF_MODEL 로 바꿈, auto 면 자동 선택)"
+    return $m
+}
+
 function Get-HandoffMaxAgeHours {
     if ($env:AGY_HANDOFF_MAX_AGE_HOURS -match '^\d+(\.\d+)?$' -and [double]$env:AGY_HANDOFF_MAX_AGE_HOURS -gt 0) { return [double]$env:AGY_HANDOFF_MAX_AGE_HOURS }
     return 2.0
@@ -240,8 +254,8 @@ function Invoke-HandoffPumpChannel([string]$ChannelDir, $Ctx) {
     # 2) 새 메시지
     $state = Read-HandoffAutoState $ChannelDir
     if ($state.halted) {
-        # 한도 창이 지났으면 자동으로 다시 시작
-        if ((Get-HandoffRounds $state $script:HandoffAutoWindowMinutes) -lt $maxRounds) {
+        # 한도 창이 지났으면 자동으로 다시 시작(대화 줄기 한도로 멈춘 것은 시간이 지나도 풀리지 않는다. 뷰어의 "한도 초기화"로 푼다)
+        if ($state.halted_reason -notlike "대화 줄기*" -and (Get-HandoffRounds $state $script:HandoffAutoWindowMinutes) -lt $maxRounds) {
             Update-HandoffAutoState $ChannelDir { param($s) $s.halted = $false; $s.halted_at = ""; $s.halted_reason = "" }
             Write-HandoffLog "핸드오프 [$name] 한도 창이 지나 자동 이어가기를 다시 시작합니다"
             $state = Read-HandoffAutoState $ChannelDir
@@ -265,6 +279,19 @@ function Invoke-HandoffPumpChannel([string]$ChannelDir, $Ctx) {
             return
         }
 
+        $threadMax = Get-HandoffMaxThreadRounds
+        if ((Get-HandoffThreadRounds $ChannelDir $state $row.Num) -ge $threadMax) {
+            $script:__hpThreadMax = $threadMax
+            Update-HandoffAutoState $ChannelDir {
+                param($s)
+                $s.halted = $true
+                $s.halted_at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+                $s.halted_reason = "대화 줄기 왕복 한도($($script:__hpThreadMax)회)에 도달해 멈췄습니다. 사용자 확인이 필요합니다."
+            }
+            Write-HandoffLog "핸드오프 [$name] 대화 줄기 왕복 한도($threadMax회)에 도달해 멈춥니다. #$($row.Num) 는 보냄 상태로 둡니다"
+            return
+        }
+
         $msgFile = Get-HandoffMessageFile $ChannelDir $row.Num
         $msgText = if ($msgFile) { try { [System.IO.File]::ReadAllText($msgFile.FullName, [System.Text.Encoding]::UTF8) } catch { "" } } else { "" }
         if (-not $msgText) { $msgText = "(메시지 파일 msg\$($row.Num)-*.md 를 읽지 못했습니다. 제목만 보고 판단하지 말고 파일을 직접 읽으세요.)" }
@@ -279,6 +306,7 @@ function Invoke-HandoffPumpChannel([string]$ChannelDir, $Ctx) {
                 if (-not $auto -and $overrideRaw.Trim()) { Write-HandoffLog "핸드오프 [$name] #$($row.Num) 머리말의 위임모델 '$overrideRaw' 은(는) low|medium|high 또는 gemini-3.8-flash-<단계> 가 아니라서 무시하고 자동 선택합니다" }
             } catch { $auto = $null }
         }
+        if (-not $auto) { $auto = Get-HandoffDefaultModel }   # 머리말이 없으면 협의 기본 단계(high). auto 로 두면 아래 자동 선택
         if (-not $auto -and (Get-Command Test-AgyAutoTierEnabled -ErrorAction SilentlyContinue) -and (Test-AgyAutoTierEnabled)) {
             try { $auto = Get-AgyAutoTier ("$($row.Title)`n$msgText") $true } catch { $auto = $null }
         }

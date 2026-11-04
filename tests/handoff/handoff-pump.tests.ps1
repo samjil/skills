@@ -298,6 +298,72 @@ try {
     Remove-Item Env:\AGY_AUTO_MODEL -ErrorAction SilentlyContinue
     Assert-Equal "Get-HandoffModelOverride: 값 해석(공백·대소문자·ID/단계)" "medium|gemini-3.8-flash-low|" ("{0}|{1}|{2}" -f (Get-HandoffModelOverride " Medium ").Tier, (Get-HandoffModelOverride "GEMINI-3.8-FLASH-LOW").Model, (Get-HandoffModelOverride "gemini-3.9-flash-high"))
     Assert-Equal "  빈 값은 null" $true ($null -eq (Get-HandoffModelOverride ""))
+
+    Write-Host "협의 기본 단계 (AGY_HANDOFF_MODEL, 기본 high)"
+    function New-ShortChannel([string]$Name, [string]$Override) {
+        $d = Join-Path $root $Name
+        New-Item -ItemType Directory -Force -Path (Join-Path $d "msg") | Out-Null
+        Set-Content -LiteralPath (Join-Path $d "INDEX.md") -Value "# INDEX`n| 번호 | 시각 | 방향 | 제목 | 상태 |`n|---|---|---|---|---|" -Encoding UTF8
+        $num = Add-HandoffMessage $d "c2a" "확인" "## 요약`n- 지금 상태를 알려 줘"
+        if ($Override) { [void](Set-HandoffMessageField (Get-HandoffMessageFile $d $num).FullName "위임모델" $Override) }
+        return $d
+    }
+    Remove-Item Env:\AGY_HANDOFF_MODEL -ErrorAction SilentlyContinue
+    $chDef = New-ShortChannel "dflt-none" ""
+    $chDefLow = New-ShortChannel "dflt-hdr" "low"
+    Invoke-HandoffPump $ctx
+    $dDef = Get-OverrideTask "dflt-none"; $dDefLow = Get-OverrideTask "dflt-hdr"
+    Assert-Equal "짧은 읽기 메시지도 기본은 high(@model 줄 없음 · 기존 세션)" "handoff-dflt-none|" ("{0}|{1}" -f $dDef.Session, $dDef.Model)
+    Assert-Equal "  AUTO.json 의 위임 기록 단계는 high" "high" (Read-HandoffAutoState $chDef).dispatches[0].tier
+    Assert-Equal "  머리말의 위임모델(low)은 기본값보다 우선" "gemini-3.8-flash-low|handoff-dflt-hdr-low" ("{0}|{1}" -f $dDefLow.Model, $dDefLow.Session)
+    $env:AGY_HANDOFF_MODEL = "auto"
+    [void](New-ShortChannel "dflt-auto" "")
+    $env:AGY_HANDOFF_MODEL = "medium"
+    [void](New-ShortChannel "dflt-med" "")
+    Invoke-HandoffPump $ctx
+    Remove-Item Env:\AGY_HANDOFF_MODEL -ErrorAction SilentlyContinue
+    $dAuto = Get-OverrideTask "dflt-auto"; $dMedEnv = Get-OverrideTask "dflt-med"
+    Assert-Equal "AGY_HANDOFF_MODEL=medium 이면 medium" "gemini-3.8-flash-medium" $dMedEnv.Model
+    Assert-Equal "AGY_HANDOFF_MODEL=auto 이면 예전처럼 자동 선택(짧은 읽기 메시지는 high 가 아니다)" "True" ([string]($dAuto.Model -match '^gemini-3\.8-flash-(low|medium)$'))
+    $defUnset = (Get-HandoffDefaultModel).Tier
+    $env:AGY_HANDOFF_MODEL = "auto"; $defAuto = Get-HandoffDefaultModel
+    $env:AGY_HANDOFF_MODEL = "gpt-5"; $defBad = (Get-HandoffDefaultModel).Tier
+    Remove-Item Env:\AGY_HANDOFF_MODEL -ErrorAction SilentlyContinue
+    Assert-Equal "Get-HandoffDefaultModel: 값 해석(없음=high · auto=null · 모르는 값=high)" "high|True|high" ("{0}|{1}|{2}" -f $defUnset, ($null -eq $defAuto), $defBad)
+
+    Write-Host "대화 줄기당 위임 한도 (AGY_HANDOFF_MAX_THREAD_ROUNDS, 기본 3)"
+    function New-ThreadChannel([string]$Name, [int]$Done) {
+        $d = Join-Path $root $Name
+        New-Item -ItemType Directory -Force -Path (Join-Path $d "msg") | Out-Null
+        Set-Content -LiteralPath (Join-Path $d "INDEX.md") -Value "# INDEX`n| 번호 | 시각 | 방향 | 제목 | 상태 |`n|---|---|---|---|---|" -Encoding UTF8
+        $disp = @()
+        $prev = ""
+        for ($i = 1; $i -le $Done; $i++) {
+            $c = Add-HandoffMessage $d "c2a" "줄기 $i" "## 요약`n- q$i" $prev "" $false "처리됨"
+            $disp += @{ num = $c; task_id = "handoff_t_$c"; at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"); done = $true; tier = "high" }
+            $prev = Add-HandoffMessage $d "a2c" "회신 $i" "## 요약`n- a$i" $c "" $false "확인함"
+        }
+        [void](Add-HandoffMessage $d "c2a" "다음 질문" "## 요약`n- 이어서" $prev)   # 줄기에 이어지는 새 c2a
+        Update-HandoffAutoState $d { param($s) $s.dispatches = @($disp) }.GetNewClosure()
+        return $d
+    }
+    $chT2 = New-ThreadChannel "thr-two" 2
+    $chT3 = New-ThreadChannel "thr-three" 3
+    Assert-Equal "줄기에서 2번 위임했으면 줄기 위임 수는 2" 2 (Get-HandoffThreadRounds $chT2 (Read-HandoffAutoState $chT2) "0005")
+    Invoke-HandoffPump $ctx
+    Assert-Equal "  3번째 위임은 보낸다(한도 3)" 1 @(Get-InboxTasks | Where-Object { $_.Name -like "handoff_thr-two_*" }).Count
+    Assert-Equal "줄기에서 3번 위임했으면 4번째는 보내지 않고 멈춘다" 0 @(Get-InboxTasks | Where-Object { $_.Name -like "handoff_thr-three_*" }).Count
+    $stT3 = Read-HandoffAutoState $chT3
+    Assert-Equal "  halted 이고 사유가 대화 줄기 한도다" $true ($stT3.halted -and ($stT3.halted_reason -like "대화 줄기 왕복 한도(3회)*"))
+    Invoke-HandoffPump $ctx
+    Assert-Equal "  시간이 지나지 않아도 다시 점검해도 풀리지 않는다(계속 멈춤, 위임 없음)" "True|0" ("{0}|{1}" -f (Read-HandoffAutoState $chT3).halted, @(Get-InboxTasks | Where-Object { $_.Name -like "handoff_thr-three_*" }).Count)
+    [void](Set-HandoffAutoAction $chT3 "reset")
+    Invoke-HandoffPump $ctx
+    Assert-Equal "  뷰어의 한도 초기화 뒤에는 다시 위임한다" 1 @(Get-InboxTasks | Where-Object { $_.Name -like "handoff_thr-three_*" }).Count
+    $env:AGY_HANDOFF_MAX_THREAD_ROUNDS = "5"
+    Assert-Equal "AGY_HANDOFF_MAX_THREAD_ROUNDS 로 한도를 바꾼다(5)" 5 (Get-HandoffMaxThreadRounds)
+    Remove-Item Env:\AGY_HANDOFF_MAX_THREAD_ROUNDS -ErrorAction SilentlyContinue
+    Assert-Equal "  기본은 3" 3 (Get-HandoffMaxThreadRounds)
     $dispatchText = New-HandoffDispatchText "my-app" $ch $repo (Get-Row $ch "0001") "" "본문" $null
     Assert-Equal "지시문에 '화면을 볼 수 없다'는 낡은 문구가 없고 브라우저 도구 안내가 있다" $true (($dispatchText -notmatch "화면을 볼 수 없") -and ($dispatchText -match "chrome-devtools-mcp"))
 

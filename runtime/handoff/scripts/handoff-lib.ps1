@@ -414,6 +414,13 @@ function Get-HandoffMaxRounds {
     return 6
 }
 
+# 한 대화 줄기(답장대상으로 이어진 c2a·a2c 사슬)에서 펌프가 위임할 수 있는 최대 횟수. 채널 전체 한도(Get-HandoffMaxRounds)와 별개다.
+# 환경변수 AGY_HANDOFF_MAX_THREAD_ROUNDS 로 바꾼다(기본 3). 같은 채널에서 서로 다른 일을 연달아 시켜도 합산되지 않는다.
+function Get-HandoffMaxThreadRounds {
+    if ($env:AGY_HANDOFF_MAX_THREAD_ROUNDS -match '^\d+$' -and [int]$env:AGY_HANDOFF_MAX_THREAD_ROUNDS -gt 0) { return [int]$env:AGY_HANDOFF_MAX_THREAD_ROUNDS }
+    return 3
+}
+
 # 끄기 표시: 채널 폴더의 AUTO.off, 또는 채널 루트의 AUTO.off(전체 끄기).
 function Test-HandoffAutoDisabled([string]$ChannelDir) {
     if (Test-Path -LiteralPath (Join-Path $ChannelDir "AUTO.off")) { return $true }
@@ -494,7 +501,25 @@ function Update-HandoffAutoState([string]$ChannelDir, [scriptblock]$Edit) {
     }
 }
 
-# 지금부터 $Minutes 분 안의 펌프 위임 횟수(한 대화 줄기의 왕복 수로 센다).
+# 메시지 $Num 보다 앞선 대화 줄기(머리말 `답장대상:` 을 거슬러 올라간 번호들)에서 이미 위임한 횟수.
+# 뷰어의 "한도 초기화"가 끝난 위임 기록을 비우므로, 초기화 뒤에는 0 부터 다시 센다.
+function Get-HandoffThreadRounds([string]$ChannelDir, $State, [string]$Num) {
+    $chain = @{}
+    $cur = $Num
+    for ($i = 0; $i -lt 50 -and $cur; $i++) {
+        $f = Get-HandoffMessageFile $ChannelDir $cur
+        if (-not $f) { break }
+        $reply = ([string](Read-HandoffFrontMatter $f.FullName)["답장대상"]).Trim()
+        if (-not $reply -or $chain.ContainsKey($reply)) { break }
+        $chain[$reply] = $true
+        $cur = $reply
+    }
+    $n = 0
+    foreach ($d in @($State.dispatches)) { if ($d -and $chain.ContainsKey([string]$d.num)) { $n++ } }
+    return $n
+}
+
+# 지금부터 $Minutes 분 안의 펌프 위임 횟수(채널 전체 기준).
 function Get-HandoffRounds($State, [int]$Minutes = 60) {
     $cut = (Get-Date).AddMinutes(-$Minutes)
     $n = 0

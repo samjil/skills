@@ -2431,7 +2431,8 @@
         p.sessions.forEach(function (s) {
           var isSessionActive = (currentHandoffProject === p.id && currentHandoffSession === s.id);
           var sItem = document.createElement("div");
-          sItem.className = "session-item tree-session" + (isSessionActive ? " active" : "");
+          sItem.className = "session-item tree-session" + (isSessionActive ? " active" : "") + (s.forkDepth ? " fork-child" : "");
+          if (s.forkDepth) { sItem.style.setProperty("--fork-depth", String(Math.min(s.forkDepth, 3))); sItem.title = "포크한 세션"; }
           sItem.dataset.session = s.id;
           sItem.setAttribute("role", "treeitem");
 
