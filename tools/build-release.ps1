@@ -60,7 +60,7 @@ try {
         $sr = New-Object System.IO.StreamReader($e.Open(), [System.Text.Encoding]::UTF8)
         try { $txt = $sr.ReadToEnd() } finally { $sr.Dispose() }
         if ($txt -match '(?i)(api[_-]?key|secret|password|token)\s*[:=]\s*["''][A-Za-z0-9_\-]{16,}') { [void]$warn.Add("비밀 값처럼 보이는 문자열: $($e.FullName)") }
-        if ($txt -match '(?i)C:\\Users\\(username)\\|/Users/username/') { [void]$warn.Add("개인 경로: $($e.FullName)") }
+        if ($txt -match ("(?i)C:\\Users\\{0}\\|/Users/{0}/" -f [regex]::Escape($env:USERNAME))) { [void]$warn.Add("개인 경로: $($e.FullName)") }
     }
 } finally { $zip.Dispose() }
 $size = (Get-Item -LiteralPath $zipPath).Length
